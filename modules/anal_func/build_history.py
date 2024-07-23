@@ -1,18 +1,24 @@
 import os
+import numpy as np
 from astropy.io import fits
 from scipy.interpolate import interp1d
+from ..visualize.simple_plots import HistoryPlots
+from .. import SavePaths
+import gc
 
 class BuildHistory:
-    def __init__(self, simfilename, progfilename, sb):
+    def __init__(self, sb, progfilename='progenitors_most_mass.fits'):
         """
         Initialize with the directory containing the progen.fits files.
         
         :param progen_directory: Path to the directory containing progen.fits files.
         """
         save_paths = SavePaths()
-        self.progen_file = os.path.join(save_paths.get_filetype_path('fits'), 'progenitors_files', filename)
+        self.progen_file = os.path.join(save_paths.get_filetype_path('fits'), 'progenitors_files', progfilename)
         self.history_indx = None
         self.sb = sb
+        self.z = {}
+        self.propr = {}
 
     def get_history_indx(self, id, start_snap, end_snap):
         """
@@ -26,7 +32,7 @@ class BuildHistory:
         """
         with fits.open(self.progen_file) as hdul:
             data = hdul[1].data
-            id_column = data.field(0)  # assuming the first column contains the IDs
+            id_column = data['GroupID']  # assuming the first column contains the IDs
             col_names = hdul[1].columns.names  # list of column names
 
             # Find the row corresponding to the given id
@@ -40,8 +46,8 @@ class BuildHistory:
             
             # Extract the columns from start_snap to end_snap
             try:
-                start_col_index = col_names.index(start_snap)
-                end_col_index = col_names.index(end_snap)
+                start_col_index = col_names.index(str(start_snap))
+                end_col_index = col_names.index(str(end_snap))
             except ValueError as e:
                 raise ValueError(f"Snapshot name not found: {e}")
 
@@ -54,32 +60,50 @@ class BuildHistory:
 
             return self.history_indx
 
-    def get_proprty_history(self, propr_dicts):
-        """gives the value of a certain property for each snapshot in the range indicated in get_history_indx
-
+    def get_property_history(self, propr_dicts):
+        """Gives the value of a certain property for each snapshot in the range indicated in get_history_indx.
+    
            Attr:
               propr_dicts (dictionary): contains the list of properties to evaluate. Keys are the family of properties, either galaxies or halos.
               
            Return:
               dictionary with properties as keys and corresponding array of the property at each snapshot in values
-           
         """
-        redshifts = []
-        propr_out = {}
+        redshiftl = []
+        propr_out = {propr: [] for key in propr_dicts.keys() for propr in propr_dicts[key]}
         indx_dict = self.history_indx
+        
         for snap in indx_dict.keys():
-            cs = self.sb.get_caesar(snap)
-            for mainattr in propr_dicts.keys():
-                if mainattr == 'galaxies': _o = cs.galaxies
-                elif mainattr == 'halos' : _o = cs.halos
-                else: print('KeyError: Wrong attributes in propr_dicts dictionary keys: only galaxies and halos permitted')
-            for propr in propr_dicts[mainattr]:
-                propr_out[propr] = np.asarray(getattr(_o, propr)[indx_dict[snap]])
-            redshifts.append(self.sb.get_redshifts[int(snap)])
+            cs = self.sb.get_caesar(int(snap))
+            for mainattr, properties in propr_dicts.items():
+                if mainattr == 'galaxies':
+                    _o = cs.galaxies
+                elif mainattr == 'halos':
+                    _o = cs.halos
+                else:
+                    raise KeyError('Wrong attributes in propr_dicts dictionary keys: only galaxies and halos permitted')
+                
+                for propr in properties:
+                    if '.' in propr:
+                        attr, sub_attr = propr.split('.')
+                        values = np.asarray([getattr(i, attr)[sub_attr] for i in _o])[indx_dict[snap]]
+                    else:
+                        values = np.asarray([getattr(i, propr) for i in _o])[indx_dict[snap]]
+                    
+                    propr_out[propr].append(values)
+            
+            redshiftl.append(cs.simulation.redshift)
             # remove caesar file to not overload memory
             del cs
             gc.collect()
-        return redshifts, propr_out
+        
+        # Convert lists to numpy arrays
+        for propr in propr_out.keys():
+            propr_out[propr] = np.asarray(propr_out[propr])
+        redshift = {'Redshift':np.asarray(redshiftl)}
+        self.z = redshift
+        self.propr = propr_out
+        return redshift, propr_out
 
     def _get_snap_data(self, snap, family, propr, indx):
         """gives the values of a property given snapshot and galaxy index
@@ -131,3 +155,19 @@ class BuildHistory:
         interpolated_value = interp_func(z)
         
         return interpolated_value
+
+    def plot_history(self, zlist, cosmo, interpolate=None):
+        x = self.z
+        y = self.propr
+        x = [x[i] for i in x.keys()][0]
+        y = [y[i] for i in y.keys()][0]
+        h = HistoryPlots(x, y, 1, 2)
+        h.z_on_top(zlist, cosmo)
+        if interpolate!=None:
+            h.interpolate_plot(num_points=100, kind='linear')
+        else:
+            h.plot()
+        h.save(outname='test.png')
+        
+        
+    

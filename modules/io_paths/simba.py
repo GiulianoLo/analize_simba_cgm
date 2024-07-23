@@ -71,6 +71,12 @@ class Simba:
             snap_str = 'snap_' + self.name_form
         return self.sim_directory+(snap_str%snap)
 
+    def get_caesar_file(self,snap,fname=None,verbose=False):
+        if fname==None:
+            fname =  self.name_form   
+        fname = self.cs_directory+(fname%snap)
+        return fname
+
 
     def get_caesar(self,snap,fname=None,verbose=False):
         if fname==None:

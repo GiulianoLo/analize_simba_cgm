@@ -28,7 +28,7 @@ def copy_skeleton(src_filename, dst_filename):
             src_file.visititems(copy_structure)
 
 
-def filter_particles_by_obj(cs, snap, selection, oidx, verbose=0, overwrite=True, ignore_fields=[], keyword=None):
+def filter_particles_by_obj(cs, simfile, snap, selection, oidx, verbose=0, overwrite=True, ignore_fields=[], keyword=None):
     """Opens the particles file in hdf5 format and saves the selected subset of particles.
 
        Args:
@@ -41,7 +41,6 @@ def filter_particles_by_obj(cs, snap, selection, oidx, verbose=0, overwrite=True
            ignore_fields (list of str): list of fields to ignore when writing the filtered file from the original
            keyword (str or None): keyword to append to the output file name if overwrite is False
     """
-
     # Instantiate SavePaths
     paths = SavePaths()
 
@@ -59,7 +58,7 @@ def filter_particles_by_obj(cs, snap, selection, oidx, verbose=0, overwrite=True
     if not overwrite and keyword is None:
         raise ValueError('Keyword must be provided if overwrite is False')
 
-    with h5py.File(cs, 'r') as input_file:
+    with h5py.File(simfile, 'r') as input_file:
         header = input_file['Header']
         for obj in oidx:
             if overwrite:
@@ -67,7 +66,7 @@ def filter_particles_by_obj(cs, snap, selection, oidx, verbose=0, overwrite=True
             else:
                 output = f'{out_folder}/subset_{obj:06.0f}_halo_{keyword}.h5'
                 
-            copy_skeleton(cs, output)
+            copy_skeleton(simfile, output)
             with h5py.File(output, 'a') as output_file:
                 # input_file.copy('Header', output_file)
                 for ptype in ['PartType0', 'PartType1', 'PartType4', 'PartType5']:
@@ -127,7 +126,7 @@ def filter_particles_by_obj(cs, snap, selection, oidx, verbose=0, overwrite=True
         print('Finished with particle filters')
 
 
-def filter_by_aperture(cs, snap, center, radius, selection=None, verbose=0, overwrite=True, ignore_fields=[], keyword=None):
+def filter_by_aperture(cs, simfile, snap, center, radius, selection=None, verbose=0, overwrite=True, ignore_fields=[], keyword=None):
     """Filters particles in an HDF5 file by selecting those within a spherical aperture.
 
        Args:
@@ -177,9 +176,9 @@ def filter_by_aperture(cs, snap, center, radius, selection=None, verbose=0, over
     else:
         raise ValueError('Center must be a list/array with 3 positions or an object ID with a valid selection.')
 
-    with h5py.File(cs, 'r') as input_file:
+    with h5py.File(simfile, 'r') as input_file:
         header = input_file['Header']
-        copy_skeleton(cs, output)
+        copy_skeleton(simfile, output)
         with h5py.File(output, 'a') as output_file:
             for ptype in ['PartType0', 'PartType1', 'PartType4', 'PartType5']:
                 if ptype in input_file:  # check if particle type is present

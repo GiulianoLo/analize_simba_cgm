@@ -1,11 +1,11 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import interp1d
-from analize_simba_cgm_code.io_paths.savepaths import SavePaths
 import os
+from .. import SavePaths
 
 class HistoryPlots:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, x, y, rows=1, cols=1, *args, **kwargs):
         """
         Initialize the HistoryPlots instance.
 
@@ -13,12 +13,13 @@ class HistoryPlots:
         :param kwargs: Keyword arguments passed to plt.subplots.
         """
         # Initialize the figure and axes using plt.subplots
-        self.fig, self.axs = plt.subplots(*args, **kwargs)
-        
+        self.fig, self.axs = plt.subplots(rows, cols, *args, **kwargs)
         # Flatten axes in case of multiple subplots
         if isinstance(self.axs, np.ndarray):
             self.axs = self.axs.flatten()
-
+        # the axis with the data to plot
+        self.x = x
+        self.y = y
         # You can add custom initialization code here
         self.custom_setup()
 
@@ -28,7 +29,7 @@ class HistoryPlots:
         """
         pass  # You can customize your figure/axes here if needed
 
-    def plot(self, x, y, **kwargs):
+    def plot(self, **kwargs):
         """
         Plot data on all axes.
 
@@ -37,7 +38,7 @@ class HistoryPlots:
         :param kwargs: Additional keyword arguments for plotting.
         """
         for ax in self.axs:
-            ax.plot(x, y, **kwargs)
+            ax.plot(self.x, self.y, **kwargs)
 
     def z_on_top(self, zlist, cosmo):
         """
@@ -53,7 +54,6 @@ class HistoryPlots:
         for i, ax in enumerate(self.axs):
             # Calculate the age ticks based on redshift values
             ageticks = [(cosmo.age(0) - cosmo.age(age)).value for age in zlist]
-            
             # Create a secondary x-axis
             ax2 = ax.twiny()
             ax2.set_xticks(ageticks)
@@ -83,10 +83,10 @@ class HistoryPlots:
             if i != 0:
                 ax2.set_xticklabels([])
                 
-            # Title adjustment (optional)
+            #Title adjustment (optional)
             ax.set_title('Redshift')
 
-    def interpolate_plot(self, x, y, num_points=100, kind='linear', **kwargs):
+    def interpolate_plot(self, num_points=100, kind='linear', **kwargs):
         """
         Interpolate and plot the data.
 
@@ -96,11 +96,13 @@ class HistoryPlots:
         :param kind: Interpolation method (e.g., 'linear', 'cubic').
         :param kwargs: Additional keyword arguments for plotting.
         """
+        x = self.x
+        y = self.y
         x_interpolated = np.linspace(min(x), max(x), num_points)
         # Define the interpolation function
-        interp_func = interp1d([prev_z, next_z], [prev_data, next_data], kind=interpstyle)
+        interp_func = interp1d(x, y, kind=kind)
         # Interpolate the property value at redshift z
-        y_interpolated = interp_func(z)
+        y_interpolated = interp_func(x_interpolated)
         for ax in self.axs:
             ax.plot(x_interpolated, y_interpolated, **kwargs)
 
@@ -122,12 +124,14 @@ class HistoryPlots:
         """
         plt.show()
 
-    def save(self, outname, subdir='history_plots')
+    def save(self, outname, subdir='history_plots'):
+        """Use SavingPaths to save the plot (a subdirectory can be specified and created)
+        """
         # Instantiate SavePaths
         paths = SavePaths()
         # Determine the output directory for HDF5 files
         output_dir = paths.get_filetype_path('plot')
-        output_dir = create_subdir(output_dir, subdir)
+        output_dir = paths.create_subdir(output_dir, subdir)
         output_file = os.path.join(output_dir, outname)
         self.fig.savefig(output_file, bbox_inches='tight')
 
