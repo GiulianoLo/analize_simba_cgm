@@ -4,8 +4,9 @@ from astropy.io import fits
 from modules.io_paths.savepaths import SavePaths
 import gc
 import os
+from astropy.table import Table
 
-def read_progen(ids, outname, snaplist, sb):
+def caesar_read_progen(ids, outname, snaplist, sb):
     """Loop all the caesar files and write a fits file containing the indexes of the most massive progenitor for each galaxy
 
        Args:
@@ -68,3 +69,95 @@ def read_progen(ids, outname, snaplist, sb):
     
     hdu = fits.BinTableHDU.from_columns(columns)
     hdu.writeto(os.path.join(output_dir, outname), overwrite=True)
+
+
+
+
+
+import os
+import numpy as np
+from astropy.io import fits
+import random
+
+def get_fits(sb, snap, fitsdir):
+    filename = sb.get_caesar_file(snap)
+    new_filename = filename.split('/')[-1].split('.')[0] + '.fits'
+    new_filename = os.path.join(fitsdir, new_filename)
+    return new_filename
+
+
+# def read_progen(ids, outname, snaplist, sb, fitsdir):
+#     # Initialize a dictionary to store GroupID data for each snapshot
+#     progenid_dict = {str(i): [] for i in snaplist}
+#     progenid_dict['GroupID'] = ids
+#     # Start with the first snapshot (which should be 151)
+#     snaplist = np.sort(snaplist)[::-1]
+#     for idx, snap in enumerate(snaplist[:-1]):  # Process snapshots in reverse order
+#         fname = get_fits(sb, snap, fitsdir)
+#         print(f'Processing current snap: {fname}')
+#         with fits.open(fname) as hdul:
+#             hf = hdul[1].data
+#             #all_groupids = hf['GroupID'].astype(int)
+#             progenid = hf['descend_galaxy_star'].astype(int)
+#             print('progen index: ', progenid[:10])
+#             print(ids.max())
+#             fname_prog = get_fits(sb, snaplist[idx+1], fitsdir)
+#             print(f'Processing the previous snap: {fname_prog}')
+#             with fits.open(fname_prog) as hdul_prog:
+#                 hf_prog = hdul_prog[1].data
+#                 prog_groupid = hf_prog['GroupID'].astype(int)
+#                 print('progen group: ', prog_groupid[:10])
+#                 progenid = progenid[ids]
+#                 temp = np.ones(len(progenid))*-1
+#                 msk  = progenid > -1
+#                 temp[msk] = prog_groupid[progenid[msk]]
+#                 print('My result: ', temp[:10])
+#                 progenid_dict[str(snaplist[idx+1])] = temp
+#                 ids = progenid[msk]
+#                 print(ids)
+
+
+
+def read_progen(ids, outname, snaplist, sb, fitsdir):
+    # Initialize a dictionary to store GroupID data for each snapshot
+    progenid_dict = {str(i): [] for i in snaplist}
+    # Start with the first snapshot (which should be 151)
+    first_iteration = True
+    snaplist = np.sort(snaplist)[::-1]
+    for idx, snap in enumerate(snaplist):  # Process snapshots in reverse order
+        fname = get_fits(sb, snap, fitsdir)
+        print(f'Processing current snap: {fname}')
+        with fits.open(fname) as hdul:
+            hf = hdul[1].data
+            groupids = hf['GroupID'].astype(int)
+            if first_iteration:
+                #match_ids = np.isin(groupids, ids)
+                progenid = hf['descend_galaxy_star'].astype(int)#[match_ids]
+                progenid_dict['GroupID'] = groupids
+                progenid_dict[str(snap)] = groupids #[match_ids]
+                first_iteration = False
+            else:
+                currprog = hf['descend_galaxy_star'].astype(int)
+                temp = []
+                for i in range(len(progenid)):
+                    if i>-1:
+                        temp.append(groupids[progenid[i]])
+                        progenid[i] = currprog[progenid[i]]
+                    else:
+                        temp.append(-1)
+                        progenid[i] = -1
+                        
+                progenid_dict[str(snap)] = np.array(temp)
+    
+
+    table = Table(progenid_dict)
+
+    # Instantiate SavePaths (assuming SavePaths is defined elsewhere in your code)
+    print('Saving...')
+    paths = SavePaths()
+    output_dir = paths.get_filetype_path('fits')
+    output_dir = paths.create_subdir(output_dir, 'progenitors_files')
+
+    table.write(os.path.join(output_dir, outname), overwrite=True)
+
+
