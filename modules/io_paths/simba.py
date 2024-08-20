@@ -28,12 +28,12 @@ class Simba:
                 print('Invalid box-size for SIMBA simulation: redirected to high-res')
                 self.sim_directory='/media/lorenzong/Data1/simba_hig_res/'
                 self.name_form = 'm25n512_%03d.hdf5'
-            self.output_file='/home/lorenzong/analize_simba_cgm/analize_simba_cgm_code/zsnap_map_caesar_box100.txt'
+            self.output_file='/home/lorenzong/analize_simba_cgm/output/convert_snap_z_factors/zsnap_map_caesar_box100.txt'
         else:
             print("`machine` not recognised, set to default (PC39BP4)")
             self.sim_directory='/media/lorenzong/Data1/simba_hig_res/'
-            self.output_file='/home/lorenzong/analize_simba_cgm/analize_simba_cgm_code/zsnap_map_caesar_box100.txt'
-        
+            self.output_file='/home/lorenzong/analize_simba_cgm/output/convert_snap_z_factors/zsnap_map_caesar_box100.txt'
+            
         self.cs_directory=self.sim_directory
         self.cosmo = cosmo
 
@@ -92,3 +92,14 @@ class Simba:
         np.array: Array of redshift values.
         """
         return self.zeds
+
+    def get_z_from_snap(self, snap):
+        """
+        Get the redshift value for a given snapshot.
+
+        Returns:
+        float: the redshift of the snapshot
+        """
+        outs = np.loadtxt(self.output_file)
+        return 1./outs[int(snap)]-1
+        

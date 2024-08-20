@@ -17,6 +17,8 @@ class HistoryPlots:
         # Flatten axes in case of multiple subplots
         if isinstance(self.axs, np.ndarray):
             self.axs = self.axs.flatten()
+        else:
+            self.axs = [self.axs]
         # the axis with the data to plot
         self.x = x
         self.y = y
@@ -53,15 +55,15 @@ class HistoryPlots:
         # Iterate through all axes to configure the secondary x-axis
         for i, ax in enumerate(self.axs):
             # Calculate the age ticks based on redshift values
-            ageticks = [(cosmo.age(0) - cosmo.age(age)).value for age in zlist]
+            zticks = zlist
             # Create a secondary x-axis
             ax2 = ax.twiny()
-            ax2.set_xticks(ageticks)
+            ax2.set_xticks(zticks)
             ax2.set_xticklabels(['{:g}'.format(age) for age in zlist])
             
             # Set x-limits for both primary and secondary axes
             zmin, zmax = min(zlist), max(zlist)
-            ax.set_xlim(zmin, zmax)
+            ax.set_xlim(cosmo.age(zmin).value, cosmo.age(zmax).value)
             ax2.set_xlim(zmin, zmax)
             
             # Ensure minor ticks are on
@@ -69,19 +71,21 @@ class HistoryPlots:
             
             # Configure which axes will display labels
             if i == len(self.axs) - 1:  # Only on the bottom subplot
-                ax.set_xlabel('Redshift')
+                ax.set_xlabel('Age (Gyr)')
             else:
                 ax.set_xlabel('')  # Hide xlabel on non-bottom subplots
             
             if i == len(self.axs) - 1:  # Only on the bottom subplot
-                ax2.set_xlabel('Age (Gyr)')  # Label for secondary x-axis
+                ax2.set_xlabel('Redshift')  # Label for secondary x-axis
             
             if i == 0:  # Only on the top subplot
-                ax2.set_xlabel('Age (Gyr)')  # Label for secondary x-axis
+                ax2.set_xlabel('Redshift')  # Label for secondary x-axis
             
             # Optionally: Clear secondary x-axis labels from non-top subplots
             if i != 0:
                 ax2.set_xticklabels([])
+
+            ax.axvline(cosmo.age(2).value)
                 
             #Title adjustment (optional)
             ax.set_title('Redshift')

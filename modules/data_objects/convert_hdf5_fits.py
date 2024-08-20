@@ -68,7 +68,7 @@ def _list_all_datasets(file):
 
 
 
-def _process_hdf5(file_path, fitspath, ignore, chunk=10, verbose=0):
+def _process_hdf5(file_path, fitspath, ignore=[], only=[], verbose=0):
     # create the empty fits file
     fits_filename=  _empty_fits(file_path, fitspath)
     print(f'Saved fits in: {fits_filename}')
@@ -87,6 +87,10 @@ def _process_hdf5(file_path, fitspath, ignore, chunk=10, verbose=0):
             for ign in ignore:
                 if ign in dataset_path:
                     flag = True
+                    break
+            for onl in only:
+                if ign not in dataset_path:
+                    flag=True
                     break
             if flag==True:
                 continue
@@ -121,7 +125,7 @@ def _process_hdf5(file_path, fitspath, ignore, chunk=10, verbose=0):
         hdul.close()
 
 
-def convert_hdf5_fits(sb, snaprange, ignore, verbose=0, overwrite=False):
+def convert_hdf5_fits(sb, snaprange, ignore, only, verbose=0, overwrite=False):
     # crete the path to save fits
     save_paths = SavePaths()
     fitspath = save_paths.get_filetype_path('fits')
