@@ -46,7 +46,7 @@ def filter_particles_by_obj(cs, simfile, snap, selection, oidx, verbose=0, overw
 
     # Determine the output directory for HDF5 files
     output_dir = paths.get_filetype_path('hdf5')
-    output_dir = paths.create_subdir(output_dir, 'filtered_part_files')
+    output_dir = paths.create_subdir(output_dir, 'filtered_files')
 
     out_folder = f'{output_dir}/snap_{snap}'
     if not os.path.exists(out_folder):
@@ -62,9 +62,9 @@ def filter_particles_by_obj(cs, simfile, snap, selection, oidx, verbose=0, overw
         header = input_file['Header']
         for obj in oidx:
             if overwrite:
-                output = f'{out_folder}/subset_{obj:06.0f}_halo.h5'
+                output = f'{out_folder}/subset_{obj:06.0f}.h5'
             else:
-                output = f'{out_folder}/subset_{obj:06.0f}_halo_{keyword}.h5'
+                output = f'{out_folder}/subset_{obj:06.0f}_{keyword}.h5'
                 
             copy_skeleton(simfile, output)
             with h5py.File(output, 'a') as output_file:
@@ -107,6 +107,10 @@ def filter_particles_by_obj(cs, simfile, snap, selection, oidx, verbose=0, overw
                                 print(temp_dset.shape)
 
                             filtered_dset = temp_dset[plist]
+                            if k == 'Coordinates':
+                                print('Filtering galaxy: ', obj)
+                                print(np.asarray(filtered_dset))
+                                
                             
                             del output_file[ptype][k]
                             output_file[ptype][k] = filtered_dset
