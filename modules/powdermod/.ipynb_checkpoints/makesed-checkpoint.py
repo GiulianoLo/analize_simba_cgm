@@ -180,7 +180,7 @@ class MakeSED:
                     copyfile(paramfile, os.path.join(model_dir, 'parameters_master.py'))
 
 
-    def plotsed(self, snap, gal, show=False):
+    def plotsed(self, snap, gal, show=False, ret=False):
         fig = plt.figure()
         ax = fig.add_subplot(1,1,1)
         run = os.path.join(self.model_dir_base, f'snap_{snap}', f'gal_{gal}', f'snap{snap}.galaxy{gal:06}.rtout.sed')
@@ -219,6 +219,8 @@ class MakeSED:
         filepath = os.path.join(output_dir, f'gal_{gal}' +'.png')
         plt.savefig(filepath, bbox_inches='tight')
         if show:
-            ax.show()
+            plt.show()
+        if ret:
+            return fig, ax
         
 

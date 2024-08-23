@@ -68,7 +68,7 @@ def _list_all_datasets(file):
 
 
 
-def _process_hdf5(file_path, fitspath, ignore=[], only=[], verbose=0):
+def _process_hdf5(file_path, fitspath, ignore, only, verbose=0):
     # create the empty fits file
     fits_filename=  _empty_fits(file_path, fitspath)
     print(f'Saved fits in: {fits_filename}')
@@ -84,14 +84,16 @@ def _process_hdf5(file_path, fitspath, ignore=[], only=[], verbose=0):
             tree = _read_main_tree(dataset_path)
             # create column name
             column_name = _adapt_keys(dataset_path)
-            for ign in ignore:
-                if ign in dataset_path:
-                    flag = True
-                    break
-            for onl in only:
-                if ign not in dataset_path:
-                    flag=True
-                    break
+            if len(ignore)>0:
+                for ign in ignore:
+                    if ign in dataset_path:
+                        flag = True
+                        break
+            if len(only)>0:
+                for onl in only:
+                    if ign not in dataset_path:
+                        flag=True
+                        break
             if flag==True:
                 continue
             if tree=='halo_data':
@@ -136,7 +138,7 @@ def convert_hdf5_fits(sb, snaprange, ignore, only, verbose=0, overwrite=False):
         file_path = sb.get_caesar_file(snap)
         # create the fits file
         print(f'Processing : {file_path}')
-        _process_hdf5(file_path, fitspath, ignore, verbose)
+        _process_hdf5(file_path, fitspath, ignore, only, verbose)
         
 
 

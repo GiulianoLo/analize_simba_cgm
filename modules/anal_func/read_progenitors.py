@@ -86,38 +86,6 @@ def get_fits(sb, snap, fitsdir):
     return new_filename
 
 
-# def read_progen(ids, outname, snaplist, sb, fitsdir):
-#     # Initialize a dictionary to store GroupID data for each snapshot
-#     progenid_dict = {str(i): [] for i in snaplist}
-#     progenid_dict['GroupID'] = ids
-#     # Start with the first snapshot (which should be 151)
-#     snaplist = np.sort(snaplist)[::-1]
-#     for idx, snap in enumerate(snaplist[:-1]):  # Process snapshots in reverse order
-#         fname = get_fits(sb, snap, fitsdir)
-#         print(f'Processing current snap: {fname}')
-#         with fits.open(fname) as hdul:
-#             hf = hdul[1].data
-#             #all_groupids = hf['GroupID'].astype(int)
-#             progenid = hf['descend_galaxy_star'].astype(int)
-#             print('progen index: ', progenid[:10])
-#             print(ids.max())
-#             fname_prog = get_fits(sb, snaplist[idx+1], fitsdir)
-#             print(f'Processing the previous snap: {fname_prog}')
-#             with fits.open(fname_prog) as hdul_prog:
-#                 hf_prog = hdul_prog[1].data
-#                 prog_groupid = hf_prog['GroupID'].astype(int)
-#                 print('progen group: ', prog_groupid[:10])
-#                 progenid = progenid[ids]
-#                 temp = np.ones(len(progenid))*-1
-#                 msk  = progenid > -1
-#                 temp[msk] = prog_groupid[progenid[msk]]
-#                 print('My result: ', temp[:10])
-#                 progenid_dict[str(snaplist[idx+1])] = temp
-#                 ids = progenid[msk]
-#                 print(ids)
-
-
-
 def read_progen(ids, outname, snaplist, sb, fitsdir):
     # Initialize a dictionary to store GroupID data for each snapshot
     progenid_dict = {str(i): [] for i in snaplist}
