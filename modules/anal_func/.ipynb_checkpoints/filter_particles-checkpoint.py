@@ -63,10 +63,16 @@ def filter_particles_by_obj(cs, simfile, snap, selection, oidx, verbose=0, overw
     with h5py.File(simfile, 'r') as input_file:
         header = input_file['Header']
         for obj in oidx:
-            if overwrite:
-                output = f'{out_folder}/subset_{obj:06.0f}.h5'
+            if keyword==None:
+                if selection=='galaxy':
+                    output = f'{out_folder}/subset_snap(snap)_gal{obj:06.0f}.h5' 
+                elif selection=='halo':
+                    output = f'{out_folder}/subset_snap(snap)_halo{obj:06.0f}.h5' 
             else:
-                output = f'{out_folder}/subset_{obj:06.0f}_{keyword}.h5'
+                if selection=='galaxy':
+                    output = f'{out_folder}/subset_snap(snap)_gal{obj:06.0f}_{keyword}.h5' 
+                elif selection=='halo':
+                    output = f'{out_folder}/subset_snap(snap)_halo{obj:06.0f}_(keyword).h5' 
                 
             copy_skeleton(simfile, output)
             with h5py.File(output, 'a') as output_file:
@@ -129,10 +135,7 @@ def filter_particles_by_obj(cs, simfile, snap, selection, oidx, verbose=0, overw
         print('Finished with particle filters')
 
 
-def apply_boundary_conditions(pos, box_size):
-    return (pos + box_size / 2) % box_size - box_size / 2
-
-def filter_by_aperture(cs, simfile, snap, center, radius, selection=None, verbose=0, overwrite=True, ignore_fields=[], keyword=None):
+def filter_by_aperture(cs, simfile, snap, center, radius, selection=None, verbose=0, overwrite=True, ignore_fields=[], keyword=None, closegal=None):
     """Filters particles in an HDF5 file by selecting those within a spherical aperture.
 
        Args:
@@ -150,7 +153,7 @@ def filter_by_aperture(cs, simfile, snap, center, radius, selection=None, verbos
         print(f'Analizing particle file {simfile}')
     # scale factor to convert from comoving to physical distanca units
     a = cs.simulation.scale_factor
-    box_size = 25000#cs.simulation.boxsize.value
+    box_size = cs.simulation.boxsize.value
     
     # Instantiate SavePaths
     paths = SavePaths()
@@ -166,10 +169,16 @@ def filter_by_aperture(cs, simfile, snap, center, radius, selection=None, verbos
     if not overwrite and keyword is None:
         raise ValueError('Keyword must be provided if overwrite is False')
 
-    if not overwrite:
-        output = f'{out_folder}/particles_within_aperture_{keyword}.h5'
+    if overwrite:
+        if selection=='galaxy':
+            output = f'{out_folder}/region_snap{snap:03d}_r{radius}_gal{closegal:06.0f}.h5' 
+        elif selection=='halo':
+            output = f'{out_folder}/region_snap{snap:03d}_r{radius}_halo{closegal:06.0f}.h5' 
     else:
-        output = f'{out_folder}/particles_within_aperture.h5'
+        if selection=='galaxy':
+            output = f'{out_folder}/region_snap{snap:03d}_r{radius}_gal{closegal:06.0f}_{keyword}.h5' 
+        elif selection=='halo':
+            output = f'{out_folder}/region_snap{snap:03d}_r{radius}_halo{closegal:06.0f}_(keyword).h5' 
 
     if isinstance(center, (list, np.ndarray)) and len(center) == 3:
         # Center is provided as a coordinate
@@ -204,7 +213,7 @@ def filter_by_aperture(cs, simfile, snap, center, radius, selection=None, verbos
                             print(f'{pos_key} not found in {ptype}')
                         continue
 
-                    pos = input_file[ptype][pos_key]#[:]
+                    pos = input_file[ptype][pos_key]
                     if verbose>0:
                         print(f'Using an aperture of {radius} Kpc ---> {radius/a} cKpc centered at {center}')
                     # Apply periodic boundary conditions to calculate distances correctly
