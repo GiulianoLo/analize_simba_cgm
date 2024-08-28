@@ -1,3 +1,4 @@
+
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -36,51 +37,53 @@ def find_rot_ax(L, t=None, p=None, spos='faceon'):
     
     return t, p
 
-
-
-
-def get_normalized_image(image, lower_percentile=2, upper_percentile=98, log_scale=True):
-    """Normalize the image array using percentiles and optionally apply a logarithmic scale."""
-    # Compute the vmin and vmax based on the percentiles
-    vmin = np.percentile(image, lower_percentile)
-    vmax = np.percentile(image, upper_percentile)
-    # Clip the image to the computed vmin and vmax
-    image = np.clip(image, vmin, vmax)
-    # Normalize the image to the range [0, 1]
-    normalized_image = (image - vmin) / (vmax - vmin)
-    if log_scale:
-        # Apply logarithmic scaling
-        normalized_image = np.log1p(normalized_image)  # log1p is log(1 + x) to avoid log(0)
-        # Normalize again to [0, 1] after log transformation
-        normalized_image = normalized_image / np.max(normalized_image)
+def rotation_matrices_from_angles(theta, phi):
+    """Generate rotation matrices for angles theta (rotation around Z) and phi (rotation around Y)."""
+    theta = np.radians(theta)
+    phi = np.radians(phi)
     
+    R_z = np.array([
+        [np.cos(theta), -np.sin(theta), 0],
+        [np.sin(theta),  np.cos(theta), 0],
+        [0, 0, 1]
+    ])
+    
+    R_y = np.array([
+        [np.cos(phi), 0, np.sin(phi)],
+        [0, 1, 0],
+        [-np.sin(phi), 0, np.cos(phi)]
+    ])
+    
+    return R_z @ R_y
+
+
+def get_normalized_image(image, vmin=1, vmax=99, mode='linear', zscale=False):
+    """Normalize the image array using percentiles and optionally apply a logarithmic scale."""
+    vmin = np.percentile(image, vmin)
+    vmax = np.percentile(image, vmax)
+    image = np.clip(image, vmin, vmax)
+    if mode=='log':
+        mk = image > 0
+        image[mk] = np.log10(image[mk])
+    if mode=='sqrt':
+        image = np.sqrt(image)
+    if zscale:
+        mean = np.mean(image)
+        std = np.std(image)
+        image = (image-mean)/std
+    normalized_image = (image - image.min()) / (image.max() - image.min())
     return normalized_image
 
 
-# def get_normalized_image(image, lower_percentile=2, upper_percentile=98, log_scale=True):
-#     """Normalize the image array using percentiles and optionally apply a logarithmic scale."""
-#     # Make a copy of the image to avoid modifying the original
-#     image = np.array(image, copy=True)
-    
-#     # Apply logarithmic transformation if needed
-#     if log_scale:
-#         # Avoid log of zero by adding a small constant
-#         image = np.where(image > 0, np.log10(image), 0)
-    
-#     # Compute vmin and vmax based on the percentiles
-#     vmin = np.percentile(image, lower_percentile)
-#     vmax = np.percentile(image, upper_percentile)
-    
-#     # Clip the image to the range [vmin, vmax]
-#     image = np.clip(image, vmin, vmax)
-    
-#     # Normalize the image to the range [0, 1]
-#     normalized_image = (image - vmin) / (vmax - vmin)
-    
-#     return normalized_image
 
 
-
+def apply_dust_screen(image, dust):
+    dust = (dust-dust.min())/(dust.max()-dust.min())
+    inverted_dust = 1-dust
+    # Apply the dust screen to the image
+    screened = image * inverted_dust
+    
+    return screened
 
 
 
@@ -147,7 +150,7 @@ class RenderRGB:
             return P_gas, P_star, P_dust
         return P_gas, P_star
 
-    def set_rgb(self, particle, color_map, camera, update, vmin=None, vmax=None):
+    def set_rgb(self, particle, camera, update):
         """Render and normalize the RGB image for given particles."""
         if update!=None:
             S = sph.Scene(particle)
@@ -157,20 +160,27 @@ class RenderRGB:
         R = sph.Render(S)
         img = R.get_image()
         self.phys_ext = R.get_extent()
-        return color_map(get_normalized_image(img, vmin, vmax))
-
+        return img
 
 
     def generate_images(self, camera, vmin=None, vmax=None):
         """Generate and blend images of particles."""
         particles = self.set_particles()
-        color_maps = [cm.magma, cm.Greys_r] + ([cm.gist_heat_r] if len(particles) == 3 else [])
-        rgbs = [self.set_rgb(part, cmap, camera=camera, update=None, vmin=vmin, vmax=vmax) for part, cmap in zip(particles, color_maps)]
-        blend = Blend.Blend(rgbs[1], rgbs[0])
+        color_maps = [cm.afmhot, cm.Greys_r]
+        rgbs = [self.set_rgb(part, camera=camera, update=None) for part in particles[:2]]
         if self.ifdust:
-            blend = blend.Overlay()
-            blend = Blend.Blend(blend, rgbs[2])
-        return blend.Overlay()
+            dust_screen = self.set_rgb(particles[2], camera=camera, update=None)
+            dust_screen = get_normalized_image(dust_screen, vmin=vmin, vmax=vmax, mode='linear', zscale=True)
+            gas = get_normalized_image(rgbs[0], vmin, vmax, mode='sqrt', zscale=True)
+            stars = get_normalized_image(rgbs[1], vmin, vmax, mode='sqrt', zscale=True)
+            gas = apply_dust_screen(gas, dust_screen)
+            stars = apply_dust_screen(stars, dust_screen)
+        else:
+            gas = get_normalized_image(rgbs[0], vmin, vmax, mode='sqrt', zscale=True)
+            stars = get_normalized_image(rgbs[1], vmin, vmax, mode='sqrt', zscale=True)
+            
+        blend = Blend.Blend(color_maps[1](stars), color_maps[0](gas))
+        return blend.Screen()
 
     def plot(self, image, xl, yl, name):
         """Plot and save the rendered image."""
@@ -206,17 +216,23 @@ class RenderRGB:
         path = SavePaths()
         frame_dir = path.create_subdir(path.create_subdir(path.get_filetype_path('plot'), 'videos'), 'frames')
         particles = self.set_particles()
-        color_maps = [cm.magma, cm.Greys_r, cm.inferno_r]
+        color_maps = [cm.afmhot, cm.Greys_r]
         for h, i in enumerate(data):
             i.update({'xsize': xsize, 'ysize': ysize, 'roll': 0})
-            rgbs = [self.set_rgb(particle, color_map, camera=None, update=i, vmin=vmin, vmax=vmax) for particle, color_map in zip(particles, color_maps)]
-            blend = Blend.Blend(rgbs[1], rgbs[0])
-            if len(rgbs) > 2:
-                blend = Blend.Blend(rgbs[1], rgbs[0]).Overlay()
-                blend = Blend.Blend(blend, rgbs[2])
+            rgbs = [self.set_rgb(part, camera=None, update=i) for part in particles[:2]]
+            if self.ifdust:
+                dust_screen = self.set_rgb(particles[2], camera=None, update=i)
+                dust_screen = get_normalized_image(dust_screen, vmin=vmin, vmax=vmax, mode='linear', zscale=True)
+                gas = get_normalized_image(rgbs[0], vmin, vmax, mode='sqrt', zscale=True)
+                stars = get_normalized_image(rgbs[1], vmin, vmax, mode='sqrt', zscale=False)
+                gas = apply_dust_screen(gas, dust_screen)
+                stars = apply_dust_screen(stars, dust_screen)
+            else:
+                gas = get_normalized_image(rgbs[0], vmin, vmax, mode='sqrt', zscale=True)
+                stars = get_normalized_image(rgbs[1], vmin, vmax, mode='sqrt', zscale=False)
                 
-            output = blend.Overlay()
-            plt.imsave(f'{frame_dir}/image_{h:04d}.png', output)
+            blend = Blend.Blend(color_maps[1](stars), color_maps[0](gas))
+            plt.imsave(f'{frame_dir}/image_{h:04d}.png', blend.Screen())
 
     def create_video(self, name, interval=100):
         """Create a GIF from the rendered frames."""
@@ -250,54 +266,166 @@ class RenderRGB:
 
 
 
-class SingleRender():
+
+class SingleRender:
     def __init__(self, snapfile, catfile, id, propr, region=False, dim='Msun'):
-        ds = yt.load(snapfile)
-        obj = caesar.load(catfile)
-        ad = ds.all_data()
-        gal = obj.galaxies[id]
+        """
+        Initializes the SingleRender object.
+        
+        Parameters:
+        - snapfile: Path to the snapshot file.
+        - catfile: Path to the catalog file.
+        - id: Galaxy ID.
+        - propr: Property to retrieve (tuple of particle type and property).
+        - region: If True, use region data; otherwise, use galaxy data.
+        - dim: Dimension for mass (e.g., 'Msun').
+        """
+        self.ds = yt.load(snapfile)
+        self.obj = caesar.load(catfile)
+        self.ad = self.ds.all_data()
+        self.gal = self.obj.galaxies[id]
+        self.propr = propr
+        self.region = region
+        self.dim = dim
+        
+        self._initialize_data()
+
+    def _initialize_data(self):
         def get_data(particle_type, prop, dim, indices=None):
-            pos = ad[particle_type, 'Coordinates']
-            mass = ad[particle_type, prop[:-2] if '_s' in prop else prop]
+            pos = self.ad[particle_type, 'Coordinates']
+            mass = self.ad[particle_type, prop[:-2] if '_s' in prop else prop]
             if indices is not None:
                 pos = pos[indices]
                 mass = mass[indices]
-        
+
             pos = pos.in_units('kpc').value
-            mass = ds.arr(mass, 'code_mass').in_units(dim).value if '_s' in prop else mass.in_units(dim).value
+            mass = self.ds.arr(mass, 'code_mass').in_units(dim).value if '_s' in prop else mass.in_units(dim).value
             return pos, mass
 
-        if region:
+        if self.region:
             print('Doing region...')
-            pos, mass = get_data(propr[0], propr[1], dim=dim)
+            self.pos, self.mass = get_data(self.propr[0], self.propr[1], dim=self.dim)
         else:
-            pos, mass = get_data(propr[0], propr[1], dim=dim, indices=gal.glist)
-    
-        self.a = obj.simulation.scale_factor
+            self.pos, self.mass = get_data(self.propr[0], self.propr[1], dim=self.dim, indices=self.gal.glist)
+        
+        self.a = self.obj.simulation.scale_factor
+        self.pos = self.pos*self.a
+        self.mass = self.mass*self.a
         self.phys_ext = None
-        self.region = region
-        self.pos = pos
-        self.mass = mass
-        self.gal = gal
-        self.propr = propr
 
-    def single_map(self, center=None, extent=5, t=None, p=None, r='infinity',
-                   roll=0, xsize=400, ysize=400, zoom=None, spos='faceon', cmap='viridis', vmin=1, vmax=99):
-        if center==None:
+    def single_map(self, center=None, ex=5, t=None, p=None, r='infinity', roll=0,
+                   xsize=400, ysize=400, zoom=None, spos='faceon', cmap='viridis', vmin=1, vmax=99):
+        """
+        Generates a single map of the simulation data.
+        
+        Parameters:
+        - center: Coordinates of the center for the map.
+        - extent: Extent of the map in kpc.
+        - t, p: Angles for camera orientation.
+        - r: Radius for the camera.
+        - roll: Camera roll angle.
+        - xsize, ysize: Size of the output image.
+        - zoom: Zoom factor for the camera.
+        - spos: Orientation of the plot ('faceon' or 'edgeon').
+        - cmap: Colormap for the image.
+        - vmin, vmax: Color scaling for the image.
+        """
+        if center is None:
             center = self.gal.minpotpos.in_units('kpc').value
+        
         L = self.gal.rotation['gas_L']
         t, p = find_rot_ax(L, t, p, spos)
         P = sph.Particles(self.pos, self.mass)
         C = sph.Camera(x=center[0], y=center[1], z=center[2],
-                       r=r,t=t, p=p, roll=roll,
-                       extent=[-extent,extent,-extent,extent],
+                       r=r, t=t, p=p, roll=roll,
+                       extent=[-ex, ex, -ex, ex],
                        xsize=xsize, ysize=ysize, zoom=zoom)
         S = sph.Scene(P, Camera=C)
         R = sph.Render(S)
         self.phys_ext = R.get_extent()
         img = R.get_image()
-        
+
         return get_normalized_image(img, vmin, vmax)
+
+    def stream_plot(self, center=None, ex=5, r='infinity', t=None, p=None, xl='x', yl='y', spos='faceon'):
+        """
+        Generates a stream plot of the velocity field over the density field.
+        
+        Parameters:
+        - center: Coordinates of the center for the plot.
+        - extent: Extent of the plot in kpc.
+        - r: Radius for the plot.
+        - t, p: Angles for rotation.
+        - xl, yl: Labels for the x and y axes.
+        - spos: Orientation of the plot ('faceon' or 'edgeon').
+        """
+        L = self.gal.rotation['gas_L']
+        t, p = find_rot_ax(L, t, p, spos=spos)
+        R = rotation_matrices_from_angles(t, p)
+        
+        if self.region:
+            if self.propr[0] == 'PartType0':
+                vel = self.ad['PartType0', 'Velocities'].in_units('m/s').value * self.a
+                hsml = self.ad['PartType0', 'SmoothingLength'].in_units('kpc').value * self.a
+            else:
+                raise ValueError('Particles must be gas')
+        else:
+            if self.propr[0] == 'PartType0':
+                vel = self.ad['PartType0', 'Velocities'][self.gal.glist].in_units('m/s').value * self.a
+                hsml = self.ad['PartType0', 'SmoothingLength'][self.gal.glist].in_units('kpc').value * self.a
+            else:
+                raise ValueError('Particles must be gas')
+        
+        if center is None:
+            center = self.gal.minpotpos.in_units('kpc').value * self.a
+    
+        pos = np.dot(self.pos - center, R.T)
+        vel = np.dot(vel, R.T)
+        pos += center
+    
+        qp = QuickView(pos, hsml=hsml, r='infinity', x=center[0], y=center[1], z=center[2],
+                       plot=False, extent=[-ex, ex, -ex, ex], logscale=False)
+        density_field = qp.get_image()
+        extent = qp.get_extent()
+        
+        epsilon = 1e-10  # Small value to prevent division by zero
+        vfield = []
+        for i in range(2):
+            qv = QuickView(pos, vel[:, i], hsml=hsml, r='infinity', x=center[0], y=center[1], z=center[2],
+                           plot=False, extent=[-ex, ex, -ex, ex], logscale=False)
+            frac = qv.get_image() / (density_field + epsilon)
+            frac[~np.isfinite(frac)] = 0.  # Set non-finite values to zero
+            vfield.append(frac)
+        
+        fig = plt.figure(1, figsize=(7, 7))
+        ax = fig.add_subplot(111)
+        X = np.linspace(extent[0], extent[1], 500)
+        Y = np.linspace(extent[2], extent[3], 500)
+        ax.imshow(np.log1p(density_field), origin='lower', extent=extent, cmap='bone')
+        
+        # Calculate stream plot colors based on velocity magnitude
+        velocity_magnitude = np.sqrt(vfield[0]**2 + vfield[1]**2)
+        color = np.log1p(velocity_magnitude)
+        
+        max_color = np.max(color)
+        if max_color > 0:
+            color /= max_color  # Normalize only if max_color is greater than 0
+        else:
+            color = np.zeros_like(color)  # Set to zeros if max_color is 0
+    
+        lw = 2 * color
+        ax.streamplot(X, Y, vfield[0], vfield[1], color=color, density=1.5, cmap='jet', linewidth=lw, arrowsize=1)
+        
+        ax.set_xlim(extent[0], extent[1])
+        ax.set_ylim(extent[2], extent[3])
+        ax.minorticks_on()
+        ax.set_xlabel(xl, size=25)
+        ax.set_ylabel(yl, size=25)
+        plt.show()
+        return fig, ax
+
+
+
 
     def plot(self, image, xl, yl, name, vmin=None, vmax=None):
         """Plot and save the rendered image."""
@@ -316,8 +444,3 @@ class SingleRender():
             fig.savefig(os.path.join(base_dir, f'map_region_{self.propr[1]}_{name}.png'))
         else:
             fig.savefig(os.path.join(base_dir, f'map_{self.propr[1]}_{name}.png'))
-
-        
-
-
-        
