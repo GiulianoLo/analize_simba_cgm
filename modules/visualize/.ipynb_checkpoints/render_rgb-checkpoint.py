@@ -86,7 +86,9 @@ def apply_dust_screen(image, dust):
     return screened
 
 
-
+def gamma_correction(image, gamma=2.2):
+    image = (image)**gamma
+    return image
 
 
 def decide_load(snapfile, catfile, id, propr, region=False, ifdust=False, dim=['Msun', 'Msun', 'Msun']):
@@ -182,9 +184,11 @@ class RenderRGB:
         blend = Blend.Blend(color_maps[1](stars), color_maps[0](gas))
         return blend.Screen()
 
-    def plot(self, image, xl, yl, name):
+    def plot(self, image, xl, yl, name, correct=False):
         """Plot and save the rendered image."""
         fig, ax = plt.subplots(figsize=(12, 12))
+        if isinstance(correct, float):
+            image = gamma_correction(image, correct)
         ax.imshow(image, extent=self.phys_ext)
         ax.set_xlabel(xl)
         ax.set_ylabel(yl)
@@ -303,10 +307,12 @@ class SingleRender:
             return pos, mass
 
         if self.region:
-            print('Doing region...')
-            self.pos, self.mass = get_data(self.propr[0], self.propr[1], dim=self.dim)
+                self.pos, self.mass = get_data(self.propr[0], self.propr[1], dim=self.dim)
         else:
-            self.pos, self.mass = get_data(self.propr[0], self.propr[1], dim=self.dim, indices=self.gal.glist)
+            if self.propr[0] == 'PartType0':
+                self.pos, self.mass = get_data(self.propr[0], self.propr[1], dim=self.dim, indices=self.gal.glist)
+            else:
+                self.pos, self.mass = get_data(self.propr[0], self.propr[1], dim=self.dim, indices=self.gal.slist)
         
         self.a = self.obj.simulation.scale_factor
         self.pos = self.pos*self.a
@@ -314,7 +320,7 @@ class SingleRender:
         self.phys_ext = None
 
     def single_map(self, center=None, ex=5, t=None, p=None, r='infinity', roll=0,
-                   xsize=400, ysize=400, zoom=None, spos='faceon', cmap='viridis', vmin=1, vmax=99):
+                   xsize=400, ysize=400, zoom=None, spos='faceon', cmap='viridis', vmin=1, vmax=99, mode='log', zscale=False):
         """
         Generates a single map of the simulation data.
         
@@ -331,7 +337,7 @@ class SingleRender:
         - vmin, vmax: Color scaling for the image.
         """
         if center is None:
-            center = self.gal.minpotpos.in_units('kpc').value
+            center = self.gal.minpotpos.in_units('kpc').value*self.a
         
         L = self.gal.rotation['gas_L']
         t, p = find_rot_ax(L, t, p, spos)
@@ -345,7 +351,7 @@ class SingleRender:
         self.phys_ext = R.get_extent()
         img = R.get_image()
 
-        return get_normalized_image(img, vmin, vmax)
+        return get_normalized_image(img, vmin, vmax, mode, zscale)
 
     def stream_plot(self, center=None, ex=5, r='infinity', t=None, p=None, xl='x', yl='y', spos='faceon'):
         """
@@ -397,7 +403,7 @@ class SingleRender:
             frac[~np.isfinite(frac)] = 0.  # Set non-finite values to zero
             vfield.append(frac)
         
-        fig = plt.figure(1, figsize=(7, 7))
+        fig = plt.figure(1, figsize=(12, 12))
         ax = fig.add_subplot(111)
         X = np.linspace(extent[0], extent[1], 500)
         Y = np.linspace(extent[2], extent[3], 500)
