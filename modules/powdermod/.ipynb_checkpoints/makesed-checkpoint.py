@@ -188,6 +188,8 @@ class MakeSED:
         m = ModelOutput(run)
         wav,flux = m.get_sed(inclination='all',aperture=-1)
         wav  = np.asarray(wav)*u.micron #wav is in micron
+        print(wav)
+        print(z)
         wav *= (1.+z)
         
         flux = np.asarray(flux)*u.erg/u.s

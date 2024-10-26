@@ -50,7 +50,7 @@ class Simba:
         self.cs_directory = self.sim_directory+'/Groups/'
         self.cosmo = cosmo
 
-        outs = np.loadtxt(self.output_file, usecols=(0))
+        self.outs = np.loadtxt(self.output_file, usecols=(0))
         #self.zeds = np.array([1. / outs[int(snap)] - 1 for snap in self.snaps])
 
         self.filters = [
@@ -116,5 +116,4 @@ class Simba:
         Returns:
         float: the redshift of the snapshot
         """
-        outs = np.loadtxt(self.output_file)
-        return 1. / outs[int(snap)] - 1
+        return 1. / self.outs[int(snap)] - 1

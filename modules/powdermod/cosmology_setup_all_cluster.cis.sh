@@ -86,9 +86,9 @@ if [ $COSMOFLAG -eq 1 ]
 then
     echo "hydro_dir = '$hydro_dir_remote/'">>$filem
     if [ "$subset_type" == "plist" ]; then
-        echo "snapshot_name = 'subset_snap{snapnum_str}_gal'+galaxy_num_str+'.h5'" >> $filem
+        echo "snapshot_name = f'subset_snap{snapnum_str}_gal'+galaxy_num_str+'.h5'" >> $filem
     elif [ "$subset_type" == "region" ]; then
-        echo "snapshot_name = 'region_snap{snapnum_str}_r${radius}_gal'+galaxy_num_str+'.h5'" >> $filem
+        echo "snapshot_name = f'region_snap{snapnum_str}_r${radius}_gal'+galaxy_num_str+'.h5'" >> $filem
     else
         echo "Error: Invalid snapshot_type. Must be 'plist' or 'region'." >&2
         exit 1
@@ -96,9 +96,9 @@ then
 else
     echo "hydro_dir = '$hydro_dir_remote/'">>$filem
     if [ "$subset_type" == "plist" ]; then
-        echo "snapshot_name = 'subset_snap{snapnum_str}_gal'+galaxy_num_str+'.h5'" >> $filem
+        echo "snapshot_name = f'subset_snap{snapnum_str}_gal'+galaxy_num_str+'.h5'" >> $filem
     elif [ "$subset_type" == "region" ]; then
-        echo "snapshot_name = 'region_snap{snapnum_str}_r${radius}_gal'+galaxy_num_str+'.h5'" >> $filem
+        echo "snapshot_name = f'region_snap{snapnum_str}_r${radius}_gal'+galaxy_num_str+'.h5'" >> $filem
     else
         echo "Error: Invalid snapshot_type. Must be 'plist' or 'region'." >&2
         exit 1
@@ -149,7 +149,7 @@ if [ "$job_flag" -eq 1 ]; then
     if [ $N -gt 1000 ]; then
         echo "#SBATCH -t 0-08:00" >>$qsubfile
     else
-        echo "#SBATCH -t 0-01:00" >>$qsubfile
+        echo "#SBATCH -t 1-00:00" >>$qsubfile
     fi
 
     echo "#SBATCH --ntasks=8">>$qsubfile
