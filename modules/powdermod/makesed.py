@@ -109,7 +109,7 @@ class MakeSED:
 
 
     
-    def create_master(self, where):
+    def create_master(self, where, subset_type='plist', radius=None):
         """Uses the input files for the selection to initialize the parameters_master and parameters_models.
            This function automatically reads the selection file and creates a subdirectory for each snapshot 
            in the hydro_dir_base and model_dir_base, and for each snap, the folder corresponding to the galaxy ID.
@@ -123,7 +123,7 @@ class MakeSED:
         with h5py.File(filepath, 'r') as hf: 
             snaps = list(hf.keys())[::-1]
             snaps = [int(snap[4:]) for snap in snaps]
-            scalefactor = np.loadtxt(self.hydro_outputfile)
+            scalefactor = np.loadtxt(self.hydro_outputfile, usecols=0)
     
             for n, snap in enumerate(snaps):
                 # Load galaxy information from HDF5 file
@@ -167,7 +167,7 @@ class MakeSED:
                         cmd = (
                             f"{setupfile} {self.nnodes} {model_dir} {hydro_dir} {self.model_run_name} {self.COSMOFLAG} "
                             f"{model_dir_remote} {hydro_dir} {xpos} {ypos} {zpos} {nh} {int(snap)} {tcmb} {i} "
-                            f"{job_flag} {N-1} {hidx[i]}"
+                            f"{job_flag} {N-1} {hidx[i]} {radius} {subset_type}"
                         )
                         # Run the command to set up the parameters master
                         call(cmd, shell=True)

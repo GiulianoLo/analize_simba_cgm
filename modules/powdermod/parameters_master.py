@@ -2,7 +2,9 @@
 #===============================================
 #HOME INFORMATION
 #===============================================
-pd_source_dir = '/home/lorenzong/powderday/'
+root = '/mnt/home/glorenzon'
+
+pd_source_dir = root+'/powderday/'
 
 #===============================================
 #RESOLUTION KEYWORDS
@@ -36,7 +38,7 @@ seed = -12345 #has to be an int, and negative.
 #===============================================
 #DUST INFORMATION 
 #===============================================
-dustdir = '/home/lorenzong/hyperion-dust-0.1.0/dust_files/' #location of your dust files
+dustdir = root+'/hyperion-dust/dust_files/' #location of your dust files
 dustfile = 'kmh94_3.1_hg.hdf5' #'d03_3.1_6.0_A.hdf5'
 PAH = True
 
@@ -152,7 +154,7 @@ N_STELLAR_AGE_BINS = 25
 BH_SED = False #True
 BH_eta = 0.1 #bhluminosity = BH_eta * mdot * c**2.
 BH_model = "Nenkova"
-BH_modelfile = "/home/lorenzong/powderday/agn_models/clumpy_models_201410_tvavg.hdf5"
+BH_modelfile = root+"/powderday/agn_models/clumpy_models_201410_tvavg.hdf5"
 # The Nenkova BH_modelfile can be downloaded here:
 # https://www.clumpy.org/downloads/clumpy_models_201410_tvavg.hdf5
 BH_var = True # Include time variations on BH luminosity (default Hickox+ 2014)
@@ -179,7 +181,7 @@ SED_MONOCHROMATIC_max_lam = 0.4 #micron
 
 
 IMAGING = False
-filterdir='/home/lorenzong/powderday/filters/'
+filterdir=root+'/powderday/filters/'
 filterfiles = ['H2.filter']
 
 npix_x = 512

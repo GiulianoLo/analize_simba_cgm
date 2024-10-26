@@ -32,6 +32,9 @@ index=${14}
 job_flag=${15}
 N=${16}
 halo=${17}
+radius=${18}
+subset_type=${19}
+
 
 # echo "processing model file for galaxy,snapshot:  $galaxy,$snap"
 
@@ -43,13 +46,12 @@ rm -f *.pyc
 #echo "setting up the output directory in case it doesnt already exist"
 # echo "snap is: $snap"
 # echo "model dir is: $model_dir"
-if [ ! -d "$model_dir" ]; then
-    mkdir $model_dir
-    out_folder="$model_dir/out"
-    err_folder="$model_dir/err"
-    mkdir $out_folder
-    mkdir $err_folder
-fi
+# Create model, out, and err directories if they do not exist
+mkdir -p "$model_dir/out" "$model_dir/err" || {
+    echo "Error creating directories" >&2
+    exit 1
+}
+
 
 # echo "model output dir is: $model_dir_remote"
 if [ ! -d "$model_dir_remote" ]; then
@@ -83,12 +85,25 @@ echo -e "\n" >>$filem
 if [ $COSMOFLAG -eq 1 ]
 then
     echo "hydro_dir = '$hydro_dir_remote/'">>$filem
-    echo "snapshot_name = 'subset_'+galaxy_num_str+'.h5'" >>$filem
+    if [ "$subset_type" == "plist" ]; then
+        echo "snapshot_name = 'subset_snap{snapnum_str}_gal'+galaxy_num_str+'.h5'" >> $filem
+    elif [ "$subset_type" == "region" ]; then
+        echo "snapshot_name = 'region_snap{snapnum_str}_r${radius}_gal'+galaxy_num_str+'.h5'" >> $filem
+    else
+        echo "Error: Invalid snapshot_type. Must be 'plist' or 'region'." >&2
+        exit 1
+    fi
 else
     echo "hydro_dir = '$hydro_dir_remote/'">>$filem
-    echo "snapshot_name = 'subset_'+galaxy_num_str+'.h5'" >>$filem
+    if [ "$subset_type" == "plist" ]; then
+        echo "snapshot_name = 'subset_snap{snapnum_str}_gal'+galaxy_num_str+'.h5'" >> $filem
+    elif [ "$subset_type" == "region" ]; then
+        echo "snapshot_name = 'region_snap{snapnum_str}_r${radius}_gal'+galaxy_num_str+'.h5'" >> $filem
+    else
+        echo "Error: Invalid snapshot_type. Must be 'plist' or 'region'." >&2
+        exit 1
+    fi
 fi
-
 
 echo -e "\n" >>$filem
 
@@ -125,8 +140,6 @@ if [ "$job_flag" -eq 1 ]; then
     echo $qsubfile
     
     echo "#! /bin/bash" >>$qsubfile
-    echo "#SBATCH -A dp276" >>$qsubfile
-    echo "#SBATCH -p cosma7" >>$qsubfile
     echo "#SBATCH --job-name=${model_run_name}.snap${snap}" >>$qsubfile
     echo "#SBATCH --output=out/pd.master.snap${snap}.%a.%N.%j.o" >>$qsubfile
     echo "#SBATCH --error=err/pd.master.snap${snap}.%a.%N.%j.e" >>$qsubfile
@@ -145,13 +158,12 @@ if [ "$job_flag" -eq 1 ]; then
     echo "#SBATCH --array=0-${Nout}">>$qsubfile
     echo -e "\n">>$qsubfile
     echo -e "\n" >>$qsubfile
-    
-    echo "module purge">>$qsubfile
-    echo "module load git/2.20.1 gcc/9.3.0 openmpi/4.0.5 hdf5/1.12.1">>$qsubfile
+
+    echo "source $HOME/miniconda3/etc/profile.d/conda.sh">>$qsubfile
+    echo "conda activate pd39">>$qsubfile
+    echo "cd $HOME/simbanator/output/hdf5/powderday_sed_out/snap_${snap}/">>$qsubfile
     echo -e "\n">>$qsubfile
     
-    echo "conda activate pd-env">>$qsubfile
-    echo -e "\n">>$qsubfile
     
     echo "PD_FRONT_END=\"/mnt/home/glorenzon/powderday/pd_front_end.py\"">>$qsubfile
     echo -e "\n">>$qsubfile
