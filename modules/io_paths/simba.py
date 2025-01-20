@@ -26,6 +26,16 @@ class Simba:
                 self.sim_directory = '/media/lorenzong/Data1/simba_hig_res/'
                 self.name_form = 'm25n512_%03dd.hdf5'
             self.output_file = '/mnt/home/glorenzon/simbanator/analize_simba_cgm/modules/io_paths/convert_snap_z_factors/zsnap_map_caesar_box100.txt'
+        
+        elif machine == 'klisiecki':
+            if size == 100:
+                self.sim_directory = '/mnt/home/klisiecki/simba/raw_catalogs/'
+                self.name_form = 'm100n1024_%03d.hdf5'
+            else:
+                raise  
+            self.output_file = '/mnt/home/glorenzon/simbanator/analize_simba_cgm/modules/io_paths/convert_snap_z_factors/zsnap_map_caesar_box100.txt'
+
+        
         elif machine == 'PC39BP4':
             if size == 25:
                 self.sim_directory = '/media/lorenzong/Data1/simba_hig_res/'
@@ -107,7 +117,7 @@ class Simba:
         Returns:
         np.array: Array of redshift values.
         """
-        return np.array([1. / outs[int(snap)] - 1 for snap in self.snaps])
+        return np.array([1. / self.outs[int(snap)] - 1 for snap in self.snaps])
 
     def get_z_from_snap(self, snap):
         """

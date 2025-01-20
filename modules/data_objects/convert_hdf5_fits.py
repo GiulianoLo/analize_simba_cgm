@@ -96,6 +96,8 @@ def _process_hdf5(file_path, fitspath, ignore, only, verbose=0):
                         break
             if flag==True:
                 continue
+                
+            
             if tree=='halo_data':
                 if verbose==1:
                     print('Copying Halo')

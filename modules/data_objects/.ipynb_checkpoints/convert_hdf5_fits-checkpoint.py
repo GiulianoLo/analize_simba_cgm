@@ -96,12 +96,24 @@ def _process_hdf5(file_path, fitspath, ignore, only, verbose=0):
                         break
             if flag==True:
                 continue
-            if tree=='halo_data':
-                if verbose==1:
+
+            if tree == 'halo_data':
+                if verbose == 1:
                     print('Copying Halo')
-                selgal = f['galaxy_data']['parent_halo_index']                  
-                h5col = np.asarray(h5col)[selgal]
-                column_name = 'halo_'+column_name  
+                selgal = f['galaxy_data']['parent_halo_index']
+                if selgal.max() >= h5col.size:
+                    print(f"Warning: Some indices in selgal exceed the size of h5col. Filtering invalid indices.")
+                valid_selgal = selgal[selgal < h5col.size]
+                h5col = np.asarray(h5col)[valid_selgal]
+                column_name = 'halo_' + column_name
+
+            
+            # if tree=='halo_data':
+            #     if verbose==1:
+            #         print('Copying Halo')
+            #     selgal = f['galaxy_data']['parent_halo_index']                  
+            #     h5col = np.asarray(h5col)[selgal]
+            #     column_name = 'halo_'+column_name  
             if tree=='tree_data':
                 if verbose==1:
                     print('Copying tree')

@@ -110,11 +110,11 @@ def filter_particles_by_obj(cs, simfile, snap, selection, oidx, verbose=0, overw
                                 print(ptype, k)
 
                             # Extract and filter the dataset
-                            temp_dset = input_file[ptype][k][:]
+                            filtered_dset = input_file[ptype][k][np.sort(plist)]
                             if verbose > 1:
                                 print(temp_dset.shape)
 
-                            filtered_dset = temp_dset[plist]
+                            #filtered_dset = temp_dset[plist]
                                 
                             
                             del output_file[ptype][k]
@@ -244,11 +244,10 @@ def filter_by_aperture(cs, simfile, snap, center, radius, selection=None, verbos
                             print(ptype, k)
 
                         # Extract and filter the dataset
-                        temp_dset = input_file[ptype][k][:]
+                        filtered_dset = input_file[ptype][k][mask]
                         if verbose > 1:
                             print(temp_dset.shape)
 
-                        filtered_dset = temp_dset[mask]
                         
                         # Create filtered datasets in output file
                         if k in output_file[ptype]:
