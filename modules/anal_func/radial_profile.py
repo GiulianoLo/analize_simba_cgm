@@ -27,24 +27,51 @@ def radial_profile(snapfile, catfile, galaxy_id, properties_dict,\
     gal = [i for i in obj.galaxies if i.GroupID == galaxy_id][0]
     center = gal.pos.in_units('kpc').value
 
+    # def get_data(particle_type, props, dim, indices=None):
+    #     pos = ad[particle_type, 'Coordinates'].in_units('kpc').value
+    #     if indices is not None:
+    #         pos = pos[indices]
+    #     data_list = []
+    #     for prop in props:
+    #         data = ad[particle_type, prop[:-2] if '_s' in prop else prop]
+    #         if indices is not None:
+    #             data = data[indices]
+           
+    #         # Convert property data using the dimensional units before and after conversion
+    #         #print(particle_type)
+    #         #print(dim[particle_type][0], dim[particle_type][1])
+    #         data = ds.arr(data, dim[particle_type][0]).in_units(dim[particle_type][1]).value
+            
+    #         data_list.append(data)
+    
+    #     return pos, data_list
+
+
     def get_data(particle_type, props, dim, indices=None):
         pos = ad[particle_type, 'Coordinates'].in_units('kpc').value
         if indices is not None:
             pos = pos[indices]
         data_list = []
         for prop in props:
-            data = ad[particle_type, prop[:-2] if '_s' in prop else prop]
+            try:
+                data = ad[particle_type, prop[:-2] if '_s' in prop else prop]
+            except KeyError:
+                print(f"Property {prop} not found for {particle_type}")
+                continue
             if indices is not None:
                 data = data[indices]
-           
-            # Convert property data using the dimensional units before and after conversion
-            #print(particle_type)
-            #print(dim[particle_type][0], dim[particle_type][1])
-            data = ds.arr(data, dim[particle_type][0]).in_units(dim[particle_type][1]).value
+    
+            # Handle unit conversion
+            if particle_type in dim and prop in dim[particle_type]:
+                print(f'Converting {prop} from {dim[particle_type][prop][0]} to {dim[particle_type][prop][1]}')
+                data = ds.arr(data, dim[particle_type][prop][0]).in_units(dim[particle_type][prop][1]).value
+            else:
+                print(f"Property {prop} for {particle_type} is not defined in dim. Skipping conversion.")
             
             data_list.append(data)
     
         return pos, data_list
+
 
     # Prepare to store profiles
     profiles = {ptype: {prop: [] for prop in properties_dict[ptype]} for ptype in properties_dict}
@@ -69,7 +96,7 @@ def radial_profile(snapfile, catfile, galaxy_id, properties_dict,\
                     if dens:
                         profiles[ptype][prop].append(sum(data[i][mask]) / A)  # Surface density
                     else:
-                        profiles[ptype][prop].append(np.mean(data[i][mask]))  # Mean property like metallicity
+                        profiles[ptype][prop].append(np.sum(data[i][mask]))  # Mean property like metallicity
         
     
     else:

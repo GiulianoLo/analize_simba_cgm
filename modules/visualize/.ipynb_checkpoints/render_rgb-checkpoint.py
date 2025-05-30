@@ -57,22 +57,74 @@ def rotation_matrices_from_angles(theta, phi):
     return R_z @ R_y
 
 
+# def get_normalized_image(image, vmin=1, vmax=99, mode='linear', zscale=False):
+#     """Normalize the image array using percentiles and optionally apply a logarithmic scale."""
+#     vmin = np.percentile(image, vmin)
+#     vmax = np.percentile(image, vmax)
+#     image = np.clip(image, vmin, vmax)
+#     if mode=='log':
+#         mk = image > 0
+#         image[mk] = np.log10(image[mk])
+#     if mode=='sqrt':
+#         image = np.sqrt(image)
+#     if mode=='symm':
+#         image = 
+    
+#     if zscale:
+#         mean = np.mean(image)
+#         std = np.std(image)
+#         image = (image-mean)/std
+#     normalized_image = (image - image.min()) / (image.max() - image.min())
+#     return normalized_image
+
+import numpy as np
+from matplotlib.colors import TwoSlopeNorm
+
 def get_normalized_image(image, vmin=1, vmax=99, mode='linear', zscale=False):
-    """Normalize the image array using percentiles and optionally apply a logarithmic scale."""
-    vmin = np.percentile(image, vmin)
-    vmax = np.percentile(image, vmax)
-    image = np.clip(image, vmin, vmax)
-    if mode=='log':
-        mk = image > 0
+    """Normalize the image array using percentiles and optionally apply different scaling modes."""
+    
+    # vmin_value = np.percentile(image, vmin)
+    # vmax_value = np.percentile(image, vmax)
+    
+    # # Clip the image values between vmin and vmax
+    # image = np.clip(image, vmin_value, vmax_value)
+    
+    # Logarithmic scaling
+    if mode == 'log':
+        mk = image > 0  # Avoid log of non-positive values
         image[mk] = np.log10(image[mk])
-    if mode=='sqrt':
+        vmin_value = np.percentile(image, vmin)
+        vmax_value = np.percentile(image, vmax)
+        image = np.clip(image, vmin_value, vmax_value)
+
+    
+    # Square root scaling
+    if mode == 'sqrt':
         image = np.sqrt(image)
+    
+    # Symmetric normalization
+    if mode == 'symm':
+        mk = image > 0  # Avoid log of non-positive values
+        image[mk] = np.log10(image[mk])
+        # Find the center point (e.g., 0 for symmetric scaling)
+        print(vmin_value, vmax_value)
+        midpoint = np.nanmean(image[mk])
+        # Apply symmetric normalization using TwoSlopeNorm
+        print(image[mk].min(), midpoint, image[mk].max())
+        norm = TwoSlopeNorm(vmin=image[mk].min(), vcenter=midpoint, vmax=image[mk].max())
+        image = norm(image)  # Normalize the image symmetrically around zero
+        
+    # Optional z-scale normalization
     if zscale:
         mean = np.mean(image)
         std = np.std(image)
-        image = (image-mean)/std
+        image = (image - mean) / std
+    
+    # Normalize between 0 and 1
     normalized_image = (image - image.min()) / (image.max() - image.min())
+    
     return normalized_image
+
 
 
 
@@ -433,16 +485,16 @@ class SingleRender:
 
 
 
-    def plot(self, image, xl, yl, name, vmin=None, vmax=None):
+    def plot(self, image, xl, yl, name, vmin=None, vmax=None, cmap='viridis'):
         """Plot and save the rendered image."""
         fig, ax = plt.subplots(figsize=(12, 12))
-        im = ax.imshow(image, extent=self.phys_ext, cmap='viridis')  
+        im = ax.imshow(image, extent=self.phys_ext, cmap=cmap)  
         ax.set_xlabel(xl)
         ax.set_ylabel(yl)
         
-        # Add colorbar
-        cbar = fig.colorbar(im, ax=ax)
-        cbar.set_label('Mass [Msun]')
+        # # Add colorbar
+        # cbar = fig.colorbar(im, ax=ax)
+        # cbar.set_label('Mass [Msun]')
         
         path = SavePaths()
         base_dir = path.create_subdir(path.get_filetype_path('plot'), 'renders')

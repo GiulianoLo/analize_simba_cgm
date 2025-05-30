@@ -41,54 +41,45 @@ class HistoryPlots:
         """
         for ax in self.axs:
             ax.plot(self.x, self.y, **kwargs)
+            ax.set_yscale('log')  # Set y-axis to logarithmic scale
 
     def z_on_top(self, zlist, cosmo):
         """
-        Add a secondary x-axis with redshift values and corresponding ages.
-        Secondary x-axis labels are displayed only on the top subplot,
-        and primary x-axis labels are displayed only on the bottom subplot.
-        Ticks are shown on all subplots.
-    
-        :param zlist: List of redshift values.
-        :param cosmo: Cosmology object with an `age` method.
-        """
-        # Iterate through all axes to configure the secondary x-axis
-        for i, ax in enumerate(self.axs):
-            # Calculate the age ticks based on redshift values
-            zticks = zlist
-            # Create a secondary x-axis
-            ax2 = ax.twiny()
-            ax2.set_xticks(zticks)
-            ax2.set_xticklabels(['{:g}'.format(age) for age in zlist])
-            
-            # Set x-limits for both primary and secondary axes
-            zmin, zmax = min(zlist), max(zlist)
-            ax.set_xlim(cosmo.age(zmin).value, cosmo.age(zmax).value)
-            ax2.set_xlim(zmin, zmax)
-            
-            # Ensure minor ticks are on
-            ax.minorticks_on()
-            
-            # Configure which axes will display labels
-            if i == len(self.axs) - 1:  # Only on the bottom subplot
-                ax.set_xlabel('Age (Gyr)')
-            else:
-                ax.set_xlabel('')  # Hide xlabel on non-bottom subplots
-            
-            if i == len(self.axs) - 1:  # Only on the bottom subplot
-                ax2.set_xlabel('Redshift')  # Label for secondary x-axis
-            
-            if i == 0:  # Only on the top subplot
-                ax2.set_xlabel('Redshift')  # Label for secondary x-axis
-            
-            # Optionally: Clear secondary x-axis labels from non-top subplots
-            if i != 0:
-                ax2.set_xticklabels([])
+        Add a secondary x-axis on top showing redshift values that correspond
+        to cosmic age values on the bottom x-axis.
 
-            ax.axvline(cosmo.age(2).value)
-                
-            #Title adjustment (optional)
-            ax.set_title('Redshift')
+        Parameters
+        ----------
+        zlist : list or array
+            List of redshift values to mark on the secondary axis.
+        cosmo : astropy.cosmology object
+            Cosmology with an `age(z)` method returning Quantity in Gyr.
+        """
+        # Convert redshifts to cosmic ages (in Gyr)
+        age_ticks = [cosmo.age(z).value for z in zlist]  # in Gyr
+
+        # Loop through all axes in the figure
+        for i, ax in enumerate(self.axs):
+            # Set main x-axis limits (age in Gyr) — make sure it's increasing
+            xmin = min(age_ticks)
+            xmax = max(age_ticks)
+            ax.set_xlim(xmin, xmax)
+            ax.set_xlabel('Cosmic Age (Gyr)' if i == len(self.axs) - 1 else '')
+
+            # Create twin x-axis on top
+            ax2 = ax.twiny()
+            ax2.set_xlim(ax.get_xlim())
+            ax2.set_xticks(age_ticks)
+            if i == 0:
+                ax2.set_xticklabels([f'{z:g}' for z in zlist])
+                ax2.set_xlabel('Redshift')
+            else:
+                ax2.set_xticklabels([])
+                ax2.set_xlabel('')
+
+            ax.minorticks_on()
+
+
 
     def interpolate_plot(self, num_points=100, kind='linear', **kwargs):
         """

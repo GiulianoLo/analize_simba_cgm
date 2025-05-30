@@ -15,23 +15,23 @@ class Simba:
 
         if machine=='PC39BP4':
             if size==25:
-                self.sim_directory='/media/lorenzong/Data1/simba_hig_res/'
+                self.sim_directory='/media/lorenzong/Data11/simba_hig_res/'
                 self.name_form = 'm25n512_%03d.hdf5'
             elif size==50:
                 print('No mid-resolution repository for now: redirected to high-res')
-                self.sim_directory='/media/lorenzong/Data1/simba_hig_res/'
+                self.sim_directory='/media/lorenzong/Data11/simba_hig_res/'
                 self.name_form = 'm50n512_%03d.hdf5'
             elif size==100:
-                self.sim_directory='/media/lorenzong/Data1/SIMBA_catalogs/'
+                self.sim_directory='/media/lorenzong/Data11/SIMBA_catalogs/'
                 self.name_form = 'm100n1024_%03d.hdf5'
             else:
                 print('Invalid box-size for SIMBA simulation: redirected to high-res')
-                self.sim_directory='/media/lorenzong/Data1/simba_hig_res/'
+                self.sim_directory='/media/lorenzong/Data11/simba_hig_res/'
                 self.name_form = 'm25n512_%03d.hdf5'
             self.output_file='/home/lorenzong/analize_simba_cgm/output/txt/convert_snap_z_factors/zsnap_map_caesar_box100.txt'
         else:
             print("`machine` not recognised, set to default (PC39BP4)")
-            self.sim_directory='/media/lorenzong/Data1/simba_hig_res/'
+            self.sim_directory='/media/lorenzong/Data11/simba_hig_res/'
             self.output_file='/home/lorenzong/analize_simba_cgm/output/txt/convert_snap_z_factors/zsnap_map_caesar_box100.txt'
             
         self.cs_directory=self.sim_directory
