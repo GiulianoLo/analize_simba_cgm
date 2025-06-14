@@ -26,9 +26,9 @@ class BuildHistory:
     def get_history_indx(self, id, start_snap, end_snap):
         with fits.open(self.progen_file) as hdul:
             data = hdul[1].data
-            id_column = data['GroupID']
+            #id_column = data['GroupID']
             col_names = hdul[1].columns.names
-            row_index = [np.where(id_column == i)[0][0] for i in id]
+            row_index = id# [np.where(id_column == i)[0][0] for i in id]
 
             try:
                 start_col_index = col_names.index(str(start_snap))
@@ -63,8 +63,10 @@ class BuildHistory:
                         if prop in f.columns.names:
                             values = f[prop]
                             indices = indx_dict[snap]
-                            selected_values = values[indices]
-                            temp_storage[prop].append(list(selected_values))
+                            selected_values = np.full(len(indices), np.nan)
+                            valid = indices >= 0
+                            selected_values[valid] = values[indices[valid]]
+                            temp_storage[prop].append(selected_values)
                         else:
                             print(f'Warning: Property {prop} not found in FITS file {fitsname}')
             except Exception as e:
@@ -78,21 +80,32 @@ class BuildHistory:
         self.propr = propr_out
 
         boxsize = self.sb.get_boxsize() if hasattr(self.sb, 'get_boxsize') else 100.0
-        for coord in ['x', 'y', 'z']:
+        for coord in ['pos_0', 'pos_1', 'pos_2']:
             if coord in self.propr:
                 print(f'Unwrapping {coord}-positions')
                 self.propr[coord] = self.unwrap_positions(self.propr[coord], boxsize)
 
         return propr_out
-
+    
     def unwrap_positions(self, positions, boxsize):
         unwrapped = positions.copy()
-        for i in range(1, len(positions)):
-            delta = unwrapped[i] - unwrapped[i - 1]
-            delta[delta > +0.5 * boxsize] -= boxsize
-            delta[delta < -0.5 * boxsize] += boxsize
-            unwrapped[i] = unwrapped[i - 1] + delta
+        # Mask invalid data (e.g., NaNs or negative indices)
+        valid_mask = ~np.isnan(unwrapped)
+        for gal in range(positions.shape[1]):
+            for i in range(1, positions.shape[0]):
+                if valid_mask[i, gal] and valid_mask[i-1, gal]:
+                    delta = unwrapped[i, gal] - unwrapped[i - 1, gal]
+                    if delta > 0.5 * boxsize:
+                        delta -= boxsize
+                    elif delta < -0.5 * boxsize:
+                        delta += boxsize
+                    unwrapped[i, gal] = unwrapped[i - 1, gal] + delta
+                else:
+                    # if either snapshot invalid, just copy previous or nan
+                    unwrapped[i, gal] = unwrapped[i, gal]  # or np.nan
         return unwrapped
+
+
 
     def _get_snap_data(self, snap, propr, indx):
         fitsname = self.get_fits(int(snap))
