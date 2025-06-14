@@ -37,6 +37,11 @@ class BuildHistory:
                 raise ValueError(f"Snapshot name not found: {e}")
 
             if start_col_index > end_col_index:
+                # temp1 = end_col_index 
+                # temp2 = start_col_index
+                # end_col_index = temp2
+                # start_col_index = temp1
+
                 raise ValueError("start_snap should be less than or equal to end_snap")
 
             self.history_indx = {col_name: data[col_name][row_index] for col_name in col_names[start_col_index:end_col_index + 1]}
