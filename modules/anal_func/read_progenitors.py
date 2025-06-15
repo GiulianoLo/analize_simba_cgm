@@ -129,3 +129,57 @@ def read_progen(ids, outname, snaplist, sb, fitsdir):
     table.write(os.path.join(output_dir, outname), overwrite=True)
 
 
+def read_descendants_using_groupid(initial_ids, snaplist, fitsdir, sb, outname):
+    """
+    Track galaxies via descendants using GroupID fields.
+    initial_ids: GroupIDs at the base snapshot (latest one).
+    snaplist: list of snapshots in descending order (e.g., [151, 150, ..., 100]).
+    """
+    def get_fits(sb, snap, fitsdir):
+        filename = sb.get_caesar_file(snap)
+        new_filename = filename.split('/')[-1].split('.')[0] + '.fits'
+        new_filename = os.path.join(fitsdir, new_filename)
+        return new_filename
+    from astropy.table import Table
+    prog_table = {str(snap): [] for snap in snaplist}
+    prog_table['GroupID'] = initial_ids
+
+    progenid = initial_ids.copy()
+    snaplist = np.sort(snaplist)[::-1]
+    
+    for i, snap in enumerate(snaplist):
+        fname = get_fits(sb, snap, fitsdir)
+        print(f"Reading snapshot {snap}: {fname}")
+        
+        with fits.open(fname) as hdul:
+            data = hdul[1].data
+            groupids = data['GroupID'].astype(int)
+            descend = data['descend_galaxy_star'].astype(int)
+
+            # Map GroupID → index in current file
+            gid_to_index = {gid: j for j, gid in enumerate(groupids)}
+
+            next_progenid = []
+            new_gids = []
+            for gid in progenid:
+                if gid in gid_to_index:
+                    idx = gid_to_index[gid]
+                    desc_idx = descend[idx]
+                    if desc_idx >= 0 and desc_idx < len(groupids):
+                        next_gid = groupids[desc_idx]
+                    else:
+                        next_gid = -1
+                else:
+                    next_gid = -1
+                next_progenid.append(next_gid)
+                new_gids.append(next_gid)
+        
+        progenid = np.array(next_progenid)
+        prog_table[str(snap)] = progenid
+
+    # Save
+    from astropy.table import Table
+    table = Table(prog_table)
+    output_path = os.path.join(fitsdir, outname)
+    table.write(output_path, overwrite=True)
+    print(f"Saved descendant table to {output_path}")
