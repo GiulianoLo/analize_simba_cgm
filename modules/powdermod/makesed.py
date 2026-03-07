@@ -24,7 +24,7 @@ from astropy import units as u
 from astropy import constants
 
 
-from modules.io_paths.savepaths import SavePaths
+from ..io_paths.savepaths import SavePaths
 
 class MakeSED:
     def __init__(self, sb,  nnodes, model_run_name, hydro_dir_base, preselect, selection_file, COSMOFLAG=0):

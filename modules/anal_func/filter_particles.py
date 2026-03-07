@@ -65,14 +65,14 @@ def filter_particles_by_obj(cs, simfile, snap, selection, oidx, verbose=0, overw
         for obj in oidx:
             if keyword==None:
                 if selection=='galaxy':
-                    output = f'{out_folder}/subset_snap(snap)_gal{obj:06.0f}.h5' 
+                    output = f'{out_folder}/subset_snap{snap}_gal{obj:06.0f}.h5' 
                 elif selection=='halo':
-                    output = f'{out_folder}/subset_snap(snap)_halo{obj:06.0f}.h5' 
+                    output = f'{out_folder}/subset_snap{snap}_halo{obj:06.0f}.h5' 
             else:
                 if selection=='galaxy':
-                    output = f'{out_folder}/subset_snap(snap)_gal{obj:06.0f}_{keyword}.h5' 
+                    output = f'{out_folder}/subset_snap{snap}_gal{obj:06.0f}_{keyword}.h5' 
                 elif selection=='halo':
-                    output = f'{out_folder}/subset_snap(snap)_halo{obj:06.0f}_(keyword).h5' 
+                    output = f'{out_folder}/subset_snap{snap}_halo{obj:06.0f}_{keyword}.h5' 
                 
             copy_skeleton(simfile, output)
             with h5py.File(output, 'a') as output_file:

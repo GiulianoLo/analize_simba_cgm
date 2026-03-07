@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simbanator"
+version = "0.2.0"
+description = "A Python toolkit for SIMBA cosmological simulation analysis: visualization, SED modeling, star formation histories, radial profiles, and more."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+authors = [
+    {name = "GiulianoLo", email = "giuliano9797@gmail.com"},
+]
+keywords = ["simba", "simulation", "cgm", "astrophysics", "caesar", "powderday", "sed"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
+
+dependencies = [
+    "numpy",
+    "scipy",
+    "astropy",
+    "matplotlib",
+    "h5py",
+    "unyt",
+    "Pillow",
+    "psutil",
+]
+
+[project.optional-dependencies]
+# Heavy dependencies that require special installation (conda recommended)
+full = [
+    "yt",
+    "caesar",
+    "py-sphviewer",
+]
+sed = [
+    "hyperion",
+    "caesar",
+]
+dev = [
+    "pytest",
+    "jupyter",
+]
+
+[project.urls]
+Homepage = "https://github.com/GiulianoLo/analize_simba_cgm"
+Repository = "https://github.com/GiulianoLo/analize_simba_cgm"
+Issues = "https://github.com/GiulianoLo/analize_simba_cgm/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["simbanator*"]
+
+[tool.setuptools.package-data]
+"simbanator.sed" = ["*.sh"]
+"simbanator.data" = ["snap_z_maps/*.txt"]
+

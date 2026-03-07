@@ -11,11 +11,8 @@ from sphviewer.tools import camera_tools
 from sphviewer.tools import QuickView
 from sphviewer.tools import Blend
 
-import modules as anal
-import modules.anal_func as anal_func
-
 from PIL import Image
-from modules.io_paths.savepaths import SavePaths
+from ..io_paths.savepaths import SavePaths
 
 
 def find_rot_ax(L, t=None, p=None, spos='faceon'):
