@@ -1,8 +1,6 @@
 """Compute radial profiles of galaxy properties from simulation snapshots."""
 
 import numpy as np
-import yt
-import caesar
 
 
 def radial_profile(snapfile, catfile, galaxy_id, properties_dict,
@@ -41,6 +39,9 @@ def radial_profile(snapfile, catfile, galaxy_id, properties_dict,
     """
     if radii is None:
         radii = np.arange(0, 100, 1)
+
+    import yt       # heavy dep – lazy import
+    import caesar   # heavy dep – lazy import
 
     ds = yt.load(snapfile)
     obj = caesar.load(catfile)

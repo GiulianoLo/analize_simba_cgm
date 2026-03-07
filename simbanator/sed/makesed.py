@@ -102,13 +102,18 @@ class MakeSED:
                 hf.create_dataset(f'{grp}/code_coods', data=np.array(data['code_coods']))
                 print(f'Written data for {grp}')
 
-    def create_master(self, where):
+    def create_master(self, where, subset_type='plist', radius=None):
         """Generate Powderday parameter files and job scripts.
 
         Parameters
         ----------
         where : str
             ``'local'`` or ``'cluster'``.
+        subset_type : str
+            Particle subset method: ``'plist'`` (particle list) or
+            ``'region'`` (spherical aperture).
+        radius : float, optional
+            Aperture radius (required when *subset_type* is ``'region'``).
         """
         filepath = os.path.join(self.output_dir, 'target_selection', self.selection_file + '.h5')
 
@@ -151,7 +156,8 @@ class MakeSED:
                         f"{setupfile} {self.nnodes} {model_dir} {hydro_dir} "
                         f"{self.model_run_name} {self.COSMOFLAG} "
                         f"{model_dir_remote} {hydro_dir} {xpos} {ypos} {zpos} "
-                        f"{nh} {int(snap)} {tcmb} {i} {job_flag} {N - 1} {hidx[i]}"
+                        f"{nh} {int(snap)} {tcmb} {i} {job_flag} {N - 1} {hidx[i]} "
+                        f"{radius} {subset_type}"
                     )
                     call(cmd, shell=True)
 

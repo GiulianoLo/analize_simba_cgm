@@ -104,6 +104,8 @@ def filter_particles_by_obj(cs, simfile, snap, selection, oidx,
                     if plist is None:
                         continue
 
+                    sorted_plist = np.sort(plist)
+
                     for k in input_file[ptype]:
                         if k in ignore_fields:
                             if verbose > 1:
@@ -112,8 +114,8 @@ def filter_particles_by_obj(cs, simfile, snap, selection, oidx,
                         if verbose > 0:
                             print(ptype, k)
 
-                        temp_dset = input_file[ptype][k][:]
-                        filtered_dset = temp_dset[plist]
+                        # Read only the needed rows directly from HDF5
+                        filtered_dset = input_file[ptype][k][sorted_plist]
 
                         if k in output_file[ptype]:
                             del output_file[ptype][k]
@@ -246,8 +248,8 @@ def filter_by_aperture(cs, simfile, snap, center, radius,
                     if verbose > 0:
                         print(ptype, k)
 
-                    temp_dset = input_file[ptype][k][:]
-                    filtered_dset = temp_dset[mask]
+                    # Read only the needed rows directly from HDF5
+                    filtered_dset = input_file[ptype][k][mask]
 
                     if k in output_file[ptype]:
                         del output_file[ptype][k]

@@ -38,9 +38,15 @@ full = [
     "yt",
     "caesar",
     "py-sphviewer",
+    "fsps",
 ]
 sed = [
     "hyperion",
+    "caesar",
+]
+sfh = [
+    "fsps",
+    "yt",
     "caesar",
 ]
 dev = [

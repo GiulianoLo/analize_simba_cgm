@@ -1,8 +1,13 @@
 # coding=utf-8
+import os
+
 # ===============================================
 # HOME INFORMATION
 # ===============================================
-pd_source_dir = '/home/lorenzong/powderday/'
+# Set root to the parent directory containing powderday, hyperion-dust, etc.
+root = os.environ.get('POWDERDAY_ROOT', os.path.expanduser('~'))
+
+pd_source_dir = os.path.join(root, 'powderday') + '/'
 
 # ===============================================
 # RESOLUTION KEYWORDS
@@ -33,7 +38,7 @@ seed = -12345
 # ===============================================
 # DUST INFORMATION
 # ===============================================
-dustdir = '/home/lorenzong/hyperion-dust-0.1.0/dust_files/'
+dustdir = os.path.join(root, 'hyperion-dust', 'dust_files') + '/'
 dustfile = 'kmh94_3.1_hg.hdf5'
 PAH = True
 
@@ -100,7 +105,7 @@ N_STELLAR_AGE_BINS = 25
 BH_SED = False
 BH_eta = 0.1
 BH_model = "Nenkova"
-BH_modelfile = "/home/lorenzong/powderday/agn_models/clumpy_models_201410_tvavg.hdf5"
+BH_modelfile = os.path.join(root, 'powderday', 'agn_models', 'clumpy_models_201410_tvavg.hdf5')
 BH_var = True
 nenkova_params = [5, 30, 0, 1.5, 30, 40]
 
@@ -117,7 +122,7 @@ SED_MONOCHROMATIC_min_lam = 0.3  # micron
 SED_MONOCHROMATIC_max_lam = 0.4  # micron
 
 IMAGING = False
-filterdir = '/home/lorenzong/powderday/filters/'
+filterdir = os.path.join(root, 'powderday', 'filters') + '/'
 filterfiles = ['H2.filter']
 npix_x = 512
 npix_y = 512

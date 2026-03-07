@@ -35,6 +35,7 @@ from .analysis.history import CaesarBuildHistory, BuildHistory
 from .analysis.particles import filter_particles_by_obj, filter_by_aperture
 from .analysis.profiles import radial_profile
 from .analysis.progenitors import caesar_read_progen, read_progen
+from .analysis.sfh import bin_sfh, save_sfh, load_sfh
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -57,6 +58,9 @@ from .visualization.animation import create_animation
 # Heavy visualization (yt / sphviewer) available via explicit import:
 #   from simbanator.visualization.rendering import RenderRGB, SingleRender
 
+# FSPS-based SFH recovery (requires fsps):
+#   from simbanator.analysis.sfh import compute_sfh
+
 # SED modeling (powderday) available via explicit import:
 #   from simbanator.sed.makesed import MakeSED
 
@@ -69,6 +73,7 @@ __all__ = [
     "filter_particles_by_obj", "filter_by_aperture",
     "radial_profile",
     "caesar_read_progen", "read_progen",
+    "bin_sfh", "save_sfh", "load_sfh",
     # utils
     "Z_to_OH12", "Dust_to_Metal", "findsatellites", "print_ram_usage",
     # data
