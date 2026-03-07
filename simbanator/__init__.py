@@ -31,11 +31,11 @@ from .io.config import add_simulation, remove_simulation, list_simulations
 # ---------------------------------------------------------------------------
 # Analysis
 # ---------------------------------------------------------------------------
-from .analysis.history import CaesarBuildHistory, BuildHistory
+from .analysis.sfh_caesar import CaesarBuildHistory, BuildHistory
 from .analysis.particles import filter_particles_by_obj, filter_by_aperture, extract_galaxy_oriented
 from .analysis.profiles import radial_profile
 from .analysis.progenitors import caesar_read_progen, read_progen
-from .analysis.sfh import bin_sfh, save_sfh, load_sfh
+from .analysis.sfh_fsps import bin_sfh, save_sfh, load_sfh
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -60,7 +60,7 @@ from .visualization.animation import create_animation
 #   from simbanator.visualization.rendering import RenderRGB, SingleRender
 
 # FSPS-based SFH recovery (requires fsps):
-#   from simbanator.analysis.sfh import compute_sfh
+#   from simbanator.analysis.sfh_fsps import compute_sfh
 
 # SED modeling (powderday) available via explicit import:
 #   from simbanator.sed.makesed import MakeSED
