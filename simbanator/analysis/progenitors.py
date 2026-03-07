@@ -13,10 +13,10 @@ import h5py
 from astropy.io import fits
 from astropy.table import Table
 
-from ..io.paths import SavePaths
+from ..io.paths import OutputPaths
 
 
-def caesar_read_progen(ids, outname, snaplist, sb):
+def caesar_read_progen(ids, outname, snaplist, sb, output_dir=None):
     """Build a FITS progenitor table from Caesar catalogs.
 
     Loops through Caesar files and writes a table of the most-massive
@@ -63,10 +63,9 @@ def caesar_read_progen(ids, outname, snaplist, sb):
             if len(idx) > 0:
                 progenid_table[j, i + 1] = snap_data[idx[0], 1]
 
-    paths = SavePaths()
-    output_dir = paths.create_subdir(
-        paths.get_filetype_path('fits'), 'progenitors_files'
-    )
+    if output_dir is None:
+        output_dir = os.path.join(os.getcwd(), 'output', 'progenitors')
+    os.makedirs(output_dir, exist_ok=True)
 
     col1 = fits.Column(name='GroupID', format='K', array=progenid_table[:, 0])
     columns = [col1]
@@ -85,7 +84,7 @@ def _get_fits(sb, snap, fitsdir):
     return os.path.join(fitsdir, new_filename)
 
 
-def read_progen(ids, outname, snaplist, sb, fitsdir):
+def read_progen(ids, outname, snaplist, sb, fitsdir, output_dir=None):
     """Build a progenitor table from converted FITS catalogs.
 
     Parameters
@@ -131,9 +130,8 @@ def read_progen(ids, outname, snaplist, sb, fitsdir):
 
     table = Table(progenid_dict)
 
-    paths = SavePaths()
-    output_dir = paths.create_subdir(
-        paths.get_filetype_path('fits'), 'progenitors_files'
-    )
+    if output_dir is None:
+        output_dir = os.path.join(os.getcwd(), 'output', 'progenitors')
+    os.makedirs(output_dir, exist_ok=True)
     print('Saving...')
     table.write(os.path.join(output_dir, outname), overwrite=True)

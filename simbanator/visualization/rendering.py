@@ -24,7 +24,7 @@ import caesar
 import sphviewer as sph
 from sphviewer.tools import camera_tools, QuickView, Blend
 
-from ..io.paths import SavePaths
+
 
 
 # -----------------------------------------------------------------------
@@ -225,7 +225,7 @@ class RenderRGB:
         blend = Blend.Blend(cm.Greys_r(stars), cm.afmhot(gas))
         return blend.Screen()
 
-    def plot(self, image, xl, yl, name, correct=False):
+    def plot(self, image, xl, yl, name, correct=False, output_dir=None):
         """Display and save a rendered image."""
         fig, ax = plt.subplots(figsize=(12, 12))
         if isinstance(correct, float):
@@ -234,14 +234,15 @@ class RenderRGB:
         ax.set_xlabel(xl)
         ax.set_ylabel(yl)
 
-        paths = SavePaths()
-        base_dir = paths.create_subdir(paths.get_filetype_path('plot'), 'renders')
+        if output_dir is None:
+            output_dir = os.path.join(os.getcwd(), 'output', 'renders')
+        os.makedirs(output_dir, exist_ok=True)
         prefix = 'region_' if self.region else ''
-        fig.savefig(os.path.join(base_dir, f'{prefix}{name}.png'))
+        fig.savefig(os.path.join(output_dir, f'{prefix}{name}.png'))
 
     def set_video(self, num_frames, p=None, t=None, r='infinity',
                   extent=5, del_p=360, del_t=0, xsize=500, ysize=500,
-                  vmin=None, vmax=None, spos='faceon', zoom=1.):
+                  vmin=None, vmax=None, spos='faceon', zoom=1., output_dir=None):
         """Render individual frames for a rotation video."""
         targets = [self.gal.minpotpos.in_units('kpc').value]
         L = self.gal.rotation['gas_L']
@@ -258,11 +259,10 @@ class RenderRGB:
         }
         data = camera_tools.get_camera_trajectory(targets, anchors)
 
-        paths = SavePaths()
-        frame_dir = paths.create_subdir(
-            paths.create_subdir(paths.get_filetype_path('plot'), 'videos'),
-            'frames',
-        )
+        if output_dir is None:
+            output_dir = os.path.join(os.getcwd(), 'output', 'videos')
+        frame_dir = os.path.join(output_dir, 'frames')
+        os.makedirs(frame_dir, exist_ok=True)
         particles = self.set_particles()
         for h, cam_update in enumerate(data):
             cam_update.update({'xsize': xsize, 'ysize': ysize, 'roll': 0})
@@ -280,31 +280,25 @@ class RenderRGB:
             blend = Blend.Blend(cm.Greys_r(stars), cm.afmhot(gas))
             plt.imsave(f'{frame_dir}/image_{h:04d}.png', blend.Screen())
 
-    def create_video(self, name, interval=100):
+    def create_video(self, name, interval=100, output_dir=None):
         """Stitch rendered frames into a GIF."""
-        paths = SavePaths()
-        frame_dir = paths.create_subdir(
-            paths.create_subdir(paths.get_filetype_path('plot'), 'videos'),
-            'frames',
-        )
+        if output_dir is None:
+            output_dir = os.path.join(os.getcwd(), 'output', 'videos')
+        frame_dir = os.path.join(output_dir, 'frames')
+        os.makedirs(frame_dir, exist_ok=True)
         prefix = 'region_' if self.region else ''
-        save_path = os.path.join(
-            paths.create_subdir(paths.get_filetype_path('plot'), 'videos'),
-            f'{prefix}{name}.gif',
-        )
+        save_path = os.path.join(output_dir, f'{prefix}{name}.gif')
         image_files = sorted(f for f in os.listdir(frame_dir) if f.endswith('.png'))
         images = [Image.open(os.path.join(frame_dir, f)) for f in image_files]
         images[0].save(save_path, save_all=True, append_images=images[1:],
                        duration=interval, loop=0)
         print(f"GIF saved as {save_path}")
 
-    def flush(self):
+    def flush(self, output_dir=None):
         """Remove all frame PNGs from the frames directory."""
-        paths = SavePaths()
-        frame_dir = paths.create_subdir(
-            paths.create_subdir(paths.get_filetype_path('plot'), 'videos'),
-            'frames',
-        )
+        if output_dir is None:
+            output_dir = os.path.join(os.getcwd(), 'output', 'videos')
+        frame_dir = os.path.join(output_dir, 'frames')
         for fn in os.listdir(frame_dir):
             if fn.lower().endswith('.png'):
                 os.remove(os.path.join(frame_dir, fn))
@@ -446,7 +440,7 @@ class SingleRender:
         plt.show()
         return fig, ax
 
-    def plot(self, image, xl, yl, name, vmin=None, vmax=None):
+    def plot(self, image, xl, yl, name, vmin=None, vmax=None, output_dir=None):
         """Display and save a single-component map."""
         fig, ax = plt.subplots(figsize=(12, 12))
         im = ax.imshow(image, extent=self.phys_ext, cmap='viridis')
@@ -454,7 +448,8 @@ class SingleRender:
         ax.set_ylabel(yl)
         fig.colorbar(im, ax=ax, label='Mass [Msun]')
 
-        paths = SavePaths()
-        base_dir = paths.create_subdir(paths.get_filetype_path('plot'), 'renders')
+        if output_dir is None:
+            output_dir = os.path.join(os.getcwd(), 'output', 'renders')
+        os.makedirs(output_dir, exist_ok=True)
         prefix = 'map_region_' if self.region else 'map_'
-        fig.savefig(os.path.join(base_dir, f'{prefix}{self.propr[1]}_{name}.png'))
+        fig.savefig(os.path.join(output_dir, f'{prefix}{self.propr[1]}_{name}.png'))

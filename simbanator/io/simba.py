@@ -92,9 +92,15 @@ class Simulation:
         """Return the full path to the catalog file for *snap*."""
         return os.path.join(self.catalog_dir, self.file_format.format(snap=int(snap)))
 
+    # Backward-compatible aliases
+    get_caesar_file = get_catalog_file
+
     def get_snapshot_file(self, snap):
         """Return the full path to the raw snapshot file for *snap*."""
         return os.path.join(self.data_dir, self.snap_format.format(snap=int(snap)))
+
+    # Backward-compatible alias
+    get_sim_file = get_snapshot_file
 
     # ── catalog loading (caesar is optional) ──────────────────────────
 
@@ -114,6 +120,9 @@ class Simulation:
         if verbose:
             print(f"Loading catalog: {path}")
         return caesar.load(path)
+
+    # Backward-compatible alias
+    get_caesar = load_catalog
 
     # ── redshift helpers ──────────────────────────────────────────────
 

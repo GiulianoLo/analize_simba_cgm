@@ -5,8 +5,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 
-from ..io.paths import SavePaths
-
 
 class HistoryPlots:
     """Multi-panel figure for plotting galaxy property histories.
@@ -100,17 +98,18 @@ class HistoryPlots:
         """Display the figure."""
         plt.show()
 
-    def save(self, outname, subdir='history_plots'):
-        """Save the figure via :class:`~simbanator.io.paths.SavePaths`.
+    def save(self, outname, output_dir=None):
+        """Save the figure to disk.
 
         Parameters
         ----------
         outname : str
             Filename (e.g. ``'history.png'``).
-        subdir : str
-            Sub-directory inside ``output/plot/``.
+        output_dir : str, optional
+            Directory to save in.  Defaults to ``./output/plots/``.
         """
-        paths = SavePaths()
-        output_dir = paths.create_subdir(paths.get_filetype_path('plot'), subdir)
+        if output_dir is None:
+            output_dir = os.path.join(os.getcwd(), 'output', 'plots')
+        os.makedirs(output_dir, exist_ok=True)
         output_file = os.path.join(output_dir, outname)
         self.fig.savefig(output_file, bbox_inches='tight')

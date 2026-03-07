@@ -23,7 +23,7 @@ from astropy.cosmology import Planck13
 from astropy import units as u
 from astropy import constants
 
-from ..io.paths import SavePaths
+
 
 
 class MakeSED:
@@ -48,7 +48,7 @@ class MakeSED:
     """
 
     def __init__(self, sb, nnodes, model_run_name, hydro_dir_base,
-                 preselect, selection_file, COSMOFLAG=0):
+                 preselect, selection_file, COSMOFLAG=0, output_dir=None):
         self.sb = sb
         self.nnodes = nnodes
         self.model_run_name = model_run_name
@@ -57,10 +57,12 @@ class MakeSED:
         self.preselect = preselect
         self.selection_file = selection_file
 
-        paths = SavePaths()
-        self.hydro_outputfile = self.sb.output_file
-        output_dir = paths.get_filetype_path('hdf5')
-        self.model_dir_base = paths.create_subdir(output_dir, 'powderday_sed_out')
+        if output_dir is None:
+            output_dir = os.path.join(os.getcwd(), 'output', 'sed')
+        os.makedirs(output_dir, exist_ok=True)
+        self.output_dir = output_dir
+        self.model_dir_base = os.path.join(output_dir, 'powderday_sed_out')
+        os.makedirs(self.model_dir_base, exist_ok=True)
 
     def selection_gals(self, snaps, galaxyID):
         """Write galaxy selection info to an HDF5 file.
@@ -72,11 +74,8 @@ class MakeSED:
         galaxyID : array-like of int
             Galaxy GroupIDs to select.
         """
-        paths = SavePaths()
-        output_dir = paths.create_subdir(
-            paths.get_filetype_path('hdf5'), 'target_selection_for_SED'
-        )
-        filepath = os.path.join(output_dir, self.selection_file + '.h5')
+        filepath = os.path.join(self.output_dir, 'target_selection', self.selection_file + '.h5')
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
         if not os.path.exists(filepath):
             with h5py.File(filepath, 'w') as hf:
@@ -111,11 +110,7 @@ class MakeSED:
         where : str
             ``'local'`` or ``'cluster'``.
         """
-        paths = SavePaths()
-        output_dir = paths.create_subdir(
-            paths.get_filetype_path('hdf5'), 'target_selection_for_SED'
-        )
-        filepath = os.path.join(output_dir, self.selection_file + '.h5')
+        filepath = os.path.join(self.output_dir, 'target_selection', self.selection_file + '.h5')
 
         # Locate shell scripts relative to *this* file
         pkg_dir = os.path.dirname(__file__)
@@ -130,7 +125,7 @@ class MakeSED:
 
         with h5py.File(filepath, 'r') as hf:
             snaps = sorted([int(s[4:]) for s in hf.keys()])
-            scalefactor = np.loadtxt(self.hydro_outputfile)
+            scalefactor = self.sb.scale_factors
 
             for n, snap in enumerate(snaps):
                 ids = hf[f'snap{snap:03}/galaxy_GroupID'][:]
@@ -201,11 +196,8 @@ class MakeSED:
         ax.set_ylabel('Flux (mJy)')
         ax.set_xlim(0.05, 15000)
 
-        paths = SavePaths()
-        out = paths.create_subdir(
-            paths.create_subdir(paths.get_filetype_path('plot'), 'sed_out'),
-            f'snap_{snap}',
-        )
+        out = os.path.join(self.output_dir, 'sed_plots', f'snap_{snap}')
+        os.makedirs(out, exist_ok=True)
         fig.savefig(os.path.join(out, f'gal_{gal}.png'), bbox_inches='tight')
 
         if show:

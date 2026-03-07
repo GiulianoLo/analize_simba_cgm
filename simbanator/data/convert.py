@@ -5,7 +5,7 @@ import numpy as np
 import h5py
 from astropy.io import fits
 
-from ..io.paths import SavePaths
+
 
 
 def _adapt_keys(path):
@@ -98,7 +98,7 @@ def _process_hdf5(file_path, fitspath, ignore, only, verbose=0):
         hdul.close()
 
 
-def convert_hdf5_fits(sb, snaprange, ignore=None, only=None, verbose=0):
+def convert_hdf5_fits(sb, snaprange, ignore=None, only=None, verbose=0, output_dir=None):
     """Convert Caesar HDF5 catalogs to FITS for a range of snapshots.
 
     Parameters
@@ -119,12 +119,11 @@ def convert_hdf5_fits(sb, snaprange, ignore=None, only=None, verbose=0):
     if only is None:
         only = []
 
-    paths = SavePaths()
-    fitspath = paths.create_subdir(
-        paths.get_filetype_path('fits'), 'converted_from_hdf5'
-    )
+    if output_dir is None:
+        output_dir = os.path.join(os.getcwd(), 'output', 'converted_catalogs')
+    os.makedirs(output_dir, exist_ok=True)
 
     for snap in snaprange:
         file_path = sb.get_caesar_file(snap)
         print(f'Processing: {file_path}')
-        _process_hdf5(file_path, fitspath, ignore, only, verbose)
+        _process_hdf5(file_path, output_dir, ignore, only, verbose)
