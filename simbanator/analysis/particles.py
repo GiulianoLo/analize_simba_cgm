@@ -264,3 +264,166 @@ def filter_by_aperture(cs, simfile, snap, center, radius,
                     print("Updated Header:", dict(output_file['Header'].attrs))
 
     print('Finished with aperture filter')
+
+
+# ---------------------------------------------------------------------------
+# Oriented extraction (face-on / edge-on)
+# ---------------------------------------------------------------------------
+
+def extract_galaxy_oriented(cs, simfile, snap, galaxy_ids,
+                            output_dir=None, verbose=0,
+                            ignore_fields=None,
+                            ptypes=('PartType0', 'PartType4')):
+    """Extract galaxy particles and rotate into face-on / edge-on frames.
+
+    For each galaxy two HDF5 files are produced:
+
+    * ``galaxy_<ID>_snap_<N>_face.h5`` — face-on (xy = disk plane)
+    * ``galaxy_<ID>_snap_<N>_edge.h5`` — edge-on (xz swap of face-on)
+
+    The galaxy centre is found with an iterative shrinking-sphere
+    algorithm on the stellar component.  Positions and velocities
+    of **all** requested particle types are rotated into the
+    principal-axis frame of the stellar mass distribution.
+
+    Parameters
+    ----------
+    cs : caesar object
+        Loaded Caesar catalog.
+    simfile : str
+        Path to the full snapshot HDF5 file.
+    snap : int
+        Snapshot number.
+    galaxy_ids : int or list of int
+        Galaxy GroupID(s) to extract.
+    output_dir : str, optional
+        Directory for output files.  Defaults to
+        ``./output/filtered_particles/oriented/``.
+    verbose : int
+        Verbosity level (0, 1, 2).
+    ignore_fields : list of str, optional
+        Dataset names to skip entirely.
+    ptypes : tuple of str
+        Particle types to include (default gas + stars).
+
+    Notes
+    -----
+    Coordinates and Velocities are centred and rotated; all other
+    datasets are copied verbatim.  The face-on frame has the disk
+    in the *xy*-plane; the edge-on frame swaps *y* ↔ *z*.
+    """
+    from ..utils.geometry import shrink_center, principal_axes, rotate_to_frame
+
+    if isinstance(galaxy_ids, (int, np.integer)):
+        galaxy_ids = [int(galaxy_ids)]
+    if ignore_fields is None:
+        ignore_fields = []
+
+    if output_dir is None:
+        output_dir = os.path.join(os.getcwd(), 'output',
+                                  'filtered_particles', 'oriented')
+    out_folder = os.path.join(output_dir, f'snap_{int(snap):03d}')
+    os.makedirs(out_folder, exist_ok=True)
+
+    plist_key = {
+        'PartType0': 'glist',
+        'PartType1': 'dmlist',
+        'PartType4': 'slist',
+        'PartType5': 'bhlist',
+    }
+
+    with h5py.File(simfile, 'r') as inp:
+        for gal_id in galaxy_ids:
+            gal = cs.galaxies[gal_id]
+
+            face_path = os.path.join(
+                out_folder, f'galaxy_{gal_id}_snap_{snap}_face.h5')
+            edge_path = os.path.join(
+                out_folder, f'galaxy_{gal_id}_snap_{snap}_edge.h5')
+
+            # --- resolve particle index lists per type -------------------
+            plists = {}
+            for pt in ptypes:
+                attr = plist_key.get(pt)
+                if attr is None or not hasattr(gal, attr):
+                    continue
+                idx = np.sort(getattr(gal, attr))
+                if len(idx) == 0:
+                    continue
+                plists[pt] = idx
+
+            if not plists:
+                if verbose > 0:
+                    print(f'Galaxy {gal_id}: no particles found, skipping')
+                continue
+
+            # --- find centre & principal axes from stars -----------------
+            star_pt = 'PartType4'
+            if star_pt in plists and 'Coordinates' in inp[star_pt]:
+                slist = plists[star_pt]
+                star_pos = inp[star_pt]['Coordinates'][slist]
+                star_mass = inp[star_pt]['Masses'][slist]
+                center = shrink_center(star_pos, masses=star_mass)
+                _, _, evecs, _ = principal_axes(
+                    star_pos - center, masses=star_mass)
+            else:
+                # fallback: use first available ptype
+                pt0 = next(iter(plists))
+                pos0 = inp[pt0]['Coordinates'][plists[pt0]]
+                center = pos0.mean(axis=0)
+                _, _, evecs, _ = principal_axes(pos0 - center)
+
+            if verbose > 0:
+                print(f'Galaxy {gal_id}: centre = {center}')
+
+            # --- create output files with Header ------------------------
+            with (h5py.File(face_path, 'w') as f_face,
+                  h5py.File(edge_path, 'w') as f_edge):
+
+                for fout in (f_face, f_edge):
+                    inp.copy(inp['Header'], fout, 'Header')
+                    for pt in plists:
+                        fout.create_group(pt)
+
+                # --- fill each particle type ----------------------------
+                for pt, idx in plists.items():
+                    if verbose > 0:
+                        print(f'  {pt}: {len(idx)} particles')
+
+                    for k in inp[pt]:
+                        if k in ignore_fields:
+                            continue
+                        data = inp[pt][k][idx]
+
+                        if k in ('Coordinates', 'Velocities'):
+                            if k == 'Coordinates':
+                                data_centered = data - center
+                            else:
+                                data_centered = data  # velocities: no shift
+                            rotated = rotate_to_frame(
+                                data_centered, 0, evecs)
+
+                            face_data = np.asarray(rotated, dtype=float)
+                            edge_data = face_data[:, [0, 2, 1]]  # swap y ↔ z
+
+                            f_face[pt].create_dataset(k, data=face_data)
+                            f_edge[pt].create_dataset(k, data=edge_data)
+                        else:
+                            f_face[pt].create_dataset(k, data=data)
+                            f_edge[pt].create_dataset(k, data=data)
+
+                    # update header counts
+                    n = len(idx)
+                    ptype_idx = int(pt[-1])
+                    for fout in (f_face, f_edge):
+                        for attr in ('NumPart_ThisFile', 'NumPart_Total'):
+                            arr = fout['Header'].attrs[attr].copy()
+                            arr[ptype_idx] = n
+                            fout['Header'].attrs[attr] = arr
+
+                    if verbose > 0:
+                        print(f'    → wrote {face_path}')
+                        print(f'    → wrote {edge_path}')
+
+    print(f'Finished oriented extraction for {len(galaxy_ids)} galaxy(ies)')
+

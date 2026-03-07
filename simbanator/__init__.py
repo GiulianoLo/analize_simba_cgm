@@ -32,7 +32,7 @@ from .io.config import add_simulation, remove_simulation, list_simulations
 # Analysis
 # ---------------------------------------------------------------------------
 from .analysis.history import CaesarBuildHistory, BuildHistory
-from .analysis.particles import filter_particles_by_obj, filter_by_aperture
+from .analysis.particles import filter_particles_by_obj, filter_by_aperture, extract_galaxy_oriented
 from .analysis.profiles import radial_profile
 from .analysis.progenitors import caesar_read_progen, read_progen
 from .analysis.sfh import bin_sfh, save_sfh, load_sfh
@@ -43,6 +43,7 @@ from .analysis.sfh import bin_sfh, save_sfh, load_sfh
 from .utils.conversions import Z_to_OH12, Dust_to_Metal
 from .utils.search import findsatellites
 from .utils.debug import print_ram_usage
+from .utils.geometry import shrink_center, principal_axes, rotate_to_frame
 
 # ---------------------------------------------------------------------------
 # Data conversion
@@ -70,12 +71,13 @@ __all__ = [
     "add_simulation", "remove_simulation", "list_simulations",
     # analysis
     "CaesarBuildHistory", "BuildHistory",
-    "filter_particles_by_obj", "filter_by_aperture",
+    "filter_particles_by_obj", "filter_by_aperture", "extract_galaxy_oriented",
     "radial_profile",
     "caesar_read_progen", "read_progen",
     "bin_sfh", "save_sfh", "load_sfh",
     # utils
     "Z_to_OH12", "Dust_to_Metal", "findsatellites", "print_ram_usage",
+    "shrink_center", "principal_axes", "rotate_to_frame",
     # data
     "convert_hdf5_fits",
     # visualization
