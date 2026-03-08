@@ -456,14 +456,58 @@ from multiprocessing import Pool
     
     
     
+import time
     
     
     
-    
-    
-    
-    
-    
+def sfh_worker(args):
+    galaxy_id, slist, stellar_ages, stellar_masses, stellar_metals, simtime, solar_Z = args
+    import time
+    print(f"Worker PID: {os.getpid()}, chunk size: {len(slist)}")
+    #t_init_start = time.time()
+    fsps_ssp = fsps.StellarPopulation(
+        sfh=0,
+        zcontinuous=1,
+        imf_type=2,
+        zred=0.0,
+        add_dust_emission=False
+    )
+    #t_init_end = time.time()
+    #print(f"PID {os.getpid()} FSPS init time: {t_init_end - t_init_start:.3f} s")
+
+    ages = stellar_ages[slist]
+    masses = stellar_masses[slist]
+    metals = stellar_metals[slist]
+
+    formation_masses = []
+
+    t_loop_start = time.time()
+    for age, Z, m in zip(ages, metals, masses):
+        #t_single_loop_start = time.time()
+        #t_loop_fsps_start = time.time()
+        fsps_ssp.params["logzsol"] = np.log10(Z / solar_Z)
+        #t_loop_fsps_end = time.time()
+        #print(f"PID {os.getpid()} FSPS param set time: {t_loop_fsps_end - t_loop_fsps_start:.6f} s")
+        mass_remaining = fsps_ssp.stellar_mass
+        #t_loop_interp_start = time.time()
+        initial_mass = np.interp(
+            np.log10(age * 1e9),
+            fsps_ssp.ssp_ages,
+            mass_remaining,
+        )
+        #t_loop_interp_end = time.time()
+        #print(f"PID {os.getpid()} FSPS interpolation time: {t_loop_interp_end - t_loop_interp_start:.6f} s")
+        formation_masses.append(m / initial_mass)
+        #t_single_loop_end = time.time()
+        #print(f"PID {os.getpid()} Single loop time: {t_single_loop_end - t_single_loop_start:.6f} s")
+    t_loop_end = time.time()
+    print(f"PID {os.getpid()} FSPS loop time: {t_loop_end - t_loop_start:.3f} s for {len(ages)} particles")
+
+    formation_masses = np.array(formation_masses)
+
+    formation_times = simtime - ages
+
+    return formation_times, formation_masses
     
     
     
@@ -557,10 +601,21 @@ def compute_sfh(snapshot, csfile, FILTERED=True, COSMOLOGICAL=False, AREPO=False
     final_massfrac, final_formation_times, final_formation_masses = [], [], []
 
     ids = []
-    if COSMOLOGICAL:
+    if COSMOLOGICAL and FILTERED == False:
         #get the galaxies from the caesar file
-        for i in obj.galaxies:
-            ids.append(i.GroupID)
+        galaxy_slists = [g.slist for g in obj.galaxies]
+        args = [
+            (
+                i,
+                galaxy_slists[i],
+                stellar_ages,
+                stellar_masses,
+                stellar_metals,
+                simtime,
+                solar_Z
+            )
+            for i in range(len(galaxy_slists))
+        ]
 
         def get_sfh(galaxy):
             this_galaxy_stellar_ages = stellar_ages[obj.galaxies[ids[galaxy]].slist]
@@ -578,36 +633,52 @@ def compute_sfh(snapshot, csfile, FILTERED=True, COSMOLOGICAL=False, AREPO=False
             this_galaxy_formation_times = np.array(simtime - this_galaxy_stellar_ages, dtype=float)
             return this_galaxy_formation_times, this_galaxy_formation_masses
 
-        with Pool(16) as p:
-            out1, out2 = zip(*tqdm(p.imap(get_sfh, range(len(ids))), total=len(ids)))
-            final_formation_times = out1
-            final_formation_masses = out2
+        with Pool(16) as pool:
+            results = list(
+                tqdm(
+                    pool.imap(sfh_worker, args, chunksize=5),
+                    total=len(args),
+                )
+            )
+
+        final_formation_times, final_formation_masses = zip(*results)
 
     elif COSMOLOGICAL and FILTERED:
-        #get the galaxies from the caesar file
-        for i in obj.galaxies:
-            ids.append(i.GroupID)
+        # Only one galaxy, so ids = [0] for bookkeeping
+        ids = [0]
 
-        def get_sfh(galaxy):
-            this_galaxy_stellar_ages = stellar_ages
-            this_galaxy_stellar_masses = stellar_masses
-            this_galaxy_stellar_metals = stellar_metals
-            this_galaxy_formation_masses = []
-            for age, metallicity, mass in zip(this_galaxy_stellar_ages, this_galaxy_stellar_metals, this_galaxy_stellar_masses):
-                mass = mass.in_units('Msun')
-                fsps_ssp.params['logzsol'] = np.log10(metallicity/solar_Z)
-                mass_remaining = fsps_ssp.stellar_mass
-                initial_mass = np.interp(np.log10(age*1e9), fsps_ssp.ssp_ages, mass_remaining)
-                massform = mass / initial_mass
-                this_galaxy_formation_masses.append(massform)
-            this_galaxy_formation_masses = np.array(this_galaxy_formation_masses)
-            this_galaxy_formation_times = np.array(simtime - this_galaxy_stellar_ages, dtype=float)
-            return this_galaxy_formation_times, this_galaxy_formation_masses
+        # Split all particles into chunks for multiprocessing
+        n_particles = len(stellar_ages)
+        n_chunks = 21  # number of processes
+        chunk_indices = np.array_split(np.arange(n_particles), n_chunks)
 
-        with Pool(16) as p:
-            out1, out2 = zip(*tqdm(p.imap(get_sfh, range(len(ids))), total=len(ids)))
-            final_formation_times = out1
-            final_formation_masses = out2
+        # Build args for sfh_worker
+        args = [
+            (
+                0,  # fake galaxy index
+                chunk,  # list of particle indices
+                stellar_ages,
+                stellar_masses,
+                stellar_metals,
+                simtime,
+                solar_Z,
+            )
+            for chunk in chunk_indices
+        ]
+
+        # Run in parallel over chunks
+        start = time.time()
+        print(f"Processing {n_particles} particles in {n_chunks} chunks with 16 workers...")
+        with Pool(16) as pool:
+            results = list(
+                tqdm(pool.imap(sfh_worker, args, chunksize=1), total=len(args))
+            )
+        end = time.time()
+        print(f"Parallel processing took {end - start:.2f} seconds")
+
+        # Merge the chunks back into a single array
+        final_formation_times = np.concatenate([r[0] for r in results])
+        final_formation_masses = np.concatenate([r[1] for r in results])
 
     else:
 

@@ -3,6 +3,55 @@ import numpy as np
 import h5py
 
 
+def indices_to_ranges(idx):
+    """
+    Convert sorted integer indices into contiguous ranges.
+
+    Example
+    -------
+    [10,11,12,20,21] → [(10,13), (20,22)]
+    """
+
+    if len(idx) == 0:
+        return []
+
+    ranges = []
+    start = idx[0]
+    prev = idx[0]
+
+    for i in idx[1:]:
+        if i != prev + 1:
+            ranges.append((start, prev + 1))
+            start = i
+        prev = i
+
+    ranges.append((start, prev + 1))
+
+    return ranges
+
+
+def read_ranges(dataset, idx):
+    """
+    Efficiently read arbitrary particle indices from an HDF5 dataset
+    using contiguous range reads.
+    """
+
+    idx = np.asarray(idx)
+
+    if len(idx) == 0:
+        return np.empty((0,) + dataset.shape[1:], dtype=dataset.dtype)
+
+    idx = np.sort(idx)
+
+    ranges = indices_to_ranges(idx)
+
+    pieces = [dataset[a:b] for a, b in ranges]
+
+    return np.concatenate(pieces, axis=0)
+
+
+
+
 def extract_particles(
         cs,
         simfile,
@@ -154,8 +203,8 @@ def extract_particles(
 
                 idx = particle_lists["PartType4"]
 
-                pos = inp["PartType4"]["Coordinates"][idx]
-                mass = inp["PartType4"]["Masses"][idx]
+                pos = read_ranges(inp["PartType4"]["Coordinates"], idx)
+                mass = read_ranges(inp["PartType4"]["Masses"], idx)
 
                 center_vec = shrink_center(pos, masses=mass)
 
@@ -186,7 +235,9 @@ def extract_particles(
                     if k in ignore_fields:
                         continue
 
-                    data = inp[pt][k][idx]
+                    dataset = inp[pt][k]
+
+                    data = read_ranges(dataset, idx)
 
                     if k in ("Coordinates", "Velocities") and orientation != "none":
 
