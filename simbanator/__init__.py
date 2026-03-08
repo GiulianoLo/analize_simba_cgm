@@ -32,7 +32,7 @@ from .io.config import add_simulation, remove_simulation, list_simulations
 # Analysis
 # ---------------------------------------------------------------------------
 from .analysis.sfh_caesar import CaesarBuildHistory, BuildHistory
-from .analysis.particles import filter_particles_by_obj, filter_by_aperture, extract_galaxy_oriented
+from .analysis.particles import extract_particles
 from .analysis.profiles import radial_profile
 from .analysis.progenitors import caesar_read_progen, read_progen
 from .analysis.sfh_fsps import bin_sfh, save_sfh, load_sfh
@@ -71,7 +71,7 @@ __all__ = [
     "add_simulation", "remove_simulation", "list_simulations",
     # analysis
     "CaesarBuildHistory", "BuildHistory",
-    "filter_particles_by_obj", "filter_by_aperture", "extract_galaxy_oriented",
+    "extract_particles",
     "radial_profile",
     "caesar_read_progen", "read_progen",
     "bin_sfh", "save_sfh", "load_sfh",

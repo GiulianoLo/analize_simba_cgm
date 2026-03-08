@@ -15,7 +15,7 @@ from .io_paths import Simba, SavePaths
 
 # Analysis functions
 from .anal_func.build_history import caesarBuildHistory, BuildHistory
-from .anal_func.filter_particles import filter_particles_by_obj, filter_by_aperture
+from .anal_func.filter_particles import extract_particles
 from .anal_func.radial_profile import radial_profile
 from .anal_func.read_progenitors import caesar_read_progen, read_progen
 

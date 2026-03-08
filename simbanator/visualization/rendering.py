@@ -30,6 +30,91 @@ from sphviewer.tools import camera_tools, QuickView, Blend
 # -----------------------------------------------------------------------
 # Helper functions
 # -----------------------------------------------------------------------
+class ParticleProjectionRender:
+    """
+    Simple particle projection plotter for visual selection checks.
+    Parameters
+    ----------
+    snapfile, catfile : str
+        Paths to the snapshot and Caesar catalog.
+    id : int
+        Galaxy index.
+    particle_type : str
+        Particle type (e.g. 'PartType0' for gas, 'PartType4' for stars).
+    region : bool
+        Use all particles instead of galaxy members.
+    """
+    def __init__(self, snapfile, catfile, id, particle_type='PartType0', region=False):
+        import yt
+        import caesar
+        ds = yt.load(snapfile)
+        obj = caesar.load(catfile)
+        ad = ds.all_data()
+        gal = obj.galaxies[id]
+        self.a = obj.simulation.scale_factor
+        self.region = region
+        self.particle_type = particle_type
+        self.gal = gal
+        self.ds = ds
+        self.obj = obj
+        self.ad = ad
+        if region:
+            self.positions = ad[particle_type, 'Coordinates'].in_units('kpc').value * self.a
+        else:
+            idx = gal.glist if particle_type == 'PartType0' else gal.slist
+            self.positions = ad[particle_type, 'Coordinates'][idx].in_units('kpc').value * self.a
+
+    def plot(self, figsize=(12, 4), marker='o', s=2, alpha=0.6, title=None):
+        """
+        Plot particle positions projected onto the three axes (xy, xz, yz).
+        """
+        positions = self.positions
+        fig, axes = plt.subplots(1, 3, figsize=figsize)
+        axes[0].scatter(positions[:,0], positions[:,1], marker=marker, s=s, alpha=alpha)
+        axes[0].set_xlabel('X')
+        axes[0].set_ylabel('Y')
+        axes[0].set_title('XY projection')
+        axes[1].scatter(positions[:,0], positions[:,2], marker=marker, s=s, alpha=alpha)
+        axes[1].set_xlabel('X')
+        axes[1].set_ylabel('Z')
+        axes[1].set_title('XZ projection')
+        axes[2].scatter(positions[:,1], positions[:,2], marker=marker, s=s, alpha=alpha)
+        axes[2].set_xlabel('Y')
+        axes[2].set_ylabel('Z')
+        axes[2].set_title('YZ projection')
+        if title:
+            fig.suptitle(title)
+        plt.tight_layout()
+        plt.show()
+
+def plot_particle_projections(positions, figsize=(12, 4), marker='o', s=2, alpha=0.6, title=None):
+    """
+    Plot particle positions projected onto the three axes (xy, xz, yz).
+    Parameters:
+        positions (ndarray): Array of shape (N, 3) with particle positions.
+        figsize (tuple): Figure size.
+        marker (str): Marker style for scatter plot.
+        s (int): Marker size.
+        alpha (float): Marker transparency.
+        title (str): Optional figure title.
+    """
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
+    axes[0].scatter(positions[:,0], positions[:,1], marker=marker, s=s, alpha=alpha)
+    axes[0].set_xlabel('X')
+    axes[0].set_ylabel('Y')
+    axes[0].set_title('XY projection')
+    axes[1].scatter(positions[:,0], positions[:,2], marker=marker, s=s, alpha=alpha)
+    axes[1].set_xlabel('X')
+    axes[1].set_ylabel('Z')
+    axes[1].set_title('XZ projection')
+    axes[2].scatter(positions[:,1], positions[:,2], marker=marker, s=s, alpha=alpha)
+    axes[2].set_xlabel('Y')
+    axes[2].set_ylabel('Z')
+    axes[2].set_title('YZ projection')
+    if title:
+        fig.suptitle(title)
+    plt.tight_layout()
+    plt.show()
 
 def find_rot_ax(L, t=None, p=None, spos='faceon'):
     """Compute camera angles from an angular-momentum vector *L*."""
@@ -111,7 +196,7 @@ def _load_particle_data(snapfile, catfile, gal_id, propr,
         mass = ad[particle_type, prop[:-2] if '_s' in prop else prop]
         if indices is not None:
             pos, mass = pos[indices], mass[indices]
-        pos = pos.in_units('kpc').value
+        pos = pos.in_units('kpc').value # * obj.simulation.scale_factor
         if '_s' in prop:
             mass = ds.arr(mass, 'code_mass').in_units(dim_unit).value
         else:
@@ -174,6 +259,7 @@ class RenderRGB:
             center = self.gal.minpotpos.in_units('kpc').value
         L = self.gal.rotation['gas_L']
         tn, pn = find_rot_ax(L, t, p, spos)
+        print('center=======================>', center)
         return sph.Camera(
             x=center[0], y=center[1], z=center[2],
             r=r, t=tn, p=pn, roll=roll,
@@ -189,6 +275,8 @@ class RenderRGB:
         ]
         if self.ifdust:
             particles.append(sph.Particles(self.dust_pos, self.dust_mass))
+            
+        print(self.gas_pos)
         return particles
 
     def set_rgb(self, particle, camera, update):
@@ -342,7 +430,7 @@ class SingleRender:
             mass = self.ad[ptype, prop[:-2] if '_s' in prop else prop]
             if indices is not None:
                 pos, mass = pos[indices], mass[indices]
-            pos = pos.in_units('kpc').value
+            pos = pos.in_units('kpc').value * self.obj.simulation.scale_factor
             if '_s' in prop:
                 mass = self.ds.arr(mass, 'code_mass').in_units(dim_unit).value
             else:
@@ -355,9 +443,10 @@ class SingleRender:
             idx = self.gal.glist if self.propr[0] == 'PartType0' else self.gal.slist
             self.pos, self.mass = get_data(self.propr[0], self.propr[1], self.dim, idx)
 
-        self.a = self.obj.simulation.scale_factor
-        self.pos *= self.a
-        self.mass *= self.a
+        # self.a = self.obj.simulation.scale_factor
+        # self.pos *= self.a
+        # self.mass *= self.a
+        
 
     def single_map(self, center=None, ex=5, t=None, p=None,
                    r='infinity', roll=0, xsize=400, ysize=400,
@@ -453,3 +542,4 @@ class SingleRender:
         os.makedirs(output_dir, exist_ok=True)
         prefix = 'map_region_' if self.region else 'map_'
         fig.savefig(os.path.join(output_dir, f'{prefix}{self.propr[1]}_{name}.png'))
+
