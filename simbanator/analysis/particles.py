@@ -11,7 +11,7 @@ def extract_particles(
         halo_id=None,
         center=None,
         radius=None,
-        orientation="face-on",
+        orientation="none",
         ptypes=("PartType0", "PartType4"),
         ignore_fields=None,
         output=None,

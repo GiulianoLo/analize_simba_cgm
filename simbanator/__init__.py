@@ -35,7 +35,6 @@ from .analysis.sfh_caesar import CaesarBuildHistory, BuildHistory
 from .analysis.particles import extract_particles
 from .analysis.profiles import radial_profile
 from .analysis.progenitors import caesar_read_progen, read_progen
-from .analysis.sfh_fsps import bin_sfh, save_sfh, load_sfh
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -74,7 +73,6 @@ __all__ = [
     "extract_particles",
     "radial_profile",
     "caesar_read_progen", "read_progen",
-    "bin_sfh", "save_sfh", "load_sfh",
     # utils
     "Z_to_OH12", "Dust_to_Metal", "findsatellites", "print_ram_usage",
     "shrink_center", "principal_axes", "rotate_to_frame",
