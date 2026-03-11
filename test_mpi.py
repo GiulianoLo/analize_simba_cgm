@@ -1,10 +1,10 @@
 from simbanator.io.simba import Simulation
 from simbanator.analysis.particles import extract_particles
 
-snap = 149
+snap = 136
 
 # Load your simulation (use the name you configured)
-sim = Simulation("test_sim")  # Replace XX with your snapshot number
+sim = Simulation("pc39")  # Replace XX with your snapshot number
 
 # Load the Caesar catalog for this snapshot
 obj = sim.load_catalog(snap)

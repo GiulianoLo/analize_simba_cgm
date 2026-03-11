@@ -112,5 +112,5 @@ class OutputPaths:
         return self._ensure(os.path.join(self.root, *parts))
 
     def __repr__(self):
-        return f"OutputPaths('{self.simulation_name}', root='{self.root}')"
+        return f"OutputPaths('{self.simulation_name}')"
 

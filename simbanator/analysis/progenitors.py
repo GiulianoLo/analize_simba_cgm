@@ -58,10 +58,15 @@ def caesar_read_progen(ids, outname, snaplist, sb, output_dir=None):
 
     for i, snap in enumerate(np.sort(snaplist)):
         snap_data = progenid_dict[snap]
-        for j, groupid in enumerate(base_groupids):
-            idx = np.where(snap_data[:, 0] == groupid)[0]
-            if len(idx) > 0:
-                progenid_table[j, i + 1] = snap_data[idx[0], 1]
+        snap_ids = snap_data[:, 0]
+        snap_progens = snap_data[:, 1]
+        # O(N log N) vectorised lookup via searchsorted
+        sorter = np.argsort(snap_ids)
+        sorted_ids = snap_ids[sorter]
+        pos = np.searchsorted(sorted_ids, base_groupids)
+        pos = np.clip(pos, 0, len(sorted_ids) - 1)
+        found = sorted_ids[pos] == base_groupids
+        progenid_table[found, i + 1] = snap_progens[sorter[pos[found]]]
 
     if output_dir is None:
         output_dir = os.path.join(os.getcwd(), 'output', 'progenitors')
@@ -80,8 +85,8 @@ def caesar_read_progen(ids, outname, snaplist, sb, output_dir=None):
 def _get_fits(sb, snap, fitsdir):
     """Return the FITS filename for a given snapshot."""
     filename = sb.get_caesar_file(snap)
-    new_filename = filename.split('/')[-1].split('.')[0] + '.fits'
-    return os.path.join(fitsdir, new_filename)
+    basename = os.path.splitext(os.path.basename(filename))[0] + '.fits'
+    return os.path.join(fitsdir, basename)
 
 
 def read_progen(ids, outname, snaplist, sb, fitsdir, output_dir=None):
@@ -118,15 +123,12 @@ def read_progen(ids, outname, snaplist, sb, fitsdir, output_dir=None):
                 first_iteration = False
             else:
                 currprog = hf['descend_galaxy_star'].astype(int)
-                temp = []
-                for i in range(len(progenid)):
-                    if progenid[i] > -1:
-                        temp.append(groupids[progenid[i]])
-                        progenid[i] = currprog[progenid[i]]
-                    else:
-                        temp.append(-1)
-                        progenid[i] = -1
-                progenid_dict[str(snap)] = np.array(temp)
+                valid = progenid > -1
+                temp = np.full(len(progenid), -1, dtype=int)
+                temp[valid] = groupids[progenid[valid]]
+                progenid[valid] = currprog[progenid[valid]]
+                progenid[~valid] = -1
+                progenid_dict[str(snap)] = temp
 
     table = Table(progenid_dict)
 
