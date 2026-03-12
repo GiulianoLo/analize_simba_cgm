@@ -64,6 +64,7 @@ def extract_particles(
         ptypes=("PartType0", "PartType4"),
         ignore_fields=None,
         output=None,
+        sim_name=None,
         verbose=1
 ):
     """
@@ -104,8 +105,14 @@ def extract_particles(
     ignore_fields : list
         Dataset names to skip.
 
-    output : str
-        Output HDF5 file path.
+    output : str, optional
+        Full output HDF5 file path.  If omitted, the file is saved as
+        ``output/filtered/<sim_name>_snap<snap>_gal<id>.h5`` (or
+        ``halo<id>`` / ``aperture`` for the other selection modes).
+
+    sim_name : str, optional
+        Simulation label used for the default output filename.  Derived
+        from *simfile* when not provided.
 
     verbose : int
         Verbosity level.
@@ -117,7 +124,18 @@ def extract_particles(
         ignore_fields = []
 
     if output is None:
-        output = f"filtered_snap{snap}.h5"
+        if sim_name is None:
+            # Derive from the simfile basename, stripping snap-number suffix
+            sim_name = os.path.splitext(os.path.basename(simfile))[0]
+        if galaxy_id is not None:
+            sel_tag = f'gal{galaxy_id}'
+        elif halo_id is not None:
+            sel_tag = f'halo{halo_id}'
+        else:
+            sel_tag = 'aperture'
+        out_dir = os.path.join(os.getcwd(), 'output', 'filtered')
+        os.makedirs(out_dir, exist_ok=True)
+        output = os.path.join(out_dir, f'{sim_name}_snap{snap}_{sel_tag}.h5')
 
     if verbose:
         print("Reading snapshot:", simfile)
