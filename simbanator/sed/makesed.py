@@ -8,7 +8,6 @@ import sys
 import os
 import numpy as np
 import h5py
-from subprocess import call
 from shutil import copyfile
 from collections import defaultdict
 
@@ -103,7 +102,7 @@ class MakeSED:
                 print(f'Written data for {grp}')
 
     def create_master(self, where, subset_type='plist', radius=None):
-        """Generate Powderday parameter files and job scripts.
+        """Generate Powderday parameter files and batch scripts.
 
         Parameters
         ----------
@@ -114,55 +113,169 @@ class MakeSED:
             ``'region'`` (spherical aperture).
         radius : float, optional
             Aperture radius (required when *subset_type* is ``'region'``).
+
+        Notes
+        -----
+        This method only prepares files for later execution (e.g. via Slurm).
+        It does not execute Powderday jobs during setup.
         """
-        filepath = os.path.join(self.output_dir, 'target_selection', self.selection_file + '.h5')
-
-        # Locate shell scripts relative to *this* file
-        pkg_dir = os.path.dirname(__file__)
-        if where == 'local':
-            setupfile = os.path.join(pkg_dir, 'cosmology_setup_all_local.pc39.sh')
-        elif where == 'cluster':
-            setupfile = os.path.join(pkg_dir, 'cosmology_setup_all_cluster.cis.sh')
-        else:
+        if where not in {'local', 'cluster'}:
             raise ValueError("where must be 'local' or 'cluster'")
+        if subset_type not in {'plist', 'region'}:
+            raise ValueError("subset_type must be 'plist' or 'region'")
+        if subset_type == 'region' and radius is None:
+            raise ValueError("radius is required when subset_type='region'")
 
+        filepath = os.path.join(self.output_dir, 'target_selection', self.selection_file + '.h5')
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"Selection file not found: {filepath}")
+
+        pkg_dir = os.path.dirname(__file__)
         paramfile = os.path.join(pkg_dir, 'parameters_master.py')
+        cluster_job_files = []
+        local_run_files = []
 
         with h5py.File(filepath, 'r') as hf:
             snaps = sorted([int(s[4:]) for s in hf.keys()])
-            scalefactor = self.sb.scale_factors
 
-            for n, snap in enumerate(snaps):
+            for snap in snaps:
                 ids = hf[f'snap{snap:03}/galaxy_GroupID'][:]
-                hidx = hf[f'snap{snap:03}/halo_GroupID'][:]
                 pos = hf[f'snap{snap:03}/code_coods'][:]
 
                 hydro_dir = os.path.join(self.hydro_dir_base, f'snap_{snap:03}')
                 model_dir = os.path.join(self.model_dir_base, f'snap_{snap:03}')
                 os.makedirs(hydro_dir, exist_ok=True)
                 os.makedirs(model_dir, exist_ok=True)
+                os.makedirs(os.path.join(model_dir, 'out'), exist_ok=True)
+                os.makedirs(os.path.join(model_dir, 'err'), exist_ok=True)
 
-                redshift = (1. / scalefactor[n]) - 1.
+                redshift = self.sb.get_z_from_snap(snap)
                 tcmb = 2.73 * (1. + redshift)
                 N = len(ids)
 
+                if N == 0:
+                    continue
+
                 for i, nh in enumerate(ids):
-                    job_flag = 1 if i == 0 else 0
                     model_dir_remote = os.path.join(model_dir, f'gal_{nh}')
                     os.makedirs(model_dir_remote, exist_ok=True)
                     xpos, ypos, zpos = pos[i]
 
-                    cmd = (
-                        f"{setupfile} {self.nnodes} {model_dir} {hydro_dir} "
-                        f"{self.model_run_name} {self.COSMOFLAG} "
-                        f"{model_dir_remote} {hydro_dir} {xpos} {ypos} {zpos} "
-                        f"{nh} {int(snap)} {tcmb} {i} {job_flag} {N - 1} {hidx[i]} "
-                        f"{radius} {subset_type}"
-                    )
-                    call(cmd, shell=True)
+                    model_file = os.path.join(model_dir, f'snap{snap}_{nh}.py')
+                    with open(model_file, 'w', encoding='utf-8') as f:
+                        f.write('#Snapshot Parameters\n')
+                        f.write('snapshot_num = ' + str(int(snap)) + '\n')
+                        f.write('galaxy_num = ' + str(int(nh)) + '\n\n')
+
+                        f.write("galaxy_num_str = '{:06.0f}'.format(galaxy_num)\n")
+                        f.write("snapnum_str = '{:03.0f}'.format(snapshot_num)\n\n")
+
+                        f.write(f"hydro_dir = '{hydro_dir}/'\n")
+                        if subset_type == 'plist':
+                            f.write("snapshot_name = f'subset_snap{snapnum_str}_gal'+galaxy_num_str+'.h5'\n\n")
+                        else:
+                            f.write(
+                                "snapshot_name = f'region_snap{snapnum_str}_r"
+                                + str(radius)
+                                + "_gal'+galaxy_num_str+'.h5'\n\n"
+                            )
+
+                        f.write('#where the files should go\n')
+                        f.write(f"PD_output_dir = '{model_dir_remote}/'\n")
+                        f.write("Auto_TF_file = 'snap'+snapnum_str+'.logical'\n")
+                        f.write("Auto_dustdens_file = 'snap'+snapnum_str+'.dustdens'\n\n")
+
+                        f.write('#===============================================\n')
+                        f.write('#FILE I/O\n')
+                        f.write('#===============================================\n')
+                        f.write("inputfile = PD_output_dir+'snap'+snapnum_str+'.galaxy'+galaxy_num_str+'.rtin'\n")
+                        f.write("outputfile = PD_output_dir+'snap'+snapnum_str+'.galaxy'+galaxy_num_str+'.rtout'\n\n")
+
+                        f.write('#===============================================\n')
+                        f.write('#GRID POSITIONS\n')
+                        f.write('#===============================================\n')
+                        f.write(f'x_cent = {xpos}\n')
+                        f.write(f'y_cent = {ypos}\n')
+                        f.write(f'z_cent = {zpos}\n\n')
+
+                        f.write('#===============================================\n')
+                        f.write('#CMB INFORMATION\n')
+                        f.write('#===============================================\n')
+                        f.write(f'TCMB = {tcmb}\n')
+
+                if where == 'cluster':
+                    max_array_index = min(N - 1, 1000)
+                    walltime = '0-08:00' if N - 1 > 1000 else '1-00:00'
+                    qsubfile = os.path.join(model_dir, f'master.snap{snap}.job')
+                    with open(qsubfile, 'w', encoding='utf-8') as f:
+                        f.write('#! /bin/bash\n')
+                        f.write(f'#SBATCH --job-name={self.model_run_name}.snap{snap}\n')
+                        f.write(f'#SBATCH --output=out/pd.master.snap{snap}.%a.%N.%j.o\n')
+                        f.write(f'#SBATCH --error=err/pd.master.snap{snap}.%a.%N.%j.e\n')
+                        f.write('#SBATCH --mail-type=ALL\n')
+                        f.write(f'#SBATCH -t {walltime}\n')
+                        f.write('#SBATCH --ntasks=8\n')
+                        f.write('#SBATCH --cpus-per-task=8\n')
+                        f.write('#SBATCH --mem-per-cpu=3800\n')
+                        f.write(f'#SBATCH --array=0-{max_array_index}\n\n')
+                        f.write('module purge\n')
+                        f.write('module load git/2.20.1 gcc/9.3.0 openmpi/4.0.5 hdf5/1.12.1\n\n')
+                        f.write('conda activate pd-env\n\n')
+                        f.write('PD_FRONT_END="/mnt/home/glorenzon/powderday/pd_front_end.py"\n\n')
+                        f.write('id=$(head -n $((SLURM_ARRAY_TASK_ID+1)) ids.txt | tail -n 1)\n')
+                        f.write(f'python $PD_FRONT_END . parameters_master snap{snap}_$id > gal_$id/snap{snap}_$id.LOG\n\n')
+                        f.write('echo "Job done, info follows..."\n')
+                        f.write('sacct -j $SLURM_JOBID --format=JobID,JobName,Partition,Elapsed,ExitCode,MaxRSS,CPUTime,SystemCPU,ReqMem\n')
+                        f.write('exit\n')
+                    cluster_job_files.append(qsubfile)
+                else:
+                    runfile = os.path.join(model_dir, 'run_local.sh')
+                    with open(runfile, 'w', encoding='utf-8') as f:
+                        f.write('#!/bin/bash\n')
+                        f.write('set -e\n')
+                        f.write('echo "Starting local Powderday batch..."\n')
+                        f.write(f'for id in $(cat {os.path.join(model_dir, "ids.txt")}); do\n')
+                        f.write(
+                            '  python /home/lorenzong/powderday/pd_front_end.py . parameters_master '
+                            + f'snap{snap}_$id > gal_$id/snap{snap}_$id.LOG\n'
+                        )
+                        f.write('done\n')
+                        f.write('echo "Local batch complete"\n')
+                    os.chmod(runfile, 0o755)
+                    local_run_files.append(runfile)
 
                 np.savetxt(os.path.join(model_dir, 'ids.txt'), ids, fmt='%i')
                 copyfile(paramfile, os.path.join(model_dir, 'parameters_master.py'))
+
+        if where == 'cluster' and cluster_job_files:
+            submit_all = os.path.join(self.model_dir_base, 'submit_all_snaps.sh')
+            with open(submit_all, 'w', encoding='utf-8') as f:
+                f.write('#!/bin/bash\n')
+                f.write('set -e\n')
+                f.write('echo "Submitting all snapshot Slurm jobs..."\n')
+                for job_file in cluster_job_files:
+                    f.write(f'echo "Submitting {job_file}"\n')
+                    f.write(
+                        f'cd "{os.path.dirname(job_file)}" && '
+                        f'sbatch "{os.path.basename(job_file)}"\n'
+                    )
+                f.write('echo "All snapshot jobs submitted."\n')
+            os.chmod(submit_all, 0o755)
+
+        if where == 'local' and local_run_files:
+            run_all_local = os.path.join(self.model_dir_base, 'run_all_local.sh')
+            with open(run_all_local, 'w', encoding='utf-8') as f:
+                f.write('#!/bin/bash\n')
+                f.write('set -e\n')
+                f.write('echo "Running all local snapshot batches..."\n')
+                for run_file in local_run_files:
+                    f.write(f'echo "Running {run_file}"\n')
+                    f.write(
+                        f'cd "{os.path.dirname(run_file)}" && '
+                        f'./{os.path.basename(run_file)}\n'
+                    )
+                f.write('echo "All local snapshot batches completed."\n')
+            os.chmod(run_all_local, 0o755)
 
     def plotsed(self, snap, gal, show=False, ret=False):
         """Plot the SED output for a given galaxy at a given snapshot.
