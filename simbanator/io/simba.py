@@ -8,6 +8,7 @@ Provides:
 """
 
 import os
+import importlib
 import numpy as np
 from astropy.cosmology import Planck15 as cosmo
 
@@ -385,6 +386,12 @@ class Simulation:
         path = self.get_catalog_file(snap)
         if verbose:
             print(f"Loading catalog: {path}")
+        try:
+            import sympy
+            if not hasattr(sympy, "assumptions"):
+                importlib.import_module("sympy.assumptions")
+        except Exception:
+            pass
         try:
             import caesar
         except ImportError as exc:

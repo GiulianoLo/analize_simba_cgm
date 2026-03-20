@@ -69,9 +69,9 @@ class MakeSED:
         Parameters
         ----------
         snaps : list of int
-            Snapshot numbers.
+            Snapshot numbers, one per selected galaxy.
         galaxyID : array-like of int
-            Galaxy GroupIDs to select.
+            Galaxy GroupIDs to select, paired with *snaps*.
         """
         filepath = os.path.join(self.output_dir, 'target_selection', self.selection_file + '.h5')
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
@@ -80,21 +80,36 @@ class MakeSED:
             with h5py.File(filepath, 'w') as hf:
                 pass
 
+        snaps = np.asarray(snaps, dtype=int)
+        galaxyID = np.asarray(galaxyID, dtype=int)
+
+        if snaps.shape != galaxyID.shape:
+            raise ValueError(
+                "snaps and galaxyID must have the same shape (pairwise mapping: snaps[i] -> galaxyID[i])."
+            )
+
+        grouped_ids = defaultdict(list)
+        for snap, gid in zip(snaps, galaxyID):
+            grouped_ids[int(snap)].append(int(gid))
+
         data_dict = defaultdict(lambda: {
             'galaxy_GroupID': [], 'halo_GroupID': [], 'code_coods': []
         })
 
-        for snap in snaps:
+        for snap, ids_for_snap in grouped_ids.items():
             cs = self.sb.get_caesar(snap)
             coods_code = np.array([g.pos.in_units('code_length').value for g in cs.galaxies])
             hidx = np.array([g.parent_halo_index for g in cs.galaxies])
-            data_dict[snap]['galaxy_GroupID'].extend(galaxyID)
-            data_dict[snap]['halo_GroupID'].extend(hidx[galaxyID])
-            data_dict[snap]['code_coods'].extend(coods_code[galaxyID])
+            ids_for_snap = np.asarray(ids_for_snap, dtype=int)
+            data_dict[snap]['galaxy_GroupID'].extend(ids_for_snap)
+            data_dict[snap]['halo_GroupID'].extend(hidx[ids_for_snap])
+            data_dict[snap]['code_coods'].extend(coods_code[ids_for_snap])
 
         with h5py.File(filepath, 'a') as hf:
             for snap, data in data_dict.items():
                 grp = f'snap{snap:03}'
+                if grp in hf:
+                    del hf[grp]
                 hf.create_group(grp)
                 hf.create_dataset(f'{grp}/galaxy_GroupID', data=np.array(data['galaxy_GroupID']))
                 hf.create_dataset(f'{grp}/halo_GroupID', data=np.array(data['halo_GroupID']))
@@ -204,26 +219,27 @@ class MakeSED:
                         f.write(f'TCMB = {tcmb}\n')
 
                 if where == 'cluster':
-                    max_array_index = min(N - 1, 1000)
-                    walltime = '0-08:00' if N - 1 > 1000 else '1-00:00'
+                    walltime = '0-08:00' if N > 1000 else '1-00:00'
                     qsubfile = os.path.join(model_dir, f'master.snap{snap}.job')
                     with open(qsubfile, 'w', encoding='utf-8') as f:
                         f.write('#! /bin/bash\n')
                         f.write(f'#SBATCH --job-name={self.model_run_name}.snap{snap}\n')
-                        f.write(f'#SBATCH --output=out/pd.master.snap{snap}.%a.%N.%j.o\n')
-                        f.write(f'#SBATCH --error=err/pd.master.snap{snap}.%a.%N.%j.e\n')
+                        f.write(f'#SBATCH --output=out/pd.master.snap{snap}.%N.%j.o\n')
+                        f.write(f'#SBATCH --error=err/pd.master.snap{snap}.%N.%j.e\n')
                         f.write('#SBATCH --mail-type=ALL\n')
                         f.write(f'#SBATCH -t {walltime}\n')
                         f.write('#SBATCH --ntasks=8\n')
                         f.write('#SBATCH --cpus-per-task=8\n')
                         f.write('#SBATCH --mem-per-cpu=3800\n')
-                        f.write(f'#SBATCH --array=0-{max_array_index}\n\n')
+                        f.write('\n')
                         f.write('module purge\n')
                         f.write('module load git/2.20.1 gcc/9.3.0 openmpi/4.0.5 hdf5/1.12.1\n\n')
                         f.write('conda activate pd-env\n\n')
                         f.write('PD_FRONT_END="/mnt/home/glorenzon/powderday/pd_front_end.py"\n\n')
-                        f.write('id=$(head -n $((SLURM_ARRAY_TASK_ID+1)) ids.txt | tail -n 1)\n')
-                        f.write(f'python $PD_FRONT_END . parameters_master snap{snap}_$id > gal_$id/snap{snap}_$id.LOG\n\n')
+                        f.write('echo "Processing all galaxies for this snapshot..."\n')
+                        f.write('while read -r id; do\n')
+                        f.write(f'  python $PD_FRONT_END . parameters_master snap{snap}_$id > gal_$id/snap{snap}_$id.LOG\n')
+                        f.write('done < ids.txt\n\n')
                         f.write('echo "Job done, info follows..."\n')
                         f.write('sacct -j $SLURM_JOBID --format=JobID,JobName,Partition,Elapsed,ExitCode,MaxRSS,CPUTime,SystemCPU,ReqMem\n')
                         f.write('exit\n')
@@ -257,7 +273,7 @@ class MakeSED:
                     f.write(f'echo "Submitting {job_file}"\n')
                     f.write(
                         f'cd "{os.path.dirname(job_file)}" && '
-                        f'sbatch "{os.path.basename(job_file)}"\n'
+                        f'sbatch -p INTEL_HASWELL "{os.path.basename(job_file)}"\n'
                     )
                 f.write('echo "All snapshot jobs submitted."\n')
             os.chmod(submit_all, 0o755)
