@@ -31,7 +31,7 @@ from .io.config import add_simulation, remove_simulation, list_simulations
 # ---------------------------------------------------------------------------
 # Analysis
 # ---------------------------------------------------------------------------
-from .analysis.sfh_caesar import CaesarBuildHistory, BuildHistory
+from .analysis.sfh_caesar import HDF5BuildHistory
 from .analysis.particles import extract_particles
 from .analysis.profiles import radial_profile
 from .analysis.progenitors import caesar_read_progen, read_progen
@@ -69,7 +69,7 @@ __all__ = [
     "Simulation", "Simba", "OutputPaths",
     "add_simulation", "remove_simulation", "list_simulations",
     # analysis
-    "CaesarBuildHistory", "BuildHistory",
+    "HDF5BuildHistory",
     "extract_particles",
     "radial_profile",
     "caesar_read_progen", "read_progen",

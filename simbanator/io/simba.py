@@ -18,240 +18,243 @@ _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                          "data", "snap_z_maps")
 
 
-# ======================================================================
-#  Generic Simulation
-# ======================================================================
+# # ======================================================================
+# #  Generic Simulation
+# # ======================================================================
 
-class Simulation:
-    """Handle for any simulation's file layout.
+# class Simulation:
+#     """Handle for any simulation's file layout.
 
-    Create from a **config entry** (set up once per machine with
-    :func:`simbanator.add_simulation`), or give paths **directly**.
+#     Create from a **config entry** (set up once per machine with
+#     :func:`simbanator.add_simulation`), or give paths **directly**.
 
-    Parameters
-    ----------
-    name : str, optional
-        Simulation identifier that matches an entry in
-        ``~/.simbanator/config.json``.
-    data_dir : str, optional
-        Directory containing snapshot files.  If given, *name* is
-        used only as a label (no config lookup).
-    catalog_dir : str, optional
-        Directory containing catalog files.  Defaults to
-        ``<data_dir>/Groups/``.
-    file_format : str, optional
-        Python format-string for catalog filenames, e.g.
-        ``'m100n1024_{snap:03d}.hdf5'``.
-    snap_format : str, optional
-        Format-string for raw snapshot filenames.  Defaults to
-        ``'snap_' + file_format``.
+#     Parameters
+#     ----------
+#     name : str, optional
+#         Simulation identifier that matches an entry in
+#         ``~/.simbanator/config.json``.
+#     data_dir : str, optional
+#         Directory containing snapshot files.  If given, *name* is
+#         used only as a label (no config lookup).
+#     catalog_dir : str, optional
+#         Directory containing catalog files.  Defaults to
+#         ``<data_dir>/Groups/``.
+#     file_format : str, optional
+#         Python format-string for catalog filenames, e.g.
+#         ``'m100n1024_{snap:03d}.hdf5'``.
+#     snap_format : str, optional
+#         Format-string for raw snapshot filenames.  Defaults to
+#         ``'snap_' + file_format``.
 
-    Examples
-    --------
-    >>> # From config (recommended):
-    >>> sim = Simulation("simba_m100n1024")
-    >>>
-    >>> # With explicit paths:
-    >>> sim = Simulation("my_sim", data_dir="/data/sims/run1",
-    ...                  file_format="snap_{snap:04d}.hdf5")
-    """
+#     Examples
+#     --------
+#     >>> # From config (recommended):
+#     >>> sim = Simulation("simba_m100n1024")
+#     >>>
+#     >>> # With explicit paths:
+#     >>> sim = Simulation("my_sim", data_dir="/data/sims/run1",
+#     ...                  file_format="snap_{snap:04d}.hdf5")
+#     """
 
-    def __init__(self, name=None, *, data_dir=None, catalog_dir=None,
-                 file_format=None, snap_format=None):
+#     def __init__(self, name=None, *, data_dir=None, catalog_dir=None,
+#                  file_format=None, snap_format=None):
 
-        if data_dir is not None:
-            # Explicit paths – no config lookup.
-            self.name = name or "default"
-            self.data_dir = str(data_dir)
-            self.catalog_dir = str(catalog_dir) if catalog_dir else os.path.join(self.data_dir, "Groups")
-            self.file_format = file_format or "{snap:03d}.hdf5"
-        elif name is not None:
-            # Load from ~/.simbanator/config.json
-            cfg = get_simulation_config(name)
-            self.name = name
-            self.data_dir = cfg["data_dir"]
-            self.catalog_dir = cfg.get("catalog_dir") or os.path.join(self.data_dir, "Groups")
-            self.file_format = cfg.get("file_format", "{snap:03d}.hdf5")
-        else:
-            raise TypeError(
-                "Provide either a config name or explicit data_dir.\n"
-                "  Simulation('simba_m100n1024')          # from config\n"
-                "  Simulation('my_sim', data_dir='/...')   # explicit"
-            )
+#         if data_dir is not None:
+#             # Explicit paths – no config lookup.
+#             self.name = name or "default"
+#             self.data_dir = str(data_dir)
+#             self.catalog_dir = str(catalog_dir) if catalog_dir else os.path.join(self.data_dir, "Groups")
+#             self.file_format = file_format or "{snap:03d}.hdf5"
+#         elif name is not None:
+#             # Load from ~/.simbanator/config.json
+#             cfg = get_simulation_config(name)
+#             self.name = name
+#             self.data_dir = cfg["data_dir"]
+#             self.catalog_dir = cfg.get("catalog_dir") or os.path.join(self.data_dir, "Groups")
+#             self.file_format = cfg.get("file_format", "{snap:03d}.hdf5")
+#         else:
+#             raise TypeError(
+#                 "Provide either a config name or explicit data_dir.\n"
+#                 "  Simulation('simba_m100n1024')          # from config\n"
+#                 "  Simulation('my_sim', data_dir='/...')   # explicit"
+#             )
 
-        self.snap_format = snap_format or ("snap_" + self.file_format)
-        self.cosmology = cosmo
+#         self.snap_format = snap_format or ("snap_" + self.file_format)
+#         self.cosmology = cosmo
 
-        # Will be set by subclasses or by user
-        self.snaps = None
-        self.zeds = None
+#         # Will be set by subclasses or by user
+#         self.snaps = None
+#         self.zeds = None
 
-    # ── path helpers ──────────────────────────────────────────────────
+#     # ── path helpers ──────────────────────────────────────────────────
 
-    def get_catalog_file(self, snap):
-        """Return the full path to the catalog file for *snap*."""
-        return os.path.join(self.catalog_dir, self.file_format.format(snap=int(snap)))
+#     def get_catalog_file(self, snap):
+#         """Return the full path to the catalog file for *snap*."""
+#         return os.path.join(self.catalog_dir, self.file_format.format(snap=int(snap)))
 
-    # Backward-compatible aliases
-    get_caesar_file = get_catalog_file
+#     # Backward-compatible aliases
+#     get_caesar_file = get_catalog_file
 
-    def get_snapshot_file(self, snap):
-        """Return the full path to the raw snapshot file for *snap*."""
-        return os.path.join(self.data_dir, self.snap_format.format(snap=int(snap)))
+#     def get_snapshot_file(self, snap):
+#         """Return the full path to the raw snapshot file for *snap*."""
+#         return os.path.join(self.data_dir, self.snap_format.format(snap=int(snap)))
 
-    # Backward-compatible alias
-    get_sim_file = get_snapshot_file
+#     # Backward-compatible alias
+#     get_sim_file = get_snapshot_file
 
-    # ── catalog loading (caesar is optional) ──────────────────────────
+#     # ── catalog loading (caesar is optional) ──────────────────────────
 
-    def load_catalog(self, snap, verbose=False):
-        """Load and return a Caesar catalog for *snap*.
+#     def load_catalog(self, snap, verbose=False):
+#         """Load and return a Caesar catalog for *snap*.
 
-        Requires the ``caesar`` package.
-        """
-        try:
-            import caesar
-        except ImportError:
-            raise ImportError(
-                "caesar is required to load catalogs.\n"
-                "Install with:  pip install caesar  (or conda)"
-            )
-        path = self.get_catalog_file(snap)
-        if verbose:
-            print(f"Loading catalog: {path}")
-        return caesar.load(path)
+#         Requires the ``caesar`` package.
+#         """
+#         try:
+#             import caesar
+#         except ImportError:
+#             raise ImportError(
+#                 "caesar is required to load catalogs.\n"
+#                 "Install with:  pip install caesar  (or conda)"
+#             )
+#         path = self.get_catalog_file(snap)
+#         if verbose:
+#             print(f"Loading catalog: {path}")
+#         return caesar.load(path)
 
-    # Backward-compatible alias
-    get_caesar = load_catalog
+#     # Backward-compatible alias
+#     get_caesar = load_catalog
 
-    # ── redshift helpers ──────────────────────────────────────────────
+#     # ── redshift helpers ──────────────────────────────────────────────
 
-    def get_z_from_snap(self, snap):
-        """Return the redshift for a single snapshot number.
+#     def get_z_from_snap(self, snap):
+#         """Return the redshift for a single snapshot number.
 
-        Only works if the subclass or user has populated
-        ``self.scale_factors``.
-        """
-        if not hasattr(self, "scale_factors") or self.scale_factors is None:
-            raise ValueError("No snap→z mapping loaded for this simulation.")
-        return 1.0 / self.scale_factors[int(snap)] - 1
+#         Only works if the subclass or user has populated
+#         ``self.scale_factors``.
+#         """
+#         if not hasattr(self, "scale_factors") or self.scale_factors is None:
+#             raise ValueError("No snap→z mapping loaded for this simulation.")
+#         return 1.0 / self.scale_factors[int(snap)] - 1
 
-    def get_redshifts(self):
-        """Return the full array of redshifts (one per snapshot in ``self.snaps``)."""
-        if self.zeds is None:
-            raise ValueError("No redshifts loaded for this simulation.")
-        return self.zeds
+#     def get_redshifts(self):
+#         """Return the full array of redshifts (one per snapshot in ``self.snaps``)."""
+#         if self.zeds is None:
+#             raise ValueError("No redshifts loaded for this simulation.")
+#         return self.zeds
 
-    def __repr__(self):
-        return f"Simulation('{self.name}', data_dir='{self.data_dir}')"
-
-
-# ======================================================================
-#  SIMBA convenience
-# ======================================================================
-
-# Map box size (Mpc/h) → config name and filename pattern
-_SIMBA_BOXES = {
-    25:  ("simba_m25n512",   "m25n512_{snap:03d}.hdf5"),
-    50:  ("simba_m50n512",   "m50n512_{snap:03d}.hdf5"),
-    100: ("simba_m100n1024", "m100n1024_{snap:03d}.hdf5"),
-}
+#     def __repr__(self):
+#         return f"Simulation('{self.name}', data_dir='{self.data_dir}')"
 
 
-class Simba(Simulation):
-    """SIMBA simulation handle.
+# # ======================================================================
+# #  SIMBA convenience
+# # ======================================================================
 
-    Wraps :class:`Simulation` with SIMBA-specific defaults:
-    snapshot range 6–151, filename conventions, and a bundled
-    snap-to-redshift mapping.
+# # Map box size (Mpc/h) → config name and filename pattern
+# _SIMBA_BOXES = {
+#     25:  ("simba_m25n512",   "m25n512_{snap:03d}.hdf5"),
+#     50:  ("simba_m50n512",   "m50n512_{snap:03d}.hdf5"),
+#     100: ("simba_m100n1024", "m100n1024_{snap:03d}.hdf5"),
+# }
 
-    Parameters
-    ----------
-    box : int
-        Box size in Mpc/h (25, 50, or 100).
-    variant : str, optional
-        Run variant suffix (e.g. ``'noagn'``, ``'nox'``).
-    data_dir : str, optional
-        Override the data directory (skips config lookup).
-    catalog_dir : str, optional
-        Override the catalog directory.
 
-    Examples
-    --------
-    >>> sb = Simba(box=100)                        # reads config
-    >>> sb = Simba(box=25, data_dir="/data/hr/")   # explicit path
-    """
+# class Simba(Simulation):
+#     """SIMBA simulation handle.
 
-    SNAP_MIN = 6
-    SNAP_MAX = 151
+#     Wraps :class:`Simulation` with SIMBA-specific defaults:
+#     snapshot range 6–151, filename conventions, and a bundled
+#     snap-to-redshift mapping.
 
-    def __init__(self, box=100, variant=None, *, data_dir=None, catalog_dir=None):
-        self.box = box
-        self.variant = variant
+#     Parameters
+#     ----------
+#     box : int
+#         Box size in Mpc/h (25, 50, or 100).
+#     variant : str, optional
+#         Run variant suffix (e.g. ``'noagn'``, ``'nox'``).
+#     data_dir : str, optional
+#         Override the data directory (skips config lookup).
+#     catalog_dir : str, optional
+#         Override the catalog directory.
 
-        if box not in _SIMBA_BOXES:
-            raise ValueError(
-                f"Unknown SIMBA box size {box}. "
-                f"Supported: {list(_SIMBA_BOXES.keys())}"
-            )
+#     Examples
+#     --------
+#     >>> sb = Simba(box=100)                        # reads config
+#     >>> sb = Simba(box=25, data_dir="/data/hr/")   # explicit path
+#     """
 
-        config_name, file_fmt = _SIMBA_BOXES[box]
-        if variant:
-            config_name = f"{config_name}_{variant}"
+#     SNAP_MIN = 6
+#     SNAP_MAX = 151
 
-        if data_dir is not None:
-            super().__init__(
-                name=config_name,
-                data_dir=data_dir,
-                catalog_dir=catalog_dir,
-                file_format=file_fmt,
-            )
-        else:
-            try:
-                super().__init__(name=config_name)
-            except KeyError:
-                raise KeyError(
-                    f"SIMBA box {box} not configured yet.\n"
-                    f"Set it up once with:\n"
-                    f"  import simbanator as sb\n"
-                    f"  sb.add_simulation('{config_name}',\n"
-                    f"      data_dir='/path/to/snapshots',\n"
-                    f"      catalog_dir='/path/to/Groups')\n"
-                    f"\nOr pass data_dir= directly:\n"
-                    f"  sb.Simba(box={box}, data_dir='/path/to/data')"
-                ) from None
-            # The config might not store file_format, so override
-            # with the known SIMBA convention.
-            self.file_format = file_fmt
-            self.snap_format = f"snap_{file_fmt}"
+#     def __init__(self, box=100, variant=None, *, data_dir=None, catalog_dir=None):
+#         self.box = box
+#         self.variant = variant
 
-        # SIMBA snapshot range
-        self.snaps = np.arange(self.SNAP_MIN, self.SNAP_MAX + 1)[::-1]
-        self._load_redshifts()
+#         if box not in _SIMBA_BOXES:
+#             raise ValueError(
+#                 f"Unknown SIMBA box size {box}. "
+#                 f"Supported: {list(_SIMBA_BOXES.keys())}"
+#             )
 
-        # Photometric filters used for SED modelling
-        self.filters = _SIMBA_FILTERS
-        self.filters_pretty = _SIMBA_FILTERS_PRETTY
+#         config_name, file_fmt = _SIMBA_BOXES[box]
+#         if variant:
+#             config_name = f"{config_name}_{variant}"
 
-    # ── snap → z mapping (bundled as package data) ────────────────────
+#         if data_dir is not None:
+#             super().__init__(
+#                 name=config_name,
+#                 data_dir=data_dir,
+#                 catalog_dir=catalog_dir,
+#                 file_format=file_fmt,
+#             )
+#         else:
+#             try:
+#                 super().__init__(name=config_name)
+#             except KeyError:
+#                 raise KeyError(
+#                     f"SIMBA box {box} not configured yet.\n"
+#                     f"Set it up once with:\n"
+#                     f"  import simbanator as sb\n"
+#                     f"  sb.add_simulation('{config_name}',\n"
+#                     f"      data_dir='/path/to/snapshots',\n"
+#                     f"      catalog_dir='/path/to/Groups')\n"
+#                     f"\nOr pass data_dir= directly:\n"
+#                     f"  sb.Simba(box={box}, data_dir='/path/to/data')"
+#                 ) from None
+#             # The config might not store file_format, so override
+#             # with the known SIMBA convention.
+#             self.file_format = file_fmt
+#             self.snap_format = f"snap_{file_fmt}"
 
-    def _load_redshifts(self):
-        """Load the scale-factor table shipped with the package."""
-        zfile = os.path.join(_DATA_DIR, f"zsnap_map_caesar_box{self.box}.txt")
-        if not os.path.isfile(zfile):
-            self.scale_factors = None
-            self.zeds = None
-            return
-        self.scale_factors = np.loadtxt(zfile)
-        self.zeds = np.array([
-            1.0 / self.scale_factors[s] - 1 for s in self.snaps
-        ])
+#         # SIMBA snapshot range
+#         self.snaps = np.arange(self.SNAP_MIN, self.SNAP_MAX + 1)[::-1]
+#         self._load_redshifts()
 
-    def __repr__(self):
-        return f"Simba(box={self.box}, data_dir='{self.data_dir}')"
+#         # Photometric filters used for SED modelling
+#         self.filters = _SIMBA_FILTERS
+#         self.filters_pretty = _SIMBA_FILTERS_PRETTY
+
+#     # ── snap → z mapping (bundled as package data) ────────────────────
+
+#     def _load_redshifts(self):
+#         """Load the scale-factor table shipped with the package."""
+#         zfile = os.path.join(_DATA_DIR, f"zsnap_map_caesar_box{self.box}.txt")
+#         print(f"Loading snap→z mapping from: {zfile}")
+#         if not os.path.isfile(zfile):
+#             self.scale_factors = None
+#             self.zeds = None
+#             return
+#         self.scale_factors = np.loadtxt(zfile)
+#         self.zeds = np.array([
+#             1.0 / self.scale_factors[s] - 1 for s in self.snaps
+#         ])
+
+#     def __repr__(self):
+#         return f"Simba(box={self.box}, data_dir='{self.data_dir}')"
 
 
 # ── SIMBA photometric filters ────────────────────────────────────────
+
+_SIMBA_BOXES = [25, 50, 100]
 
 _SIMBA_FILTERS = [
     "GALEX_FUV", "GALEX_NUV",
@@ -279,3 +282,157 @@ _SIMBA_FILTERS_PRETTY = [
     r"JCMT $450\,\mu\mathrm{m}$", r"JCMT $850\,\mu\mathrm{m}$",
 ]
 
+class Simulation:
+    def __init__(self, name=None, *, data_dir=None, catalog_dir=None,
+                 file_format=None, snap_format=None):
+
+        if data_dir is not None:
+            self.name = name or "default"
+            self.data_dir = str(data_dir)
+            self.catalog_dir = str(catalog_dir) if catalog_dir else os.path.join(self.data_dir, "Groups")
+            self.file_format = file_format or "{snap:03d}.hdf5"
+            self.snap_z_map = None
+
+        elif name is not None:
+            cfg = get_simulation_config(name)
+            self.name = name
+            self.data_dir = cfg["data_dir"]
+            self.catalog_dir = cfg.get("catalog_dir") or os.path.join(self.data_dir, "Groups")
+            self.file_format = cfg.get("file_format", "{snap:03d}.hdf5")
+
+            # redshift mapping from config
+            self.snap_z_map = cfg.get("snap_z_map", None)
+
+        else:
+            raise TypeError(
+                "Provide either a config name or explicit data_dir."
+            )
+
+        self.snap_format = snap_format or ("snap_" + self.file_format)
+        self.cosmology = cosmo
+
+        self.snaps = None
+        self.zeds = None
+        self.scale_factors = None
+
+        # always attempt to load redshifts
+        self._load_redshifts()
+
+    # ─────────────────────────────────────────────
+    # Redshift handling
+    # ─────────────────────────────────────────────
+
+    def _load_redshifts(self):
+        """Load snap→z mapping if available."""
+
+        if self.snap_z_map is None:
+            # Silent fallback: no redshift info
+            self.scale_factors = None
+            self.zeds = None
+            return
+
+        zfile = os.path.join(_DATA_DIR, self.snap_z_map)
+
+        print(f"[Simulation] Loading snap→z mapping from: {zfile}")
+
+        if not os.path.isfile(zfile):
+            raise FileNotFoundError(
+                f"Missing snap_z_map file: {zfile}"
+            )
+
+        self.scale_factors = np.loadtxt(zfile)
+
+        # If snapshots are already defined, compute zeds
+        if self.snaps is not None:
+            self._compute_redshifts()
+
+    def _compute_redshifts(self):
+        """Compute redshift array from scale factors."""
+        if self.scale_factors is None or self.snaps is None:
+            self.zeds = None
+            return
+
+        max_snap = np.max(self.snaps)
+        if max_snap >= len(self.scale_factors):
+            raise ValueError(
+                f"Snapshot index {max_snap} exceeds scale factor table size {len(self.scale_factors)}"
+            )
+
+        self.zeds = 1.0 / self.scale_factors[self.snaps] - 1.0
+
+    # ─────────────────────────────────────────────
+
+    def get_z_from_snap(self, snap):
+        if self.scale_factors is None:
+            raise ValueError("No snap→z mapping loaded.")
+
+        if snap >= len(self.scale_factors):
+            raise IndexError(f"Snapshot {snap} out of bounds for mapping.")
+
+        return 1.0 / self.scale_factors[int(snap)] - 1.0
+
+    def get_catalog_file(self, snap):
+        return os.path.join(self.catalog_dir, self.file_format.format(snap=int(snap)))
+
+    get_caesar_file = get_catalog_file
+
+    def get_snapshot_file(self, snap):
+        return os.path.join(self.data_dir, self.snap_format.format(snap=int(snap)))
+
+    get_sim_file = get_snapshot_file
+
+    def load_catalog(self, snap, verbose=False):
+        path = self.get_catalog_file(snap)
+        if verbose:
+            print(f"Loading catalog: {path}")
+        try:
+            import caesar
+        except ImportError as exc:
+            raise ImportError(
+                "caesar is required to load catalogs. Install with: pip install caesar"
+            ) from exc
+        return caesar.load(path)
+
+    get_caesar = load_catalog
+    
+    
+    
+class Simba(Simulation):
+
+    SNAP_MIN = 6
+    SNAP_MAX = 151
+
+    def __init__(self, box=100, variant=None, *, data_dir=None, catalog_dir=None):
+        self.box = box
+        self.variant = variant
+
+        if box not in _SIMBA_BOXES:
+            raise ValueError(f"Unknown SIMBA box size {box}")
+
+        config_name, file_fmt = _SIMBA_BOXES[box]
+
+        if variant:
+            config_name = f"{config_name}_{variant}"
+
+        if data_dir is not None:
+            super().__init__(
+                name=config_name,
+                data_dir=data_dir,
+                catalog_dir=catalog_dir,
+                file_format=file_fmt,
+            )
+        else:
+            super().__init__(name=config_name)
+
+        # SIMBA-specific defaults
+        self.file_format = file_fmt
+        self.snap_format = f"snap_{file_fmt}"
+
+        # Define snapshot range
+        self.snaps = np.arange(self.SNAP_MIN, self.SNAP_MAX + 1)[::-1]
+
+        # recompute redshifts now that snaps exist
+        self._compute_redshifts()
+
+        self.filters = _SIMBA_FILTERS
+        self.filters_pretty = _SIMBA_FILTERS_PRETTY
