@@ -116,7 +116,8 @@ class MakeSED:
                 hf.create_dataset(f'{grp}/code_coods', data=np.array(data['code_coods']))
                 print(f'Written data for {grp}')
 
-    def create_master(self, where, subset_type='plist', radius=None):
+    def create_master(self, where, subset_type='plist', radius=None, max_parallel_snaps=2, 
+                      galaxies_per_task=4, use_job_deps=False):
         """Generate Powderday parameter files and batch scripts.
 
         Parameters
@@ -128,6 +129,16 @@ class MakeSED:
             ``'region'`` (spherical aperture).
         radius : float, optional
             Aperture radius (required when *subset_type* is ``'region'``).
+        max_parallel_snaps : int, optional
+            Maximum number of snapshot jobs to run concurrently on the cluster.
+            Default: 2. Set to None for unlimited.
+        galaxies_per_task : int, optional
+            Number of galaxies to process per parallel task within a job.
+            Default: 4. Increase for better parallelization, decrease to reduce
+            per-task memory usage.
+        use_job_deps : bool, optional
+            If True, chain jobs with SLURM dependencies so snapshots run sequentially.
+            If False (default), all jobs can run in parallel (up to max_parallel_snaps).
 
         Notes
         -----
@@ -228,8 +239,8 @@ class MakeSED:
                         f.write(f'#SBATCH --error=err/pd.master.snap{snap}.%N.%j.e\n')
                         f.write('#SBATCH --mail-type=ALL\n')
                         f.write(f'#SBATCH -t {walltime}\n')
-                        f.write('#SBATCH --ntasks=8\n')
-                        f.write('#SBATCH --cpus-per-task=8\n')
+                        f.write('#SBATCH --ntasks=1\n')
+                        f.write(f'#SBATCH --cpus-per-task={galaxies_per_task}\n')
                         f.write('#SBATCH --mem-per-cpu=3800\n')
                         f.write('\n')
                         f.write('module purge\n')
@@ -237,13 +248,16 @@ class MakeSED:
                         f.write('conda activate pd-env\n\n')
                         f.write('PD_FRONT_END="/mnt/home/glorenzon/powderday/pd_front_end.py"\n\n')
                         f.write('echo "Processing all galaxies for this snapshot..."\n')
-                        f.write('while read -r id; do\n')
-                        f.write(f'  python $PD_FRONT_END . parameters_master snap{snap}_$id > gal_$id/snap{snap}_$id.LOG\n')
-                        f.write('done < ids.txt\n\n')
+                        f.write(f'cat ids.txt | parallel --pipe --block 10M -N {galaxies_per_task} --joblog .parallel.log ')
+                        f.write('--jobs ${SLURM_CPUS_PER_TASK} ')
+                        f.write('"while read -r id; do ')
+                        f.write(f'python $PD_FRONT_END . parameters_master snap{snap}_$id > gal_$id/snap{snap}_$id.LOG; ')
+                        f.write('done"\n\n')
                         f.write('echo "Job done, info follows..."\n')
                         f.write('sacct -j $SLURM_JOBID --format=JobID,JobName,Partition,Elapsed,ExitCode,MaxRSS,CPUTime,SystemCPU,ReqMem\n')
                         f.write('exit\n')
                     cluster_job_files.append(qsubfile)
+
                 else:
                     runfile = os.path.join(model_dir, 'run_local.sh')
                     with open(runfile, 'w', encoding='utf-8') as f:
@@ -268,15 +282,58 @@ class MakeSED:
             with open(submit_all, 'w', encoding='utf-8') as f:
                 f.write('#!/bin/bash\n')
                 f.write('set -e\n')
-                f.write('echo "Submitting all snapshot Slurm jobs..."\n')
-                for job_file in cluster_job_files:
-                    f.write(f'echo "Submitting {job_file}"\n')
-                    f.write(
-                        f'cd "{os.path.dirname(job_file)}" && '
-                        f'sbatch -p INTEL_HASWELL "{os.path.basename(job_file)}"\n'
-                    )
+                f.write('echo "Submitting snapshot Slurm jobs with rate limiting..."\n')
+                f.write(f'# Max parallel snapshots: {max_parallel_snaps if max_parallel_snaps else "unlimited"}\n')
+                f.write(f'# Using job dependencies: {use_job_deps}\n\n')
+                
+                if use_job_deps:
+                    f.write('# Chain jobs so snapshots run sequentially\n')
+                    f.write('PREV_JOB_ID=""\n\n')
+                    for i, job_file in enumerate(cluster_job_files):
+                        dep_str = ' --dependency=afterok:$PREV_JOB_ID' if i > 0 else ''
+                        f.write(f'echo "Submitting {job_file}"\n')
+                        f.write(
+                            f'cd "{os.path.dirname(job_file)}" && '
+                            f'JOB_ID=$(sbatch{dep_str} -p INTEL_HASWELL {os.path.basename(job_file)} | awk \'{{print $NF}}\')\n'
+                            f'PREV_JOB_ID=$JOB_ID\n'
+                            f'echo "  Job ID: $JOB_ID"\n\n'
+                        )
+                else:
+                    f.write(f'# Submit with max {max_parallel_snaps} concurrent snapshot jobs\n')
+                    f.write('# Monitor queue and submit next batch when space available\n')
+                    f.write(f'MAX_PARALLEL={max_parallel_snaps}\n')
+                    f.write('SUBMITTED_JOBS=()\n')
+                    f.write('SUBMISSION_DELAY=2  # seconds between submissions\n\n')
+                    
+                    f.write('submit_job() {{\n')
+                    f.write('    local job_file=$1\n')
+                    f.write('    local job_dir=$(dirname "$job_file")\n')
+                    f.write('    local job_name=$(basename "$job_file")\n')
+                    f.write('    echo "Submitting $job_name from $job_dir"\n')
+                    f.write('    local job_id=$(cd "$job_dir" && sbatch -p INTEL_HASWELL "$job_name" | awk \'{print $NF}\')\n')
+                    f.write('    SUBMITTED_JOBS+=($job_id)\n')
+                    f.write('    echo "  Job ID: $job_id"\n')
+                    f.write('    sleep $SUBMISSION_DELAY\n')
+                    f.write('}}\n\n')
+                    
+                    f.write('# Submit jobs with rate limiting\n')
+                    for job_file in cluster_job_files:
+                        f.write(f'submit_job "{job_file}"\n')
+                        f.write('# Check if we should throttle based on running job count\n')
+                        f.write('if [ ! -z "$MAX_PARALLEL" ] && [ "$MAX_PARALLEL" -gt 0 ]; then\n')
+                        f.write('    running_count=$(squeue -u $USER --states=R,PD -h 2>/dev/null | wc -l)\n')
+                        f.write('    while [ "$running_count" -ge "$MAX_PARALLEL" ]; do\n')
+                        f.write('        echo "Queue full ($running_count >= $MAX_PARALLEL). Waiting 10s before next submission..."\n')
+                        f.write('        sleep 10\n')
+                        f.write('        running_count=$(squeue -u $USER --states=R,PD -h 2>/dev/null | wc -l)\n')
+                        f.write('    done\n')
+                        f.write('fi\n')
+                        f.write('\n')
+                
                 f.write('echo "All snapshot jobs submitted."\n')
+                f.write('echo "Monitor with: squeue -u $USER"\n')
             os.chmod(submit_all, 0o755)
+
 
         if where == 'local' and local_run_files:
             run_all_local = os.path.join(self.model_dir_base, 'run_all_local.sh')
