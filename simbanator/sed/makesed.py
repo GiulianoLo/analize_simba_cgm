@@ -8,6 +8,7 @@ import sys
 import os
 import numpy as np
 import h5py
+import subprocess
 from shutil import copyfile
 from collections import defaultdict
 
@@ -116,8 +117,33 @@ class MakeSED:
                 hf.create_dataset(f'{grp}/code_coods', data=np.array(data['code_coods']))
                 print(f'Written data for {grp}')
 
-    def create_master(self, where, subset_type='plist', radius=None, max_parallel_snaps=2, 
-                      galaxies_per_task=4, use_job_deps=False, partition='INTEL_HASWELL'):
+    def _resolve_hydro_dir_for_snap(self, snap):
+        """Return the most likely filtered-particle directory for a snapshot.
+
+        Supports common layouts under ``hydro_dir_base`` such as:
+        - ``snap_XXX``
+        - ``XXX``
+        - ``snapXXX``
+        - ``snap_XXX`` with non-padded integer folder names
+        """
+        snap_i = int(snap)
+        snap3 = f"{snap_i:03d}"
+        candidates = [
+            os.path.join(self.hydro_dir_base, f'snap_{snap3}'),
+            os.path.join(self.hydro_dir_base, snap3),
+            os.path.join(self.hydro_dir_base, f'snap{snap3}'),
+            os.path.join(self.hydro_dir_base, str(snap_i)),
+            os.path.join(self.hydro_dir_base, f'snap_{snap_i}'),
+            os.path.join(self.hydro_dir_base, f'snap{snap_i}'),
+        ]
+        for path in candidates:
+            if os.path.isdir(path):
+                return path
+        return candidates[0]
+
+    def create_master(self, where, subset_type='plist', radius=None, max_parallel_snaps=2,
+                      galaxies_per_task=4, use_job_deps=False, partition='INTEL_HASWELL',
+                      cluster_setup_template=None):
         """Generate Powderday parameter files and batch scripts.
 
         Parameters
@@ -141,6 +167,9 @@ class MakeSED:
             If False (default), all jobs can run in parallel (up to max_parallel_snaps).
         partition : str, optional
             SLURM partition to submit jobs to. Default: 'INTEL_HASWELL'.
+        cluster_setup_template : str, optional
+            Path to the cluster setup shell script template. If None, defaults
+            to ``simbanator/sed/cosmology_setup_all_cluster.cis.sh``.
 
         Notes
         -----
@@ -153,6 +182,8 @@ class MakeSED:
             raise ValueError("subset_type must be 'plist' or 'region'")
         if subset_type == 'region' and radius is None:
             raise ValueError("radius is required when subset_type='region'")
+        if where == 'cluster' and max_parallel_snaps is not None and max_parallel_snaps < 1:
+            raise ValueError("max_parallel_snaps must be >= 1 or None")
 
         filepath = os.path.join(self.output_dir, 'target_selection', self.selection_file + '.h5')
         if not os.path.exists(filepath):
@@ -160,6 +191,12 @@ class MakeSED:
 
         pkg_dir = os.path.dirname(__file__)
         paramfile = os.path.join(pkg_dir, 'parameters_master.py')
+        if cluster_setup_template is None:
+            cluster_setup_template = os.path.join(pkg_dir, 'cosmology_setup_all_cluster.cis.sh')
+        if where == 'cluster' and not os.path.exists(cluster_setup_template):
+            raise FileNotFoundError(
+                f"Cluster setup template not found: {cluster_setup_template}"
+            )
         cluster_job_files = []
         local_run_files = []
 
@@ -168,14 +205,20 @@ class MakeSED:
 
             for snap in snaps:
                 ids = hf[f'snap{snap:03}/galaxy_GroupID'][:]
+                hidx = hf[f'snap{snap:03}/halo_GroupID'][:]
                 pos = hf[f'snap{snap:03}/code_coods'][:]
 
-                hydro_dir = os.path.join(self.hydro_dir_base, f'snap_{snap:03}')
+                hydro_dir = self._resolve_hydro_dir_for_snap(snap)
                 model_dir = os.path.join(self.model_dir_base, f'snap_{snap:03}')
-                os.makedirs(hydro_dir, exist_ok=True)
                 os.makedirs(model_dir, exist_ok=True)
                 os.makedirs(os.path.join(model_dir, 'out'), exist_ok=True)
                 os.makedirs(os.path.join(model_dir, 'err'), exist_ok=True)
+
+                if not os.path.isdir(hydro_dir):
+                    raise FileNotFoundError(
+                        f"Filtered snapshot folder not found for snap {snap}. "
+                        f"Looked under base: {self.hydro_dir_base}"
+                    )
 
                 redshift = self.sb.get_z_from_snap(snap)
                 tcmb = 2.73 * (1. + redshift)
@@ -188,6 +231,34 @@ class MakeSED:
                     model_dir_remote = os.path.join(model_dir, f'gal_{nh}')
                     os.makedirs(model_dir_remote, exist_ok=True)
                     xpos, ypos, zpos = pos[i]
+
+                    if where == 'cluster':
+                        job_flag = 1 if i == 0 else 0
+                        cmd = [
+                            'bash',
+                            cluster_setup_template,
+                            str(self.nnodes),
+                            model_dir,
+                            hydro_dir,
+                            self.model_run_name,
+                            str(self.COSMOFLAG),
+                            model_dir_remote,
+                            hydro_dir,
+                            str(xpos),
+                            str(ypos),
+                            str(zpos),
+                            str(int(nh)),
+                            str(int(snap)),
+                            str(float(tcmb)),
+                            str(i),
+                            str(job_flag),
+                            str(max(0, N - 1)),
+                            str(int(hidx[i])),
+                            '' if radius is None else str(radius),
+                            subset_type,
+                        ]
+                        subprocess.run(cmd, check=True)
+                        continue
 
                     model_file = os.path.join(model_dir, f'snap{snap}_{nh}.py')
                     with open(model_file, 'w', encoding='utf-8') as f:
@@ -232,34 +303,9 @@ class MakeSED:
                         f.write(f'TCMB = {tcmb}\n')
 
                 if where == 'cluster':
-                    walltime = '0-08:00' if N > 1000 else '1-00:00'
                     qsubfile = os.path.join(model_dir, f'master.snap{snap}.job')
-                    with open(qsubfile, 'w', encoding='utf-8') as f:
-                        f.write('#! /bin/bash\n')
-                        f.write(f'#SBATCH --job-name={self.model_run_name}.snap{snap}\n')
-                        f.write(f'#SBATCH --output=out/pd.master.snap{snap}.%N.%j.o\n')
-                        f.write(f'#SBATCH --error=err/pd.master.snap{snap}.%N.%j.e\n')
-                        f.write('#SBATCH --mail-type=ALL\n')
-                        f.write(f'#SBATCH -t {walltime}\n')
-                        f.write('#SBATCH --ntasks=1\n')
-                        f.write(f'#SBATCH --cpus-per-task={galaxies_per_task}\n')
-                        f.write('#SBATCH --mem-per-cpu=3800\n')
-                        f.write('\n')
-                        f.write('module purge\n')
-                        f.write('module load git/2.20.1 gcc/9.3.0 openmpi/4.0.5 hdf5/1.12.1\n\n')
-                        f.write('conda activate pd-env\n\n')
-                        f.write('PD_FRONT_END="/mnt/home/glorenzon/powderday/pd_front_end.py"\n\n')
-                        f.write('echo "Processing all galaxies for this snapshot..."\n')
-                        f.write(f'cat ids.txt | parallel --pipe --block 10M -N {galaxies_per_task} --joblog .parallel.log ')
-                        f.write('--jobs ${SLURM_CPUS_PER_TASK} ')
-                        f.write('"while read -r id; do ')
-                        f.write(f'python $PD_FRONT_END . parameters_master snap{snap}_$id > gal_$id/snap{snap}_$id.LOG; ')
-                        f.write('done"\n\n')
-                        f.write('echo "Job done, info follows..."\n')
-                        f.write('sacct -j $SLURM_JOBID --format=JobID,JobName,Partition,Elapsed,ExitCode,MaxRSS,CPUTime,SystemCPU,ReqMem\n')
-                        f.write('exit\n')
-                    cluster_job_files.append(qsubfile)
-
+                    if os.path.exists(qsubfile):
+                        cluster_job_files.append(qsubfile)
                 else:
                     runfile = os.path.join(model_dir, 'run_local.sh')
                     with open(runfile, 'w', encoding='utf-8') as f:
@@ -278,7 +324,6 @@ class MakeSED:
 
                 np.savetxt(os.path.join(model_dir, 'ids.txt'), ids, fmt='%i')
                 copyfile(paramfile, os.path.join(model_dir, 'parameters_master.py'))
-
         if where == 'cluster' and cluster_job_files:
             submit_all = os.path.join(self.model_dir_base, 'submit_all_snaps.sh')
             with open(submit_all, 'w', encoding='utf-8') as f:
@@ -287,6 +332,16 @@ class MakeSED:
                 f.write('echo "Submitting snapshot Slurm jobs with rate limiting..."\n')
                 f.write(f'# Max parallel snapshots: {max_parallel_snaps if max_parallel_snaps else "unlimited"}\n')
                 f.write(f'# Using job dependencies: {use_job_deps}\n\n')
+                f.write(f'JOB_NAME_PREFIX="{self.model_run_name}.snap"\n')
+                f.write('POLL_SECONDS=10\n\n')
+                f.write('submit_job() {\n')
+                f.write('    local job_file=$1\n')
+                f.write('    local job_dir=$(dirname "$job_file")\n')
+                f.write('    local job_name=$(basename "$job_file")\n')
+                f.write('    echo "Submitting $job_name from $job_dir"\n')
+                f.write(f'    local job_id=$(cd "$job_dir" && sbatch -p {partition} "$job_name" | sed -n "s/^Submitted batch job //p")\n')
+                f.write('    echo "  Job ID: $job_id"\n')
+                f.write('}\n\n')
                 
                 if use_job_deps:
                     f.write('# Chain jobs so snapshots run sequentially\n')
@@ -296,41 +351,31 @@ class MakeSED:
                         f.write(f'echo "Submitting {job_file}"\n')
                         f.write(
                             f'cd "{os.path.dirname(job_file)}" && '
-                            f'JOB_ID=$(sbatch{dep_str} -p {partition} {os.path.basename(job_file)} | awk \'{{print $NF}}\')\n'
+                            f'JOB_ID=$(sbatch{dep_str} -p {partition} {os.path.basename(job_file)} | sed -n "s/^Submitted batch job //p")\n'
                             f'PREV_JOB_ID=$JOB_ID\n'
                             f'echo "  Job ID: $JOB_ID"\n\n'
                         )
                 else:
-                    f.write(f'# Submit with max {max_parallel_snaps} concurrent snapshot jobs\n')
-                    f.write('# Monitor queue and submit next batch when space available\n')
-                    f.write(f'MAX_PARALLEL={max_parallel_snaps}\n')
-                    f.write('SUBMITTED_JOBS=()\n')
-                    f.write('SUBMISSION_DELAY=2  # seconds between submissions\n\n')
-                    
-                    f.write('submit_job() {\n')
-                    f.write('    local job_file=$1\n')
-                    f.write('    local job_dir=$(dirname "$job_file")\n')
-                    f.write('    local job_name=$(basename "$job_file")\n')
-                    f.write('    echo "Submitting $job_name from $job_dir"\n')
-                    f.write(f'    local job_id=$(cd "$job_dir" && sbatch -p {partition} "$job_name" | awk \'{{print $NF}}\')\n')
-                    f.write('    SUBMITTED_JOBS+=($job_id)\n')
-                    f.write('    echo "  Job ID: $job_id"\n')
-                    f.write('    sleep $SUBMISSION_DELAY\n')
-                    f.write('}\n\n')
-                    
-                    f.write('# Submit jobs with rate limiting\n')
-                    for job_file in cluster_job_files:
-                        f.write(f'submit_job "{job_file}"\n')
-                        f.write('# Check if we should throttle based on running job count\n')
-                        f.write('if [ ! -z "$MAX_PARALLEL" ] && [ "$MAX_PARALLEL" -gt 0 ]; then\n')
-                        f.write('    running_count=$(squeue -u $USER --states=R,PD -h 2>/dev/null | wc -l)\n')
+                    if max_parallel_snaps is None:
+                        f.write('# Submit all snapshot jobs without queue throttling\n')
+                    else:
+                        f.write(f'# Submit with max {max_parallel_snaps} concurrent snapshot jobs\n')
+                        f.write(f'MAX_PARALLEL={max_parallel_snaps}\n\n')
+                        f.write('wait_for_slot() {\n')
+                        f.write('    local running_count\n')
+                        f.write('    running_count=$(squeue -u "$USER" --states=R,PD -h -n "${JOB_NAME_PREFIX}*" 2>/dev/null | wc -l)\n')
                         f.write('    while [ "$running_count" -ge "$MAX_PARALLEL" ]; do\n')
-                        f.write('        echo "Queue full ($running_count >= $MAX_PARALLEL). Waiting 10s before next submission..."\n')
-                        f.write('        sleep 10\n')
-                        f.write('        running_count=$(squeue -u $USER --states=R,PD -h 2>/dev/null | wc -l)\n')
+                        f.write('        echo "Queue full for this run ($running_count >= $MAX_PARALLEL). Waiting ${POLL_SECONDS}s..."\n')
+                        f.write('        sleep "$POLL_SECONDS"\n')
+                        f.write('        running_count=$(squeue -u "$USER" --states=R,PD -h -n "${JOB_NAME_PREFIX}*" 2>/dev/null | wc -l)\n')
                         f.write('    done\n')
-                        f.write('fi\n')
-                        f.write('\n')
+                        f.write('}\n\n')
+
+                    f.write('# Submit jobs\n')
+                    for job_file in cluster_job_files:
+                        if max_parallel_snaps is not None:
+                            f.write('wait_for_slot\n')
+                        f.write(f'submit_job "{job_file}"\n')
                 
                 f.write('echo "All snapshot jobs submitted."\n')
                 f.write('echo "Monitor with: squeue -u $USER"\n')
@@ -351,6 +396,10 @@ class MakeSED:
                     )
                 f.write('echo "All local snapshot batches completed."\n')
             os.chmod(run_all_local, 0o755)
+
+    def makemaster(self, *args, **kwargs):
+        """Backward-compatible alias for :meth:`create_master`."""
+        return self.create_master(*args, **kwargs)
 
     def plotsed(self, snap, gal, show=False, ret=False):
         """Plot the SED output for a given galaxy at a given snapshot.

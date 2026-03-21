@@ -45,6 +45,30 @@ class MakeSED:
         self.hydro_outputfile = self.sb.output_file # directory with the file with the conversion factor from snap to z
         self.selection_file = selection_file # hdf5 file with the galaxy coordinates and id from caesar file
         self.preselect = preselect
+
+    def _resolve_hydro_dir_for_snap(self, snap):
+        """Return the most likely filtered-particle directory for a snapshot.
+
+        Supports common layouts under ``hydro_dir_base`` such as:
+        - ``snap_XXX``
+        - ``XXX``
+        - ``snapXXX``
+        - non-padded variants
+        """
+        snap_i = int(snap)
+        snap3 = f"{snap_i:03d}"
+        candidates = [
+            os.path.join(self.hydro_dir_base, f'snap_{snap3}'),
+            os.path.join(self.hydro_dir_base, snap3),
+            os.path.join(self.hydro_dir_base, f'snap{snap3}'),
+            os.path.join(self.hydro_dir_base, str(snap_i)),
+            os.path.join(self.hydro_dir_base, f'snap_{snap_i}'),
+            os.path.join(self.hydro_dir_base, f'snap{snap_i}'),
+        ]
+        for path in candidates:
+            if os.path.isdir(path):
+                return path
+        return candidates[0]
         
 
     def selection_gals(self, snaps, galaxyID):
@@ -134,10 +158,15 @@ class MakeSED:
                 print('=====================', f'snap{snap:03}/code_coods', pos)
     
                 # Create subdirectories in hydro_dir_base and model_dir_base for the current snapshot
-                hydro_dir = os.path.join(self.hydro_dir_base, f'snap_{snap:03}')
+                hydro_dir = self._resolve_hydro_dir_for_snap(snap)
                 model_dir = os.path.join(self.model_dir_base, f'snap_{snap:03}')
-                os.makedirs(hydro_dir, exist_ok=True)
                 os.makedirs(model_dir, exist_ok=True)
+
+                if not os.path.isdir(hydro_dir):
+                    raise FileNotFoundError(
+                        f"Filtered snapshot folder not found for snap {snap}. "
+                        f"Looked under base: {self.hydro_dir_base}"
+                    )
     
                 # Determine redshift and CMB temperature for the current snapshot
                 redshift = (1. / scalefactor[n]) - 1.
