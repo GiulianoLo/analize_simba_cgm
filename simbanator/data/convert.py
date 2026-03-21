@@ -368,7 +368,7 @@ def convert_hdf5_fits(sb, snaprange, ignore=None, only=None, verbose=0, output_d
             ignore.append('particle_data')
 
     if output_dir is None:
-        output_dir = os.path.join(os.getcwd(), 'output', 'converted_catalogs')
+        output_dir = os.path.join(os.getcwd(), 'output', sb.name, 'converted_catalogs')
     os.makedirs(output_dir, exist_ok=True)
 
     for snap in snaprange:

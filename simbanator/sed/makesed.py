@@ -307,7 +307,7 @@ class MakeSED:
                     f.write('SUBMITTED_JOBS=()\n')
                     f.write('SUBMISSION_DELAY=2  # seconds between submissions\n\n')
                     
-                    f.write('submit_job() {{\n')
+                    f.write('submit_job() {\n')
                     f.write('    local job_file=$1\n')
                     f.write('    local job_dir=$(dirname "$job_file")\n')
                     f.write('    local job_name=$(basename "$job_file")\n')
@@ -316,7 +316,7 @@ class MakeSED:
                     f.write('    SUBMITTED_JOBS+=($job_id)\n')
                     f.write('    echo "  Job ID: $job_id"\n')
                     f.write('    sleep $SUBMISSION_DELAY\n')
-                    f.write('}}\n\n')
+                    f.write('}\n\n')
                     
                     f.write('# Submit jobs with rate limiting\n')
                     for job_file in cluster_job_files:

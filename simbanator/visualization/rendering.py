@@ -25,6 +25,19 @@ import sphviewer as sph
 from sphviewer.tools import camera_tools, QuickView, Blend
 
 
+def _infer_sim_name(simulation_obj, fallback='default'):
+    """Best-effort simulation-name extraction from a Caesar simulation object."""
+    if simulation_obj is None:
+        return fallback
+
+    for attr in ('name', 'sim_name', 'simulation_name', 'label'):
+        value = getattr(simulation_obj, attr, None)
+        if isinstance(value, str) and value:
+            return value
+
+    return fallback
+
+
 
 
 # -----------------------------------------------------------------------
@@ -323,7 +336,8 @@ class RenderRGB:
         ax.set_ylabel(yl)
 
         if output_dir is None:
-            output_dir = os.path.join(os.getcwd(), 'output', 'renders')
+            sim_name = _infer_sim_name(getattr(self.obj, 'simulation', None))
+            output_dir = os.path.join(os.getcwd(), 'output', sim_name, 'renders')
         os.makedirs(output_dir, exist_ok=True)
         prefix = 'region_' if self.region else ''
         fig.savefig(os.path.join(output_dir, f'{prefix}{name}.png'))
@@ -348,7 +362,8 @@ class RenderRGB:
         data = camera_tools.get_camera_trajectory(targets, anchors)
 
         if output_dir is None:
-            output_dir = os.path.join(os.getcwd(), 'output', 'videos')
+            sim_name = _infer_sim_name(getattr(self.obj, 'simulation', None))
+            output_dir = os.path.join(os.getcwd(), 'output', sim_name, 'videos')
         frame_dir = os.path.join(output_dir, 'frames')
         os.makedirs(frame_dir, exist_ok=True)
         particles = self.set_particles()
@@ -371,7 +386,8 @@ class RenderRGB:
     def create_video(self, name, interval=100, output_dir=None):
         """Stitch rendered frames into a GIF."""
         if output_dir is None:
-            output_dir = os.path.join(os.getcwd(), 'output', 'videos')
+            sim_name = _infer_sim_name(getattr(self.obj, 'simulation', None))
+            output_dir = os.path.join(os.getcwd(), 'output', sim_name, 'videos')
         frame_dir = os.path.join(output_dir, 'frames')
         os.makedirs(frame_dir, exist_ok=True)
         prefix = 'region_' if self.region else ''
@@ -385,7 +401,8 @@ class RenderRGB:
     def flush(self, output_dir=None):
         """Remove all frame PNGs from the frames directory."""
         if output_dir is None:
-            output_dir = os.path.join(os.getcwd(), 'output', 'videos')
+            sim_name = _infer_sim_name(getattr(self.obj, 'simulation', None))
+            output_dir = os.path.join(os.getcwd(), 'output', sim_name, 'videos')
         frame_dir = os.path.join(output_dir, 'frames')
         for fn in os.listdir(frame_dir):
             if fn.lower().endswith('.png'):
@@ -538,7 +555,8 @@ class SingleRender:
         fig.colorbar(im, ax=ax, label='Mass [Msun]')
 
         if output_dir is None:
-            output_dir = os.path.join(os.getcwd(), 'output', 'renders')
+            sim_name = _infer_sim_name(getattr(self.obj, 'simulation', None))
+            output_dir = os.path.join(os.getcwd(), 'output', sim_name, 'renders')
         os.makedirs(output_dir, exist_ok=True)
         prefix = 'map_region_' if self.region else 'map_'
         fig.savefig(os.path.join(output_dir, f'{prefix}{self.propr[1]}_{name}.png'))

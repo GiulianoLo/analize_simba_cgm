@@ -69,7 +69,7 @@ def caesar_read_progen(ids, outname, snaplist, sb, output_dir=None):
         progenid_table[found, i + 1] = snap_progens[sorter[pos[found]]]
 
     if output_dir is None:
-        output_dir = os.path.join(os.getcwd(), 'output', 'progenitors')
+        output_dir = os.path.join(os.getcwd(), 'output', sb.name, 'progenitors')
     os.makedirs(output_dir, exist_ok=True)
 
     col1 = fits.Column(name='GroupID', format='K', array=progenid_table[:, 0])
@@ -133,7 +133,7 @@ def read_progen(ids, outname, snaplist, sb, fitsdir, output_dir=None):
     table = Table(progenid_dict)
 
     if output_dir is None:
-        output_dir = os.path.join(os.getcwd(), 'output', 'progenitors')
+        output_dir = os.path.join(os.getcwd(), 'output', sb.name, 'progenitors')
     os.makedirs(output_dir, exist_ok=True)
     print('Saving...')
     table.write(os.path.join(output_dir, outname), overwrite=True)

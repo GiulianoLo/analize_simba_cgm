@@ -98,7 +98,7 @@ class HistoryPlots:
         """Display the figure."""
         plt.show()
 
-    def save(self, outname, output_dir=None):
+    def save(self, outname, output_dir=None, sim_name='default'):
         """Save the figure to disk.
 
         Parameters
@@ -106,10 +106,12 @@ class HistoryPlots:
         outname : str
             Filename (e.g. ``'history.png'``).
         output_dir : str, optional
-            Directory to save in.  Defaults to ``./output/plots/``.
+            Directory to save in.  Defaults to ``./output/<sim_name>/plots/``.
+        sim_name : str, optional
+            Simulation name used when *output_dir* is not provided.
         """
         if output_dir is None:
-            output_dir = os.path.join(os.getcwd(), 'output', 'plots')
+            output_dir = os.path.join(os.getcwd(), 'output', sim_name, 'plots')
         os.makedirs(output_dir, exist_ok=True)
         output_file = os.path.join(output_dir, outname)
         self.fig.savefig(output_file, bbox_inches='tight')

@@ -67,7 +67,8 @@ def _save_quenching_fits(
 
 
 def load_quenching_events(
-    fits_path='output/quenching_times/quenching_times.fits',
+    fits_path=None,
+    sim_name='default',
     galaxy_id=None,
 ):
     """Load saved quenching events and optionally filter by galaxy id.
@@ -86,6 +87,11 @@ def load_quenching_events(
     """
     if fits is None:
         raise ImportError("astropy is required to read FITS output. Install with `pip install astropy`.")
+
+    if fits_path is None:
+        fits_path = os.path.join(
+            os.getcwd(), 'output', sim_name, 'quenching_times', 'quenching_times.fits'
+        )
 
     if not os.path.exists(fits_path):
         raise FileNotFoundError(f"FITS file not found: {fits_path}")
@@ -129,7 +135,8 @@ def find_quenching_times(
     interp_factor=20,        # density of interpolation grid
     tolerance=0.1,           # dex tolerance for 1/t persistence
     post_quench_frac=0.2,
-    save_fits_path='output/quenching_times/quenching_times.fits',
+    save_fits_path='default',
+    sim_name='default',
     plot=True,
     return_debug=False
 ):
@@ -146,9 +153,10 @@ def find_quenching_times(
 
     Parameters
     ----------
-    save_fits_path : str or None
+    save_fits_path : {'default', str, None}
         FITS output path relative to the current working directory by default
-        (`output/quenching_times/quenching_times.fits`). Set to None to disable saving.
+        (``output/<sim_name>/quenching_times/quenching_times.fits``).
+        Set to ``None`` to disable saving.
         Events from each call are appended into one table.
     """
 
@@ -255,6 +263,11 @@ def find_quenching_times(
     sft_times = [sft for _, sft, _ in events]
     persistence_end_times = [end_t for _, _, end_t in events]
     time_since_quench = [tarr[-1] - qt for qt in quench_times]
+
+    if save_fits_path == 'default':
+        save_fits_path = os.path.join(
+            os.getcwd(), 'output', sim_name, 'quenching_times', 'quenching_times.fits'
+        )
 
     if save_fits_path:
         _save_quenching_fits(

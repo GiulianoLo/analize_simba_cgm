@@ -403,6 +403,7 @@ def compute_sfh(
     COSMOLOGICAL = False,
     AREPO      = False,
     output_dir = None,
+    sim_name   = None,
     n_workers  = 16,
     n_chunks   = 30
 ):
@@ -418,7 +419,8 @@ def compute_sfh(
     FILTERED     : bool  True → use all particles; False → caesar galaxies.
     COSMOLOGICAL : bool  True → compute ages from scale factors.
     AREPO        : bool  True → use AREPO field names.
-    output_dir   : str   Output directory (default: ./output/fsps_sfh/).
+    output_dir   : str   Output directory (default: ``./output/<sim_name>/fsps_sfh/``).
+    sim_name     : str   Simulation name for default output path inference.
     n_workers    : int   Number of parallel workers.
     n_chunks     : int   Number of particle chunks.
 
@@ -429,7 +431,9 @@ def compute_sfh(
     """
     # --- Output setup ---
     if output_dir is None:
-        output_dir = os.path.join(os.getcwd(), 'output', 'fsps_sfh')
+        if sim_name is None:
+            sim_name = os.path.splitext(os.path.basename(snapshot))[0]
+        output_dir = os.path.join(os.getcwd(), 'output', sim_name, 'fsps_sfh')
     os.makedirs(output_dir, exist_ok=True)
 
     snap_name = os.path.splitext(os.path.basename(snapshot))[0]

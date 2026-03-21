@@ -125,7 +125,7 @@ class HDF5BuildHistory:
     def __init__(self, sb, cs, progfilename='progenitors_most_mass.fits',
                  progen_dir=None):
         if progen_dir is None:
-            progen_dir = os.path.join(os.getcwd(), 'output', 'progenitors')
+            progen_dir = os.path.join(os.getcwd(), 'output', sb.name, 'progenitors')
         self.progen_file = os.path.join(progen_dir, progfilename)
         self.history_indx = None
         self.sb = sb
@@ -368,12 +368,12 @@ class HDF5BuildHistory:
             h.interpolate_plot(num_points=100, kind='linear')
         else:
             h.plot()
-        h.save(outname=outname)
+        h.save(outname=outname, sim_name=self.sb.name)
 
     # ── Save ─────────────────────────────────────────────────────────
 
     def save_history_to_hdf5(self, filename):
-        """Save the loaded redshift and property histories to an HDF5 file in output/caesar_sfh/.
+        """Save the loaded redshift and property histories to an HDF5 file in output/<sim_name>/caesar_sfh/.
 
         Parameters
         ----------
@@ -385,8 +385,8 @@ class HDF5BuildHistory:
             raise RuntimeError(
                 "No history loaded. Run get_property_history() first."
             )
-        # Ensure output/caesar_sfh directory exists
-        out_dir = os.path.join(os.getcwd(), 'output', 'caesar_sfh')
+        # Ensure output/<sim_name>/caesar_sfh directory exists
+        out_dir = os.path.join(os.getcwd(), 'output', self.sb.name, 'caesar_sfh')
         os.makedirs(out_dir, exist_ok=True)
         out_path = os.path.join(out_dir, filename)
         with h5py.File(out_path, 'w') as f:
@@ -403,7 +403,7 @@ def find_property_threshold_crossings_from_hdf5(
     hdf5_path,
     property_name,
     threshold,
-    fits_output='output/threshold_crossings/property_threshold_crossings.fits',
+    fits_output=None,
     interp_factor=20,
     spline_order=3,
     cosmo=None,
@@ -422,8 +422,10 @@ def find_property_threshold_crossings_from_hdf5(
         Property dataset name under ``properties/``.
     threshold : float
         Threshold value used for crossing detection.
-    fits_output : str
-        Output FITS path.
+    fits_output : str, optional
+        Output FITS path. Defaults to
+        ``output/<sim_name>/threshold_crossings/property_threshold_crossings.fits``
+        inferred from *hdf5_path*.
     interp_factor : int
         Number of dense interpolation samples per original sample.
     spline_order : int
@@ -438,6 +440,15 @@ def find_property_threshold_crossings_from_hdf5(
     """
     if cosmo is None:
         cosmo = _default_cosmo
+
+    if fits_output is None:
+        history_dir = os.path.dirname(os.path.abspath(hdf5_path))
+        sim_root = os.path.dirname(history_dir)
+        fits_output = os.path.join(
+            sim_root,
+            'threshold_crossings',
+            'property_threshold_crossings.fits',
+        )
 
     with h5py.File(hdf5_path, 'r') as f:
         prop_path = f'properties/{property_name}'

@@ -107,7 +107,7 @@ def extract_particles(
 
     output : str, optional
         Full output HDF5 file path.  If omitted, the file is saved as
-        ``output/filtered/<sim_name>_snap<snap>_gal<id>.h5`` (or
+        ``output/<sim_name>/filtered/<sim_name>_snap<snap>_gal<id>.h5`` (or
         ``halo<id>`` / ``aperture`` for the other selection modes).
 
     sim_name : str, optional
@@ -133,7 +133,7 @@ def extract_particles(
             sel_tag = f'halo{halo_id}'
         else:
             sel_tag = 'aperture'
-        out_dir = os.path.join(os.getcwd(), 'output', 'filtered')
+        out_dir = os.path.join(os.getcwd(), 'output', sim_name, 'filtered')
         os.makedirs(out_dir, exist_ok=True)
         output = os.path.join(out_dir, f'{sim_name}_snap{snap}_{sel_tag}.h5')
 
