@@ -57,7 +57,7 @@ class MakeSED:
         self.selection_file = selection_file
 
         if output_dir is None:
-            output_dir = os.path.join(os.getcwd(), 'output', 'sed')
+            output_dir = os.path.join(os.getcwd(), 'output', sb.name, 'sed')
         os.makedirs(output_dir, exist_ok=True)
         self.output_dir = output_dir
         self.model_dir_base = os.path.join(output_dir, 'powderday_sed_out')
@@ -117,7 +117,7 @@ class MakeSED:
                 print(f'Written data for {grp}')
 
     def create_master(self, where, subset_type='plist', radius=None, max_parallel_snaps=2, 
-                      galaxies_per_task=4, use_job_deps=False):
+                      galaxies_per_task=4, use_job_deps=False, partition='INTEL_HASWELL'):
         """Generate Powderday parameter files and batch scripts.
 
         Parameters
@@ -139,6 +139,8 @@ class MakeSED:
         use_job_deps : bool, optional
             If True, chain jobs with SLURM dependencies so snapshots run sequentially.
             If False (default), all jobs can run in parallel (up to max_parallel_snaps).
+        partition : str, optional
+            SLURM partition to submit jobs to. Default: 'INTEL_HASWELL'.
 
         Notes
         -----
@@ -294,7 +296,7 @@ class MakeSED:
                         f.write(f'echo "Submitting {job_file}"\n')
                         f.write(
                             f'cd "{os.path.dirname(job_file)}" && '
-                            f'JOB_ID=$(sbatch{dep_str} -p INTEL_HASWELL {os.path.basename(job_file)} | awk \'{{print $NF}}\')\n'
+                            f'JOB_ID=$(sbatch{dep_str} -p {partition} {os.path.basename(job_file)} | awk \'{{print $NF}}\')\n'
                             f'PREV_JOB_ID=$JOB_ID\n'
                             f'echo "  Job ID: $JOB_ID"\n\n'
                         )
@@ -310,7 +312,7 @@ class MakeSED:
                     f.write('    local job_dir=$(dirname "$job_file")\n')
                     f.write('    local job_name=$(basename "$job_file")\n')
                     f.write('    echo "Submitting $job_name from $job_dir"\n')
-                    f.write('    local job_id=$(cd "$job_dir" && sbatch -p INTEL_HASWELL "$job_name" | awk \'{print $NF}\')\n')
+                    f.write(f'    local job_id=$(cd "$job_dir" && sbatch -p {partition} "$job_name" | awk \'{{print $NF}}\')\n')
                     f.write('    SUBMITTED_JOBS+=($job_id)\n')
                     f.write('    echo "  Job ID: $job_id"\n')
                     f.write('    sleep $SUBMISSION_DELAY\n')
