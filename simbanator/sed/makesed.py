@@ -119,6 +119,10 @@ class MakeSED:
     def create_master(self, where, subset_type='plist', radius=None):
         """Generate Powderday parameter files and batch scripts.
 
+        Two job types are generated: ``master.snap{snap}.job`` (GNU parallel)
+        and ``master.snap{snap}.array.job`` (Slurm array). See PARALLELIZATION.md
+        for detailed parallelization strategy comparison and recommendations.
+
         Parameters
         ----------
         where : str
@@ -128,11 +132,6 @@ class MakeSED:
             ``'region'`` (spherical aperture).
         radius : float, optional
             Aperture radius (required when *subset_type* is ``'region'``).
-
-        Notes
-        -----
-        This method only prepares files for later execution (e.g. via Slurm).
-        It does not execute Powderday jobs during setup.
         """
         if where not in {'local', 'cluster'}:
             raise ValueError("where must be 'local' or 'cluster'")
@@ -220,43 +219,94 @@ class MakeSED:
 
                 if where == 'cluster':
                     walltime = '0-08:00' if N > 1000 else '1-00:00'
+                    
+                    # Create main parallel job script
                     qsubfile = os.path.join(model_dir, f'master.snap{snap}.job')
                     with open(qsubfile, 'w', encoding='utf-8') as f:
                         f.write('#! /bin/bash\n')
                         f.write(f'#SBATCH --job-name={self.model_run_name}.snap{snap}\n')
                         f.write(f'#SBATCH --output=out/pd.master.snap{snap}.%N.%j.o\n')
                         f.write(f'#SBATCH --error=err/pd.master.snap{snap}.%N.%j.e\n')
-                        f.write('#SBATCH --mail-type=ALL\n')
+                        f.write('#SBATCH --mail-type=FAIL\n')
                         f.write(f'#SBATCH -t {walltime}\n')
-                        f.write('#SBATCH --ntasks=8\n')
+                        f.write('#SBATCH --nodes=1\n')
+                        f.write('#SBATCH --ntasks=1\n')
                         f.write('#SBATCH --cpus-per-task=8\n')
-                        f.write('#SBATCH --mem-per-cpu=3800\n')
+                        f.write('#SBATCH --mem=30G\n')
                         f.write('\n')
                         f.write('module purge\n')
                         f.write('module load git/2.20.1 gcc/9.3.0 openmpi/4.0.5 hdf5/1.12.1\n\n')
                         f.write('conda activate pd-env\n\n')
-                        f.write('PD_FRONT_END="/mnt/home/glorenzon/powderday/pd_front_end.py"\n\n')
-                        f.write('echo "Processing all galaxies for this snapshot..."\n')
-                        f.write('while read -r id; do\n')
-                        f.write(f'  python $PD_FRONT_END . parameters_master snap{snap}_$id > gal_$id/snap{snap}_$id.LOG\n')
-                        f.write('done < ids.txt\n\n')
-                        f.write('echo "Job done, info follows..."\n')
+                        f.write('PD_FRONT_END="/mnt/home/glorenzon/powderday/pd_front_end.py"\n')
+                        f.write('SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\n')
+                        f.write('cd "$SCRIPT_DIR"\n\n')
+                        f.write('export OMP_NUM_THREADS=1\n')
+                        f.write('set -e\n\n')
+                        f.write('echo "Starting parallel processing of galaxies for snap{snap} at $(date)"\n')
+                        f.write('echo "Using CPU_COUNT=${SLURM_CPUS_PER_TASK:-8}"\n\n')
+                        f.write('# Process galaxies in parallel using GNU parallel\n')
+                        f.write('cat ids.txt | parallel --no-notice --halt soon,fail=1 ')
+                        f.write(f'--line-buffer -j ${{SLURM_CPUS_PER_TASK:-8}} ')
+                        f.write('"mkdir -p gal_{{}}/logs && ')
+                        f.write(f'python $PD_FRONT_END . parameters_master snap{snap}_{{}} ')
+                        f.write(f'> gal_{{}}/snap{snap}_{{}}.LOG 2>&1"\n\n')
+                        f.write('PARALLEL_EXIT=$?\n')
+                        f.write('if [ $PARALLEL_EXIT -ne 0 ]; then\n')
+                        f.write('  echo "WARNING: Some galaxy processing failed (exit code: $PARALLEL_EXIT)"\n')
+                        f.write('fi\n\n')
+                        f.write('echo "Galaxy processing complete at $(date)"\n')
+                        f.write('echo "Job summary:"\n')
                         f.write('sacct -j $SLURM_JOBID --format=JobID,JobName,Partition,Elapsed,ExitCode,MaxRSS,CPUTime,SystemCPU,ReqMem\n')
-                        f.write('exit\n')
+                        f.write('exit $PARALLEL_EXIT\n')
                     cluster_job_files.append(qsubfile)
+                    
+                    # Optional: Create individual task array job for even better parallelization
+                    task_array_file = os.path.join(model_dir, f'master.snap{snap}.array.job')
+                    with open(task_array_file, 'w', encoding='utf-8') as f:
+                        f.write('#! /bin/bash\n')
+                        f.write(f'#SBATCH --job-name={self.model_run_name}.snap{snap}.array\n')
+                        f.write(f'#SBATCH --output=out/pd.snap{snap}.%a.%j.o\n')
+                        f.write(f'#SBATCH --error=err/pd.snap{snap}.%a.%j.e\n')
+                        f.write(f'#SBATCH --array=1-{N}%16\n')  # Run max 16 jobs in parallel
+                        f.write('#SBATCH --mail-type=FAIL\n')
+                        f.write(f'#SBATCH -t {walltime}\n')
+                        f.write('#SBATCH --nodes=1\n')
+                        f.write('#SBATCH --ntasks=1\n')
+                        f.write('#SBATCH --cpus-per-task=1\n')
+                        f.write('#SBATCH --mem=8G\n')
+                        f.write('\n')
+                        f.write('module purge\n')
+                        f.write('module load git/2.20.1 gcc/9.3.0 openmpi/4.0.5 hdf5/1.12.1\n\n')
+                        f.write('conda activate pd-env\n\n')
+                        f.write('PD_FRONT_END="/mnt/home/glorenzon/powderday/pd_front_end.py"\n')
+                        f.write('SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\n')
+                        f.write('cd "$SCRIPT_DIR"\n\n')
+                        f.write('set -e\n\n')
+                        f.write('ID=$(sed -n "${SLURM_ARRAY_TASK_ID}p" ids.txt)\n')
+                        f.write('echo "Processing galaxy $ID (task ${SLURM_ARRAY_TASK_ID}/${SLURM_ARRAY_TASK_MAX}) at $(date)"\n\n')
+                        f.write(f'python $PD_FRONT_END . parameters_master snap{snap}_$ID > gal_$ID/snap{snap}_$ID.LOG 2>&1\n\n')
+                        f.write('echo "Galaxy $ID complete at $(date)"\n')
+                    cluster_job_files.append(task_array_file)
                 else:
                     runfile = os.path.join(model_dir, 'run_local.sh')
                     with open(runfile, 'w', encoding='utf-8') as f:
                         f.write('#!/bin/bash\n')
                         f.write('set -e\n')
-                        f.write('echo "Starting local Powderday batch..."\n')
-                        f.write(f'for id in $(cat {os.path.join(model_dir, "ids.txt")}); do\n')
-                        f.write(
-                            '  python /home/lorenzong/powderday/pd_front_end.py . parameters_master '
-                            + f'snap{snap}_$id > gal_$id/snap{snap}_$id.LOG\n'
-                        )
-                        f.write('done\n')
-                        f.write('echo "Local batch complete"\n')
+                        f.write('echo "Starting local Powderday batch for snap {snap}..."\n')
+                        f.write('echo "Using $(nproc) CPU cores"\n\n')
+                        f.write('export OMP_NUM_THREADS=1\n')
+                        f.write(f'cat {os.path.join(model_dir, "ids.txt")} | parallel --no-notice ')
+                        f.write('--halt soon,fail=1 --line-buffer -j 0 ')
+                        f.write('"mkdir -p gal_{{}}/logs && ')
+                        f.write('python /home/lorenzong/powderday/pd_front_end.py . parameters_master ')
+                        f.write(f'snap{snap}_{{}} > gal_{{}}/snap{snap}_{{}}.LOG 2>&1"\n\n')
+                        f.write('PARALLEL_EXIT=$?\n')
+                        f.write('if [ $PARALLEL_EXIT -eq 0 ]; then\n')
+                        f.write('  echo "✓ Local batch complete successfully"\n')
+                        f.write('else\n')
+                        f.write('  echo "✗ Some processing failed (check logs)"\n')
+                        f.write('fi\n')
+                        f.write('exit $PARALLEL_EXIT\n')
                     os.chmod(runfile, 0o755)
                     local_run_files.append(runfile)
 
@@ -268,14 +318,21 @@ class MakeSED:
             with open(submit_all, 'w', encoding='utf-8') as f:
                 f.write('#!/bin/bash\n')
                 f.write('set -e\n')
-                f.write('echo "Submitting all snapshot Slurm jobs..."\n')
+                f.write('echo "Submitting all snapshot Slurm jobs in parallel..."\n')
+                f.write('SUBMITTED_JOBS=()\n\n')
                 for job_file in cluster_job_files:
                     f.write(f'echo "Submitting {job_file}"\n')
                     f.write(
                         f'cd "{os.path.dirname(job_file)}" && '
-                        f'sbatch -p INTEL_HASWELL "{os.path.basename(job_file)}"\n'
+                        f'JOB_ID=$(sbatch -p INTEL_HASWELL "{os.path.basename(job_file)}" '
+                        f'| awk \'{{print $NF}}\') && '
+                        f'SUBMITTED_JOBS+=($JOB_ID) && '
+                        f'echo "  -> Job ID: $JOB_ID"\n'
                     )
-                f.write('echo "All snapshot jobs submitted."\n')
+                f.write('\necho ""\n')
+                f.write('echo "All snapshot jobs submitted. Jobs: ${SUBMITTED_JOBS[@]}"\n')
+                f.write('echo "Monitor progress with: squeue -u $USER -l"\n')
+                f.write('echo "Cancel all with: scancel ${SUBMITTED_JOBS[@]}"\n')
             os.chmod(submit_all, 0o755)
 
         if where == 'local' and local_run_files:
@@ -283,14 +340,20 @@ class MakeSED:
             with open(run_all_local, 'w', encoding='utf-8') as f:
                 f.write('#!/bin/bash\n')
                 f.write('set -e\n')
-                f.write('echo "Running all local snapshot batches..."\n')
+                f.write('echo "Running all local snapshot batches (sequentially)..."\n')
+                f.write('FAILED_SNAPS=()\n\n')
                 for run_file in local_run_files:
-                    f.write(f'echo "Running {run_file}"\n')
-                    f.write(
-                        f'cd "{os.path.dirname(run_file)}" && '
-                        f'./{os.path.basename(run_file)}\n'
-                    )
-                f.write('echo "All local snapshot batches completed."\n')
+                    f.write(f'echo "\n========== Running {os.path.dirname(run_file)} =========="\n')
+                    f.write(f'if ! {run_file}; then\n')
+                    f.write(f'  FAILED_SNAPS+=("{os.path.dirname(run_file)}")\n')
+                    f.write(f'fi\n\n')
+                f.write('echo "\\nSummary:"\n')
+                f.write('if [ ${#FAILED_SNAPS[@]} -eq 0 ]; then\n')
+                f.write('  echo "✓ All local snapshot batches completed successfully"\n')
+                f.write('else\n')
+                f.write('  echo "✗ Failed snapshots: ${FAILED_SNAPS[@]}"\n')
+                f.write('  exit 1\n')
+                f.write('fi\n')
             os.chmod(run_all_local, 0o755)
 
     def plotsed(self, snap, gal, show=False, ret=False):
@@ -339,3 +402,24 @@ class MakeSED:
             plt.show()
         if ret:
             return fig, ax
+
+    def monitor_jobs(self, username=None):
+        """Print monitoring commands for submitted cluster jobs.
+        
+        Parameters
+        ----------
+        username : str, optional
+            Username for job filtering. If None, uses current user.
+        """
+        if username is None:
+            username = os.environ.get('USER', 'unknown')
+        
+        print("Job monitoring commands:")
+        print(f"  squeue -u {username} -l")
+        print(f"  squeue -u {username} --state=R")
+        print(f"\nLog directories:")
+        print(f"  {os.path.join(self.model_dir_base, 'snap_*/out/')}")
+        print(f"  {os.path.join(self.model_dir_base, 'snap_*/err/')}")
+        print("\nSee PARALLELIZATION.md for detailed monitoring instructions.")
+
+
