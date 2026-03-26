@@ -137,7 +137,7 @@ def convolveFilterWithSED(sedX, sedY, transX, transY):
 
     yFlux = np.trapz(F, xnew)
     norm = np.trapz(ynew, xnew)
-    xmean = transX[transY == np.max(transY)]
+    xmean = transX[transY == np.max(transY)][0]
     realY = yFlux / norm
     return xmean, realY
 
