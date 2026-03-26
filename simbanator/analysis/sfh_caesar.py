@@ -216,6 +216,7 @@ class HDF5BuildHistory:
 
         indx_dict = self.history_indx
         redshiftl = []
+        snapshotl = []
         propr_out = {
             propr: []
             for family in propr_dicts
@@ -246,6 +247,7 @@ class HDF5BuildHistory:
                 else:
                     z_val = self.sb.get_z_from_snap(snap)
                 redshiftl.append(z_val)
+                snapshotl.append(snap)
 
                 for family, properties in propr_dicts.items():
                     if family == 'halo_data':
@@ -283,7 +285,9 @@ class HDF5BuildHistory:
         for propr in propr_out:
             propr_out[propr] = np.asarray(propr_out[propr])
 
-        redshift = {'Redshift': np.asarray(redshiftl)}
+        redshift = {
+            'Redshift': np.asarray(redshiftl),
+            'Snapshot': np.asarray(snapshotl, dtype=np.int32)}
         self.z = redshift
         self.propr = propr_out
 
@@ -396,6 +400,8 @@ class HDF5BuildHistory:
                 f.create_dataset(f"properties/{key}", data=arr)
             if self.galaxy_ids is not None:
                 f.create_dataset("metadata/galaxy_ids", data=self.galaxy_ids)
+            if 'Snapshot' in self.z:
+                f.create_dataset("metadata/snapshots", data=np.asarray(self.z['Snapshot'], dtype=np.int32))
         return out_path
 
 

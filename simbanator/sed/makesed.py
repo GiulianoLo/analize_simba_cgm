@@ -6,6 +6,7 @@ Install with ``pip install simbanator[full]``.
 
 import sys
 import os
+import csv
 import numpy as np
 import h5py
 import subprocess
@@ -22,7 +23,30 @@ from hyperion.model import ModelOutput
 from astropy.cosmology import Planck13
 from astropy import units as u
 from astropy import constants
+from astropy.table import Table
 
+from simbanator.sed.flux_extraction import flux_extraction
+
+def flatten_results(results, snap, gal):
+    rows = []
+
+    for fac in results:
+        for inst in results[fac]:
+            for f in results[fac][inst]:
+                entry = results[fac][inst][f]
+
+                rows.append({
+                    'snap': snap,
+                    'gal': gal,
+                    'facility': fac,
+                    'instrument': inst,
+                    'filter': f,
+                    'xmean': entry['xmean'],
+                    'mJy': entry['mJy'],
+                    'mag': entry['mag']
+                })
+
+    return rows
 
 
 
@@ -45,10 +69,16 @@ class MakeSED:
         Name of the HDF5 file with target galaxy info.
     COSMOFLAG : int
         Cosmological simulation flag (0 or 1).
+    output_dir : str, optional
+        Base output directory for SED products.
+    run_tag : str, optional
+        Subfolder label used to separate different runs (e.g., dust/no-dust).
+        If None, ``model_run_name`` is used.
     """
 
     def __init__(self, sb, nnodes, model_run_name, hydro_dir_base,
-                 preselect, selection_file, COSMOFLAG=0, output_dir=None):
+                 preselect, selection_file, COSMOFLAG=0, output_dir=None,
+                 run_tag=None):
         self.sb = sb
         self.nnodes = nnodes
         self.model_run_name = model_run_name
@@ -61,7 +91,16 @@ class MakeSED:
             output_dir = os.path.join(os.getcwd(), 'output', sb.name, 'sed')
         os.makedirs(output_dir, exist_ok=True)
         self.output_dir = output_dir
-        self.model_dir_base = os.path.join(output_dir, 'powderday_sed_out')
+
+        if run_tag is None:
+            run_tag = model_run_name
+        run_tag = str(run_tag).strip()
+        if not run_tag:
+            raise ValueError("run_tag must be a non-empty string")
+        run_tag = run_tag.replace('/', '_').replace(' ', '_')
+        self.run_tag = run_tag
+
+        self.model_dir_base = os.path.join(output_dir, 'powderday_sed_out', self.run_tag)
         os.makedirs(self.model_dir_base, exist_ok=True)
 
     def selection_gals(self, snaps, galaxyID):
@@ -143,7 +182,7 @@ class MakeSED:
 
     def create_master(self, where, subset_type='plist', radius=None, max_parallel_snaps=2,
                       galaxies_per_task=4, use_job_deps=False, partition='INTEL_HASWELL',
-                      cluster_setup_template=None):
+                      cluster_setup_template=None, prefix=None):
         """Generate Powderday parameter files and batch scripts.
 
         Parameters
@@ -170,6 +209,11 @@ class MakeSED:
         cluster_setup_template : str, optional
             Path to the cluster setup shell script template. If None, defaults
             to ``simbanator/sed/cosmology_setup_all_cluster.cis.sh``.
+        prefix : str, optional
+            Optional filtered-file prefix used in snapshot naming (for example
+            ``m100n1024``), generating names like
+            ``snap_<prefix>_<snap3>_snap<snap>_gal<id>.h5``. If None, use
+            default local names (``subset_snap...`` / ``region_snap...``).
 
         Notes
         -----
@@ -184,6 +228,10 @@ class MakeSED:
             raise ValueError("radius is required when subset_type='region'")
         if where == 'cluster' and max_parallel_snaps is not None and max_parallel_snaps < 1:
             raise ValueError("max_parallel_snaps must be >= 1 or None")
+        if prefix is not None:
+            prefix = str(prefix).strip()
+            if not prefix:
+                raise ValueError("prefix must be a non-empty string when provided")
 
         filepath = os.path.join(self.output_dir, 'target_selection', self.selection_file + '.h5')
         if not os.path.exists(filepath):
@@ -256,6 +304,7 @@ class MakeSED:
                             str(int(hidx[i])),
                             '' if radius is None else str(radius),
                             subset_type,
+                            '' if prefix is None else prefix,
                         ]
                         subprocess.run(cmd, check=True)
                         continue
@@ -270,7 +319,13 @@ class MakeSED:
                         f.write("snapnum_str = '{:03.0f}'.format(snapshot_num)\n\n")
 
                         f.write(f"hydro_dir = '{hydro_dir}/'\n")
-                        if subset_type == 'plist':
+                        if prefix is not None:
+                            f.write(
+                                "snapshot_name = f'snap_"
+                                + prefix
+                                + "_{snapnum_str}_snap{snapshot_num}_gal{int(galaxy_num)}.h5'\n\n"
+                            )
+                        elif subset_type == 'plist':
                             f.write("snapshot_name = f'subset_snap{snapnum_str}_gal'+galaxy_num_str+'.h5'\n\n")
                         else:
                             f.write(
@@ -397,11 +452,7 @@ class MakeSED:
                 f.write('echo "All local snapshot batches completed."\n')
             os.chmod(run_all_local, 0o755)
 
-    def makemaster(self, *args, **kwargs):
-        """Backward-compatible alias for :meth:`create_master`."""
-        return self.create_master(*args, **kwargs)
-
-    def plotsed(self, snap, gal, show=False, ret=False):
+    def plotsed(self, snap, gal, show=False, ret=False, retval=False):
         """Plot the SED output for a given galaxy at a given snapshot.
 
         Parameters
@@ -414,6 +465,8 @@ class MakeSED:
             Call ``plt.show()``.
         ret : bool
             If *True*, return ``(fig, ax)``.
+        retval: bool
+            If True, return frequency and fluxes
         """
         fig, ax = plt.subplots()
         run = os.path.join(
@@ -447,3 +500,62 @@ class MakeSED:
             plt.show()
         if ret:
             return fig, ax
+        if retval: 
+            return nu, flux
+
+
+    def extract_flux(self, snap, gal, facility, instrument,
+                     filters=None, wave_unit='micron', findx=0, redshift=False):
+    
+        run = os.path.join(
+            self.model_dir_base,
+            f'snap_{snap}',
+            f'gal_{gal}',
+            f'snap{snap}.galaxy{gal:06}.rtout.sed',
+        )
+    
+        z = self.sb.get_z_from_snap(snap)
+    
+        m = ModelOutput(run)
+        wav, flux = m.get_sed(inclination='all', aperture=-1)
+    
+        # --- Units ---
+        wav = np.asarray(wav) * u.micron 
+        if redshift:
+            wav = wav* (1. + z)
+    
+        flux = np.asarray(flux) * u.erg / u.s
+        dl = Planck13.luminosity_distance(z).to(u.cm)
+        flux /= (4. * np.pi * dl**2)
+    
+        nu = (constants.c.cgs / wav.to(u.cm)).to(u.Hz)
+        flux = (flux / nu).to(u.mJy)
+    
+        flux = flux[findx]
+    
+        # --- Compute fluxes ---
+        results = flux_extraction(
+            facility,
+            instrument,
+            wav,
+            flux,
+            filters=filters,
+            wave_unit=wave_unit
+        )
+    
+        # --- Flatten ---
+        rows = flatten_results(results, snap, gal)
+    
+        # --- Output path ---
+        outdir = os.path.join(self.output_dir, 'sed_fluxes', f'snap_{snap}')
+        os.makedirs(outdir, exist_ok=True)
+    
+        filename = os.path.join(outdir, f'gal_{gal:06}_fluxes.fits')
+    
+        # --- Save ---
+        table = Table(rows)
+        table.write(filename, overwrite=True)
+    
+        return filename
+
+        

@@ -15,5 +15,9 @@ setup(
         'Pillow',
         'psutil',
     ],
+    extras_require={
+        'sed': ['hyperion', 'caesar', 'svo_filters'],
+        'full': ['yt', 'caesar', 'py-sphviewer', 'fsps', 'svo_filters'],
+    },
 )
 

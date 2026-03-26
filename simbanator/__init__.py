@@ -43,6 +43,12 @@ from .utils.conversions import Z_to_OH12, Dust_to_Metal
 from .utils.search import findsatellites
 from .utils.debug import print_ram_usage
 from .utils.geometry import shrink_center, principal_axes, rotate_to_frame
+from .utils.svo_filters import (
+    DEFAULT_SVO_FILTERS,
+    download_svo_filter,
+    download_svo_filters,
+    download_default_svo_filters,
+)
 
 # ---------------------------------------------------------------------------
 # Data conversion
@@ -76,6 +82,8 @@ __all__ = [
     # utils
     "Z_to_OH12", "Dust_to_Metal", "findsatellites", "print_ram_usage",
     "shrink_center", "principal_axes", "rotate_to_frame",
+    "DEFAULT_SVO_FILTERS", "download_svo_filter", "download_svo_filters",
+    "download_default_svo_filters",
     # data
     "convert_hdf5_fits",
     # visualization

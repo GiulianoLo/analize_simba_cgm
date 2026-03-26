@@ -73,6 +73,10 @@ renderer.render()
 from simbanator.sed import MakeSED
 sed = MakeSED(simba, snap=151, galaxy_idx=0)
 sed.run()
+
+# ---------- Download SVO filter curves ----------
+from simbanator.utils import download_default_svo_filters
+download_default_svo_filters("./filters", overwrite=False)
 ```
 
 ## Package Structure

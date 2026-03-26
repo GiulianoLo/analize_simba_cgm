@@ -34,15 +34,21 @@ N=${16}
 halo=${17}
 radius=${18}
 subset_type=${19}
+snapshot_prefix=${20}
 
 # ------------------------------------------------------------
-# SNAPSHOT FILE NAMING (edit here if your filtered HDF5 names change)
-# These are Python expressions written into each snapXXX_galYYY.py file.
-# Current expected format example:
-#   snap_m100n1024_103_snap103_gal2144.h5
+# SNAPSHOT FILE NAMING
+# If snapshot_prefix is provided, expected pattern is:
+#   snap_<prefix>_<snap3>_snap<snap>_gal<id>.h5
+# Otherwise fall back to subset/region default names.
 # ------------------------------------------------------------
-snapshot_name_expr_plist="f'snap_m100n1024_{snapnum_str}_snap{snapshot_num}_gal{int(galaxy_num)}.h5'"
-snapshot_name_expr_region="f'snap_m100n1024_{snapnum_str}_snap{snapshot_num}_gal{int(galaxy_num)}.h5'"
+if [ -n "$snapshot_prefix" ]; then
+    snapshot_name_expr_plist="f'${snapshot_prefix}_snap{snapshot_num}_gal{int(galaxy_num)}.h5'"
+    snapshot_name_expr_region="f'${snapshot_prefix}_snap{snapshot_num}_gal{int(galaxy_num)}.h5'"
+else
+    snapshot_name_expr_plist="f'snap{snapnum_str}_gal'+galaxy_num_str+'.h5'"
+    snapshot_name_expr_region="f'region_snap{snapnum_str}_r${radius}_gal'+galaxy_num_str+'.h5'"
+fi
 
 
 # echo "processing model file for galaxy,snapshot:  $galaxy,$snap"

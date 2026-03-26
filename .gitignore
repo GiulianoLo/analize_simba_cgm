@@ -35,3 +35,5 @@ gitanalkey.pub
 output/fits/
 output/hdf5/
 output/plot/
+output/
+output/
