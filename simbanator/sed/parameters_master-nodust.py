@@ -29,7 +29,7 @@ n_MPI_processes = 12
 n_photons_initial = 1.e7
 n_photons_imaging = 1.e7
 n_photons_raytracing_sources = 1.e7
-n_photons_raytracing_dust = 1
+n_photons_raytracing_dust = 1.0
 n_photons_DIG = 1e7
 
 FORCE_RANDOM_SEED = False
@@ -43,7 +43,7 @@ dustfile = 'kmh94_3.1_hg.hdf5'
 PAH = True
 
 dust_grid_type = 'dtm'       # 'dtm', 'rr', or 'manual'
-dusttometals_ratio = 1e-12
+dusttometals_ratio = 1e-10
 enforce_energy_range = False
 
 SUBLIMATION = False

@@ -141,7 +141,7 @@ def convolveFilterWithSED(sedX, sedY, transX, transY):
     realY = yFlux / norm
     return xmean, realY
 
-def flux_extraction(facility, instrument, wav, flux, filters=None, wave_unit='micron'):
+def flux_extraction(facility, instrument, wav, flux, filters=None, wave_unit='micron', filter_list=None):
 
     from astropy import units as u
     import numpy as np
@@ -152,13 +152,15 @@ def flux_extraction(facility, instrument, wav, flux, filters=None, wave_unit='mi
 
     # Convert SED wavelength to target unit
     wav = wav.to(wave_unit)
-
-    profiles = get_svo_filters(
-        facility,
-        instrument,
-        filters=filters,
-        wave_unit=wave_unit
-    )
+    if filter_list != None:
+        profiles = filter_list
+    else:
+        profiles = get_svo_filters(
+            facility,
+            instrument,
+            filters=filters,
+            wave_unit=wave_unit
+        )
 
     results = {}
 

@@ -3,7 +3,7 @@
 Requires optional heavy dependencies: ``hyperion``, ``caesar``.
 Install with ``pip install simbanator[full]``.
 """
-
+import warnings
 import sys
 import os
 import csv
@@ -24,8 +24,9 @@ from astropy.cosmology import Planck13
 from astropy import units as u
 from astropy import constants
 from astropy.table import Table
+from astropy.table import vstack
 
-from simbanator.sed.flux_extraction import flux_extraction
+from simbanator.sed.flux_extraction import flux_extraction, get_svo_filters
 
 def flatten_results(results, snap, gal):
     rows = []
@@ -63,8 +64,6 @@ class MakeSED:
         Name tag for the model run.
     hydro_dir_base : str
         Base directory for simulation particle files.
-    preselect : bool
-        Whether galaxy pre-selection is used.
     selection_file : str
         Name of the HDF5 file with target galaxy info.
     COSMOFLAG : int
@@ -77,14 +76,13 @@ class MakeSED:
     """
 
     def __init__(self, sb, nnodes, model_run_name, hydro_dir_base,
-                 preselect, selection_file, COSMOFLAG=0, output_dir=None,
+                 selection_file, COSMOFLAG=0, output_dir=None,
                  run_tag=None):
         self.sb = sb
         self.nnodes = nnodes
         self.model_run_name = model_run_name
         self.COSMOFLAG = COSMOFLAG
         self.hydro_dir_base = hydro_dir_base
-        self.preselect = preselect
         self.selection_file = selection_file
 
         if output_dir is None:
@@ -100,7 +98,7 @@ class MakeSED:
         run_tag = run_tag.replace('/', '_').replace(' ', '_')
         self.run_tag = run_tag
 
-        self.model_dir_base = os.path.join(output_dir, 'powderday_sed_out', self.run_tag)
+        self.model_dir_base = os.path.join(output_dir, self.run_tag, 'powderday_sed_out')
         os.makedirs(self.model_dir_base, exist_ok=True)
 
     def selection_gals(self, snaps, galaxyID):
@@ -113,7 +111,7 @@ class MakeSED:
         galaxyID : array-like of int
             Galaxy GroupIDs to select, paired with *snaps*.
         """
-        filepath = os.path.join(self.output_dir, 'target_selection', self.selection_file + '.h5')
+        filepath = os.path.join(self.output_dir, self.run_tag, 'target_selection', self.selection_file + '.h5')
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
         if not os.path.exists(filepath):
@@ -182,7 +180,7 @@ class MakeSED:
 
     def create_master(self, where, subset_type='plist', radius=None, max_parallel_snaps=2,
                       galaxies_per_task=4, use_job_deps=False, partition='INTEL_HASWELL',
-                      cluster_setup_template=None, prefix=None):
+                      cluster_setup_template=None, prefix=None, paramf='parameters_master.py', snaps_to_run=None):
         """Generate Powderday parameter files and batch scripts.
 
         Parameters
@@ -233,12 +231,12 @@ class MakeSED:
             if not prefix:
                 raise ValueError("prefix must be a non-empty string when provided")
 
-        filepath = os.path.join(self.output_dir, 'target_selection', self.selection_file + '.h5')
+        filepath = os.path.join(self.output_dir, self.run_tag, 'target_selection', self.selection_file + '.h5')
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Selection file not found: {filepath}")
 
         pkg_dir = os.path.dirname(__file__)
-        paramfile = os.path.join(pkg_dir, 'parameters_master.py')
+        paramfile = os.path.join(pkg_dir, paramf)
         if cluster_setup_template is None:
             cluster_setup_template = os.path.join(pkg_dir, 'cosmology_setup_all_cluster.cis.sh')
         if where == 'cluster' and not os.path.exists(cluster_setup_template):
@@ -249,7 +247,11 @@ class MakeSED:
         local_run_files = []
 
         with h5py.File(filepath, 'r') as hf:
-            snaps = sorted([int(s[4:]) for s in hf.keys()])
+            all_snaps = sorted([int(s[4:]) for s in hf.keys()])
+            if snaps_to_run is not None:
+                snaps = [s for s in all_snaps if s in np.atleast_1d(snaps_to_run)]
+            else:
+                snaps = all_snaps
 
             for snap in snaps:
                 ids = hf[f'snap{snap:03}/galaxy_GroupID'][:]
@@ -264,7 +266,7 @@ class MakeSED:
 
                 if not os.path.isdir(hydro_dir):
                     raise FileNotFoundError(
-                        f"Filtered snapshot folder not found for snap {snap}. "
+                        f"Filtered snapshot folder not found for snap {snap:03}. "
                         f"Looked under base: {self.hydro_dir_base}"
                     )
 
@@ -308,31 +310,31 @@ class MakeSED:
                         ]
                         subprocess.run(cmd, check=True)
                         continue
-
-                    model_file = os.path.join(model_dir, f'snap{snap}_{nh}.py')
+                    model_file = os.path.join(model_dir, f'snap{snap:03}_{nh:06}.py')
                     with open(model_file, 'w', encoding='utf-8') as f:
                         f.write('#Snapshot Parameters\n')
                         f.write('snapshot_num = ' + str(int(snap)) + '\n')
                         f.write('galaxy_num = ' + str(int(nh)) + '\n\n')
+                        
+                        f.write("galaxy_num_str = '{:06d}'.format(int(galaxy_num))\n")
+                        f.write("snapnum_str = '{:03d}'.format(int(snapshot_num))\n\n")
 
-                        f.write("galaxy_num_str = '{:06.0f}'.format(galaxy_num)\n")
-                        f.write("snapnum_str = '{:03.0f}'.format(snapshot_num)\n\n")
 
                         f.write(f"hydro_dir = '{hydro_dir}/'\n")
-                        if prefix is not None:
-                            f.write(
-                                "snapshot_name = f'snap_"
-                                + prefix
-                                + "_{snapnum_str}_snap{snapshot_num}_gal{int(galaxy_num)}.h5'\n\n"
-                            )
-                        elif subset_type == 'plist':
-                            f.write("snapshot_name = f'subset_snap{snapnum_str}_gal'+galaxy_num_str+'.h5'\n\n")
-                        else:
-                            f.write(
-                                "snapshot_name = f'region_snap{snapnum_str}_r"
-                                + str(radius)
-                                + "_gal'+galaxy_num_str+'.h5'\n\n"
-                            )
+                        # if prefix is not None:
+                        #     f.write(
+                        #         "snapshot_name = f'snap_"
+                        #         + prefix
+                        #         + "_{snapnum_str}_snap{snapnum_str}_gal{galaxy_num_str}.h5'\n\n"
+                        #     )
+                        # elif subset_type == 'plist':
+                        #     f.write("snapshot_name = f'subset_snap{snapnum_str}_gal'+galaxy_num_str+'.h5'\n\n")
+                        # else:
+                        #     f.write(
+                        #         "snapshot_name = f'region_snap{snapnum_str}_r"
+                        #         + str(radius)
+                        #         + "_gal'+galaxy_num_str+'.h5'\n\n"
+                        #     )
 
                         f.write('#where the files should go\n')
                         f.write(f"PD_output_dir = '{model_dir_remote}/'\n")
@@ -358,7 +360,7 @@ class MakeSED:
                         f.write(f'TCMB = {tcmb}\n')
 
                 if where == 'cluster':
-                    qsubfile = os.path.join(model_dir, f'master.snap{snap}.job')
+                    qsubfile = os.path.join(model_dir, f'master.snap{snap:03}.job')
                     if os.path.exists(qsubfile):
                         cluster_job_files.append(qsubfile)
                 else:
@@ -370,7 +372,7 @@ class MakeSED:
                         f.write(f'for id in $(cat {os.path.join(model_dir, "ids.txt")}); do\n')
                         f.write(
                             '  python /home/lorenzong/powderday/pd_front_end.py . parameters_master '
-                            + f'snap{snap}_$id > gal_$id/snap{snap}_$id.LOG\n'
+                            + f'snap{snap:03}_$id > gal_$id/snap{snap:03}_$id.LOG\n'
                         )
                         f.write('done\n')
                         f.write('echo "Local batch complete"\n')
@@ -470,8 +472,8 @@ class MakeSED:
         """
         fig, ax = plt.subplots()
         run = os.path.join(
-            self.model_dir_base, f'snap_{snap}', f'gal_{gal}',
-            f'snap{snap}.galaxy{gal:06}.rtout.sed',
+            self.model_dir_base, f'snap_{snap:03}', f'gal_{gal:06}',
+            f'snap{snap:03}.galaxy{gal:06}.rtout.sed',
         )
         z = self.sb.get_z_from_snap(snap)
         m = ModelOutput(run)
@@ -492,9 +494,9 @@ class MakeSED:
         ax.set_ylabel('Flux (mJy)')
         ax.set_xlim(0.05, 15000)
 
-        out = os.path.join(self.output_dir, 'sed_plots', f'snap_{snap}')
+        out = os.path.join(self.output_dir, self.run_tag, 'sed_plots', f'snap_{snap:03}')
         os.makedirs(out, exist_ok=True)
-        fig.savefig(os.path.join(out, f'gal_{gal}.png'), bbox_inches='tight')
+        fig.savefig(os.path.join(out, f'gal_{gal:06}.png'), bbox_inches='tight')
 
         if show:
             plt.show()
@@ -504,21 +506,22 @@ class MakeSED:
             return nu, flux
 
 
-    def extract_flux(self, snap, gal, facility, instrument,
+    def extract_flux_single(self, snap, gal, facility, instrument,
                      filters=None, wave_unit='micron', findx=0, redshift=False):
     
         run = os.path.join(
             self.model_dir_base,
-            f'snap_{snap}',
-            f'gal_{gal}',
-            f'snap{snap}.galaxy{gal:06}.rtout.sed',
+            f'snap_{snap:03}',
+            f'gal_{gal:06}',
+            f'snap{snap:03}.galaxy{gal:06}.rtout.sed',
         )
     
         z = self.sb.get_z_from_snap(snap)
     
-        m = ModelOutput(run)
-        wav, flux = m.get_sed(inclination='all', aperture=-1)
-    
+        # --- Check file exists ---
+        if not os.path.isfile(run):
+            warnings.warn(f"[Missing SED] snap={snap:03}, gal={gal:06} → {run}")
+        
         # --- Units ---
         wav = np.asarray(wav) * u.micron 
         if redshift:
@@ -547,15 +550,139 @@ class MakeSED:
         rows = flatten_results(results, snap, gal)
     
         # --- Output path ---
-        outdir = os.path.join(self.output_dir, 'sed_fluxes', f'snap_{snap}')
+        outdir = os.path.join(self.output_dir, self.run_tag, 'sed_fluxes', f'snap_{snap:03}')
         os.makedirs(outdir, exist_ok=True)
     
-        filename = os.path.join(outdir, f'gal_{gal:06}_fluxes.fits')
+        filename = os.path.join(outdir, f'snap{snap:03}_gal_{gal:06}_fluxes.fits')
     
         # --- Save ---
         table = Table(rows)
         table.write(filename, overwrite=True)
     
         return filename
+
+
+    
+    def extract_flux_batch(self, snaps, gals, facility, instrument,
+                      filters=None, wave_unit='micron',
+                      findx=0, redshift=False, funyt='mJy', outname=None):
+
+        snaps = np.asarray(snaps)
+        gals = np.asarray(gals)
+    
+        assert len(snaps) == len(gals), "snaps and gals must match in length"
+    
+        all_tables = []
+        xmean_rows = []
+    
+        unique_snaps = np.unique(snaps)
+
+        # setup_filters for the entire batch
+        profiles = get_svo_filters(
+            facility,
+            instrument,
+            filters=filters,
+            wave_unit=wave_unit
+        )
+        
+        for snap in unique_snaps:
+    
+            mask = snaps == snap
+            snap_gals = gals[mask]
+    
+            z = self.sb.get_z_from_snap(snap)
+    
+            rows = []
+    
+            for gal in snap_gals:
+    
+                run = os.path.join(
+                    self.model_dir_base,
+                    f'snap_{snap:03}',
+                    f'gal_{gal}',
+                    f'snap{snap:03}.galaxy{gal:06}.rtout.sed',
+                )
+                # --- Check file exists ---
+                if not os.path.isfile(run):
+                    warnings.warn(f"[Missing SED] snap={snap:03}, gal={gal:06} → {run}")
+                    continue
+                
+                # --- Try reading SED ---
+                try:
+                    m = ModelOutput(run)
+                    wav, flux = m.get_sed(inclination='all', aperture=-1)
+                except Exception as e:
+                    warnings.warn(f"[SED read error] snap={snap:03}, gal={gal:06} → {e}")
+                    continue
+    
+                # --- Units ---
+                wav = np.asarray(wav) * u.micron
+                if redshift:
+                    wav = wav * (1. + z)
+    
+                flux = np.asarray(flux) * u.erg / u.s
+                dl = Planck13.luminosity_distance(z).to(u.cm)
+                flux /= (4. * np.pi * dl**2)
+    
+                nu = (constants.c.cgs / wav.to(u.cm)).to(u.Hz)
+                flux = (flux / nu).to(u.mJy)
+    
+                flux = flux[findx]
+    
+                # --- Flux extraction ---
+                results = flux_extraction(
+                    facility,
+                    instrument,
+                    wav,
+                    flux,
+                    filters=filters,
+                    wave_unit=wave_unit,
+                    filter_list=profiles
+                )
+    
+                # --- Build row (one galaxy) ---
+                row = {
+                    'gal_id_at_snap': gal,
+                    'snap': snap,
+                    'redshift': z
+                }
+
+                for fac, inst_dict in results.items():
+                    for inst, filt_dict in inst_dict.items():
+                        for filt_name, filt_data in filt_dict.items():
+                            colname = f"{fac}.{inst}.{filt_name}"
+                            row[colname] = filt_data[funyt]
+                
+                            xmean_rows.append({
+                                'gal_id_at_snap': gal,
+                                'snap': snap,
+                                'filter': colname,
+                                'xmean': filt_data.get('xmean', np.nan)
+                            })
+    
+                rows.append(row)
+    
+            table = Table(rows)
+            all_tables.append(table)
+
+    
+        # --- Combine all snapshots ---
+        final_table = vstack(all_tables)
+    
+        # --- Output paths ---
+        outdir = os.path.join(self.output_dir, self.run_tag, 'sed_fluxes')
+        os.makedirs(outdir, exist_ok=True)
+        if outname==None:
+            flux_file = os.path.join(outdir, 'all_galaxies_fluxes.fits')
+        else: 
+            flux_file = os.path.join(outdir, outname)
+        xmean_file = os.path.join(outdir, 'all_xmean.fits')
+    
+        final_table.write(flux_file, overwrite=True)
+    
+        xmean_table = Table(xmean_rows)
+        xmean_table.write(xmean_file, overwrite=True)
+    
+        return flux_file, xmean_file
 
         

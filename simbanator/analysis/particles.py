@@ -232,7 +232,7 @@ def extract_particles(
         # Derive from the simfile basename, stripping snap-number suffix
         sim_name = os.path.splitext(os.path.basename(simfile))[0]
 
-    out_dir = os.path.join(os.getcwd(), 'output', 'filtered')
+    out_dir = os.path.join(os.getcwd(), 'output', sim_name, 'filtered', f'snap_{snap:03}')
     os.makedirs(out_dir, exist_ok=True)
 
     if galaxy_ids is not None:
@@ -247,7 +247,8 @@ def extract_particles(
 
         with h5py.File(simfile, "r") as inp:
             for gid in galaxy_ids:
-                outpath = os.path.join(out_dir, f'{prefix}{sim_name}_snap{snap}_gal{gid}.h5')
+                gid = int(gid)
+                outpath = os.path.join(out_dir, f'{prefix}_snap{snap:03}_gal{gid:06}.h5')
 
                 if os.path.exists(outpath) and not overwrite:
                     if verbose:
@@ -273,7 +274,7 @@ def extract_particles(
             sel_tag = f'halo{halo_id}'
         else:
             sel_tag = 'aperture'
-        output = os.path.join(out_dir, f'{prefix}{sim_name}_snap{snap}_{sel_tag}.h5')
+        output = os.path.join(out_dir, f'{prefix}_snap{snap:03}_{sel_tag}.h5')
 
     if os.path.exists(output) and not overwrite:
         if verbose:
