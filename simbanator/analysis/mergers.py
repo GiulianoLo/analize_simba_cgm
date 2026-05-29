@@ -268,18 +268,42 @@ def process_galaxies_with_tracks(
     """
     if caesar_paths is not None:
         catalog_paths = list(caesar_paths)
-    elif sb is not None and snaplist is not None:
-        catalog_paths = [sb.get_caesar_file(s) for s in snaplist]
-    else:
+    elif sb is None:
         raise ValueError(
-            "Provide either caesar_paths, or both sb and snaplist."
+            "Provide either caesar_paths, or sb (+ optionally snaplist)."
         )
+    # else: catalog_paths resolved below after reading the track file
 
     with fits.open(track_fits_path) as hdul:
         track_data = hdul[1].data
-        # Convert to plain numpy array (N_gals, N_snaps) — avoids FITS_record
-        # quirks and makes integer indexing predictable.
-        track_array = np.array(track_data.tolist(), dtype=np.int64)
+        colnames   = list(track_data.names)
+
+    # Drop the 'GroupID' bookkeeping column written by caesar_read_progen.
+    snap_col_names = [c for c in colnames if c.upper() != 'GROUPID']
+
+    # If column names are integer snapshot numbers (caesar_read_progen writes
+    # them as e.g. '44', '45', …), sort ascending so track_array[:,i] always
+    # aligns with the i-th snapshot in ascending order.
+    try:
+        snap_col_names = sorted(snap_col_names, key=int)
+        _file_snaps = [int(c) for c in snap_col_names]
+    except ValueError:
+        _file_snaps = None  # column names are not integers (e.g. 'snap_000')
+
+    track_array = np.column_stack(
+        [np.asarray(track_data[c], dtype=np.int64) for c in snap_col_names]
+    )  # (N_gals, N_snaps)
+
+    # When sb is provided without explicit caesar_paths, build catalog_paths
+    # from the file's own snapshot order so they always align.
+    if caesar_paths is None and sb is not None:
+        ref_snaps = _file_snaps if _file_snaps is not None else snaplist
+        if ref_snaps is None:
+            raise ValueError(
+                "Provide either caesar_paths, snaplist, or a track file with "
+                "integer-named columns."
+            )
+        catalog_paths = [sb.get_caesar_file(s) for s in ref_snaps]
 
     n_track_snaps = track_array.shape[1]
     if len(catalog_paths) != n_track_snaps:
