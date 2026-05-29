@@ -35,6 +35,12 @@ from .analysis.sfh_caesar import HDF5BuildHistory
 from .analysis.particles import extract_particles
 from .analysis.profiles import radial_profile
 from .analysis.progenitors import caesar_read_progen, read_progen
+from .analysis.mergers import (
+    Progenitor,
+    Galaxy,
+    process_galaxies_with_tracks,
+    analyze_mergers,
+)
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -79,6 +85,8 @@ __all__ = [
     "extract_particles",
     "radial_profile",
     "caesar_read_progen", "read_progen",
+    "Progenitor", "Galaxy",
+    "process_galaxies_with_tracks", "analyze_mergers",
     # utils
     "Z_to_OH12", "Dust_to_Metal", "findsatellites", "print_ram_usage",
     "shrink_center", "principal_axes", "rotate_to_frame",
