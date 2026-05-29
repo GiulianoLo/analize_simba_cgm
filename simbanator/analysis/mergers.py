@@ -32,6 +32,7 @@ Typical usage::
     )
 """
 
+import warnings
 import h5py
 from astropy.io import fits
 import numpy as np
@@ -276,9 +277,22 @@ def process_galaxies_with_tracks(
 
     with fits.open(track_fits_path) as hdul:
         track_data = hdul[1].data
+        # Convert to plain numpy array (N_gals, N_snaps) — avoids FITS_record
+        # quirks and makes integer indexing predictable.
+        track_array = np.array(track_data.tolist(), dtype=np.int64)
+
+    n_track_snaps = track_array.shape[1]
+    if len(catalog_paths) != n_track_snaps:
+        warnings.warn(
+            f"snaplist has {len(catalog_paths)} entries but the track file "
+            f"has {n_track_snaps} snapshot columns. "
+            f"Processing only the first {min(len(catalog_paths), n_track_snaps)} snapshots.",
+            stacklevel=2,
+        )
+        catalog_paths = catalog_paths[:n_track_snaps]
 
     galaxies = {}
-    for gal_idx, track_row in enumerate(track_data):
+    for gal_idx, track_row in enumerate(track_array):
         galaxy = Galaxy()
         galaxy.set_track(track_row)
         galaxies[gal_idx] = galaxy

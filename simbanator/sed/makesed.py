@@ -278,7 +278,7 @@ class MakeSED:
                     continue
 
                 for i, nh in enumerate(ids):
-                    model_dir_remote = os.path.join(model_dir, f'gal_{nh}')
+                    model_dir_remote = os.path.join(model_dir, f'gal_{nh:06}')
                     os.makedirs(model_dir_remote, exist_ok=True)
                     xpos, ypos, zpos = pos[i]
 
@@ -321,20 +321,14 @@ class MakeSED:
 
 
                         f.write(f"hydro_dir = '{hydro_dir}/'\n")
-                        # if prefix is not None:
-                        #     f.write(
-                        #         "snapshot_name = f'snap_"
-                        #         + prefix
-                        #         + "_{snapnum_str}_snap{snapnum_str}_gal{galaxy_num_str}.h5'\n\n"
-                        #     )
-                        # elif subset_type == 'plist':
-                        #     f.write("snapshot_name = f'subset_snap{snapnum_str}_gal'+galaxy_num_str+'.h5'\n\n")
-                        # else:
-                        #     f.write(
-                        #         "snapshot_name = f'region_snap{snapnum_str}_r"
-                        #         + str(radius)
-                        #         + "_gal'+galaxy_num_str+'.h5'\n\n"
-                        #     )
+                        if prefix is not None:
+                            f.write(
+                                f"snapshot_name = '{prefix}_snap' + snapnum_str + '_gal' + galaxy_num_str + '.h5'\n\n"
+                            )
+                        else:
+                            f.write(
+                                "snapshot_name = 'snap' + snapnum_str + '_gal' + galaxy_num_str + '.h5'\n\n"
+                            )
 
                         f.write('#where the files should go\n')
                         f.write(f"PD_output_dir = '{model_dir_remote}/'\n")
@@ -521,12 +515,20 @@ class MakeSED:
         # --- Check file exists ---
         if not os.path.isfile(run):
             warnings.warn(f"[Missing SED] snap={snap:03}, gal={gal:06} → {run}")
-        
+            return None
+
+        try:
+            m = ModelOutput(run)
+            wav, flux = m.get_sed(inclination='all', aperture=-1)
+        except Exception as e:
+            warnings.warn(f"[SED read error] snap={snap:03}, gal={gal:06} → {e}")
+            return None
+
         # --- Units ---
-        wav = np.asarray(wav) * u.micron 
+        wav = np.asarray(wav) * u.micron
         if redshift:
-            wav = wav* (1. + z)
-    
+            wav = wav * (1. + z)
+
         flux = np.asarray(flux) * u.erg / u.s
         dl = Planck13.luminosity_distance(z).to(u.cm)
         flux /= (4. * np.pi * dl**2)
@@ -599,7 +601,7 @@ class MakeSED:
                 run = os.path.join(
                     self.model_dir_base,
                     f'snap_{snap:03}',
-                    f'gal_{gal}',
+                    f'gal_{gal:06}',
                     f'snap{snap:03}.galaxy{gal:06}.rtout.sed',
                 )
                 # --- Check file exists ---
