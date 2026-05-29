@@ -1,38 +1,49 @@
-"""Galaxy merger detection and classification from FITS catalogs.
+"""Galaxy merger detection and classification from Caesar HDF5 catalogs.
 
 Provides:
 
 * :class:`Progenitor` – properties of a potential merger companion at one snapshot.
 * :class:`Galaxy` – container for a galaxy's progenitor history across snapshots.
-* :func:`process_galaxies_with_tracks` – scan snapshot catalogs for neighbours
-  within a search radius and record them as merger candidates.
+* :func:`process_galaxies_with_tracks` – scan Caesar HDF5 snapshot catalogs for
+  neighbours within a search radius and record them as merger candidates.
 * :func:`analyze_mergers` – classify candidates into major/minor merger counts
   per galaxy per snapshot.
 
 Typical usage::
 
-    import simbanator as sb
+    from simbanator.io.simba import Simulation
+    from simbanator.analysis.mergers import process_galaxies_with_tracks, analyze_mergers
 
-    galaxies = sb.process_galaxies_with_tracks(
-        fits_paths=fits_paths,
-        track_fits_path="tracks.fits",
-        box_size=100.0,           # Mpc/h
-        search_radius_factor=5.0,
-        mass_threshold=1e9,
-        rhalf_unit_factor=1e-3,   # kpc/h → Mpc/h
+    sim = Simulation('simba_m100n1024')
+    snaplist = list(range(151, 5, -1))   # z=0 first
+
+    galaxies = process_galaxies_with_tracks(
+        track_fits_path="output/progenitors/tracks.fits",
+        box_size=100.0,                  # Mpc/h
+        sb=sim,
+        snaplist=snaplist,
     )
 
-    major, minor = sb.analyze_mergers(
+    major, minor = analyze_mergers(
         galaxies,
-        array_size=(n_snaps, n_galaxies),
+        array_size=(len(snaplist), len(galaxies)),
         mass_threshold_maj=0.25,
         mass_threshold_min=0.10,
     )
 """
 
+import h5py
 from astropy.io import fits
 import numpy as np
 import time
+
+# Caesar HDF5 dataset paths for the fields we need.
+# Override at module level if your Caesar build uses different internal paths.
+_H5_POS   = 'galaxy_data/pos'                          # shape (N, 3), Mpc/h
+_H5_SMASS = 'galaxy_data/dicts/masses.stellar'          # M_sun
+_H5_RHALF = 'galaxy_data/dicts/radii.stellar_half_mass' # kpc/h (by default)
+_H5_H2    = 'galaxy_data/dicts/masses.H2'              # M_sun
+_H5_DUST  = 'galaxy_data/dicts/masses.dust'            # M_sun
 
 
 class Progenitor:
@@ -204,109 +215,133 @@ def plot_sphere(ax, center_x, center_y, center_z, radius, color='b'):
     ax.plot_wireframe(x, y, z, color=color, alpha=0.01)
 
 
-def process_galaxies_with_tracks(fits_paths, track_fits_path, box_size,
-                                  search_radius_factor=5.0, mass_threshold=1e9,
-                                  rhalf_unit_factor=1e-3, figure=False):
-    """Scan FITS snapshot catalogs and record merger companions for each galaxy.
+def process_galaxies_with_tracks(
+    track_fits_path,
+    box_size,
+    *,
+    caesar_paths=None,
+    sb=None,
+    snaplist=None,
+    search_radius_factor=5.0,
+    mass_threshold=1e9,
+    rhalf_unit_factor=1e-3,
+):
+    """Scan Caesar HDF5 snapshot catalogs and record merger companions.
 
     For every snapshot, each tracked galaxy's neighbours within
     ``search_radius_factor * r_half`` are added as :class:`Progenitor` entries.
     Distances are computed with the minimum-image convention for the periodic box.
+    No FITS conversion of the catalogs is required.
 
     Parameters
     ----------
-    fits_paths : list of str
-        Ordered list of per-snapshot FITS catalog paths. Index 0 is z=0.
     track_fits_path : str
         FITS file containing the progenitor track array, shape
-        ``(N_galaxies, N_snaps)``.
+        ``(N_galaxies, N_snaps)``.  Produced by
+        :func:`~simbanator.analysis.progenitors.caesar_read_progen` or
+        :func:`~simbanator.analysis.progenitors.read_progen`.
     box_size : float
-        Periodic box side length in the same units as ``pos_x/y/z`` (e.g. Mpc/h).
+        Periodic box side length in the same units as the catalog positions
+        (e.g. Mpc/h for SIMBA).
+    caesar_paths : list of str, optional
+        Ordered list of Caesar HDF5 catalog paths, one per snapshot.
+        The order must match the column order in *track_fits_path*.
+    sb : :class:`~simbanator.io.simba.Simulation`, optional
+        Simulation handle.  Used with *snaplist* to resolve catalog paths
+        automatically via ``sb.get_caesar_file(snap)``.
+    snaplist : list of int, optional
+        Snapshot numbers, ordered to match the track columns.
+        Required when *sb* is given instead of *caesar_paths*.
     search_radius_factor : float, optional
-        Search radius expressed as a multiple of the stellar half-mass radius.
+        Search sphere radius as a multiple of the stellar half-mass radius.
     mass_threshold : float, optional
-        Minimum neighbour stellar mass to consider (in solar masses).
+        Minimum neighbour stellar mass (M☉) to consider.
     rhalf_unit_factor : float, optional
-        Factor to convert ``radii_stellar_half_mass`` to the position units.
-        Default ``1e-3`` assumes radii in kpc/h and positions in Mpc/h.
-    figure : bool, optional
-        Reserved for future diagnostic plots; currently unused.
+        Converts the stored half-mass radius to position units.
+        Default ``1e-3`` assumes radii in kpc/h, positions in Mpc/h.
 
     Returns
     -------
     dict
-        Mapping ``{galaxy_index: Galaxy}`` with progenitors recorded across
-        all snapshots.
+        ``{galaxy_index: Galaxy}`` with progenitors recorded across all snapshots.
     """
+    if caesar_paths is not None:
+        catalog_paths = list(caesar_paths)
+    elif sb is not None and snaplist is not None:
+        catalog_paths = [sb.get_caesar_file(s) for s in snaplist]
+    else:
+        raise ValueError(
+            "Provide either caesar_paths, or both sb and snaplist."
+        )
+
     with fits.open(track_fits_path) as hdul:
         track_data = hdul[1].data
 
     galaxies = {}
-    n_snaps = len(fits_paths)
-
     for gal_idx, track_row in enumerate(track_data):
         galaxy = Galaxy()
         galaxy.set_track(track_row)
         galaxies[gal_idx] = galaxy
 
-    for snap_idx in range(n_snaps):
-        catalog_path = fits_paths[snap_idx]
+    for snap_idx, catalog_path in enumerate(catalog_paths):
         print(f"Processing snapshot {snap_idx}: {catalog_path}")
         t_start = time.time()
 
-        with fits.open(catalog_path) as hdul:
-            cat = hdul[1].data
-            cat_indices = np.arange(len(cat))
+        with h5py.File(catalog_path, 'r') as f:
+            pos   = f[_H5_POS][:]    # (N, 3)
+            smass = f[_H5_SMASS][:]
+            rhalf = f[_H5_RHALF][:]
+            h2    = f[_H5_H2][:]
+            dust  = f[_H5_DUST][:]
 
-            for gal_id, galaxy in galaxies.items():
-                main_index = galaxy.track[snap_idx]
-                if main_index < 0 or main_index >= len(cat):
-                    continue
+        n_cat = len(smass)
+        cat_indices = np.arange(n_cat)
 
-                main = cat[main_index]
-                main_mass = main['stellar_mass']
-                if main_mass == 0:
-                    continue
+        for gal_id, galaxy in galaxies.items():
+            main_index = int(galaxy.track[snap_idx])
+            if main_index < 0 or main_index >= n_cat:
+                continue
 
-                main_pos = np.array([main['pos_x'], main['pos_y'], main['pos_z']])
-                main_rhalf = main['radii_stellar_half_mass']
-                search_radius = search_radius_factor * main_rhalf * rhalf_unit_factor
+            main_mass = smass[main_index]
+            if main_mass == 0:
+                continue
 
-                # Minimum-image convention for periodic boundary conditions
-                dx = cat['pos_x'] - main_pos[0]
-                dy = cat['pos_y'] - main_pos[1]
-                dz = cat['pos_z'] - main_pos[2]
-                dx -= box_size * np.round(dx / box_size)
-                dy -= box_size * np.round(dy / box_size)
-                dz -= box_size * np.round(dz / box_size)
-                dist = np.sqrt(dx**2 + dy**2 + dz**2)
+            main_pos    = pos[main_index]
+            search_radius = search_radius_factor * rhalf[main_index] * rhalf_unit_factor
 
-                mask = ((cat_indices != main_index)
-                        & (cat['stellar_mass'] > mass_threshold)
-                        & (dist < search_radius))
-                neighbors = cat[mask]
-                neighbor_distances = dist[mask]
+            # Minimum-image convention for periodic boundary conditions
+            dx = pos[:, 0] - main_pos[0]
+            dy = pos[:, 1] - main_pos[1]
+            dz = pos[:, 2] - main_pos[2]
+            dx -= box_size * np.round(dx / box_size)
+            dy -= box_size * np.round(dy / box_size)
+            dz -= box_size * np.round(dz / box_size)
+            dist = np.sqrt(dx**2 + dy**2 + dz**2)
 
-                for nb, d in zip(neighbors, neighbor_distances):
-                    progenitor = Progenitor(
-                        mass=nb['stellar_mass'] / main_mass,
-                        x=nb['pos_x'],
-                        y=nb['pos_y'],
-                        z=nb['pos_z'],
-                        merger=1,
-                        fragmentation=0,
-                        snapshot=snap_idx,
-                        distance=d,
-                        processed=1,
-                        H2=nb['H2_mass'],
-                        dust=nb['dust_mass'],
-                    )
-                    galaxy.add_progenitor(progenitor)
+            mask = ((cat_indices != main_index)
+                    & (smass > mass_threshold)
+                    & (dist < search_radius))
 
-                if snap_idx == 0:
-                    galaxy.update_position(main_pos[0], main_pos[1], main_pos[2])
-                    galaxy.update_mass(main_mass)
-                    galaxy.update_radii_stellar_half_mass(main_rhalf)
+            for i in np.where(mask)[0]:
+                progenitor = Progenitor(
+                    mass=smass[i] / main_mass,
+                    x=pos[i, 0],
+                    y=pos[i, 1],
+                    z=pos[i, 2],
+                    merger=1,
+                    fragmentation=0,
+                    snapshot=snap_idx,
+                    distance=dist[i],
+                    processed=1,
+                    H2=h2[i],
+                    dust=dust[i],
+                )
+                galaxy.add_progenitor(progenitor)
+
+            if snap_idx == 0:
+                galaxy.update_position(*main_pos)
+                galaxy.update_mass(main_mass)
+                galaxy.update_radii_stellar_half_mass(rhalf[main_index])
 
         t_end = time.time()
         print(f"Finished snapshot {snap_idx} in {t_end - t_start:.2f} sec")
