@@ -368,3 +368,320 @@ def plot_merger_rate_by_phase(
         fig.savefig(save_path, bbox_inches='tight')
 
     return fig, ax_bar, ax_ssfr
+
+
+# ── Galaxy track and neighborhood diagnostic plots ───────────────────────────
+
+
+def _unwrap_pos_1d(raw_pos, box_size):
+    """Unwrap a (n_snap, 3) position track across periodic boundaries.
+
+    NaN entries are preserved; offsets do not propagate through gaps.
+    """
+    out = raw_pos.copy()
+    for i in range(1, len(out)):
+        if np.any(np.isnan(out[i])) or np.any(np.isnan(out[i - 1])):
+            continue
+        d = out[i] - out[i - 1]
+        d[d >  0.5 * box_size] -= box_size
+        d[d < -0.5 * box_size] += box_size
+        out[i] = out[i - 1] + d
+    return out
+
+
+def plot_main_galaxy_track(
+    galaxy,
+    caesar_paths,
+    redshifts,
+    box_size,
+    *,
+    projection=('x', 'y'),
+    figsize=(8, 8),
+    cmap='plasma_r',
+    title=None,
+    save_path=None,
+):
+    """Plot the main galaxy position track as a line colored by redshift.
+
+    Mirrors the sfh_caesar line-plot approach (HDF5BuildHistory) but in
+    projected position space rather than property-vs-time space.
+    Periodic wrapping is removed via minimum-image unwrapping so the
+    trajectory is continuous.
+
+    Parameters
+    ----------
+    galaxy : Galaxy
+        Galaxy object with ``.track`` set — one catalog index per snapshot,
+        aligned with *caesar_paths*.
+    caesar_paths : list of str
+        Caesar HDF5 catalog paths, one per snapshot.
+    redshifts : array-like
+        Redshift at each snapshot, same order as *caesar_paths*.
+    box_size : float
+        Periodic box side length in position units (Mpc/h).
+    projection : tuple of str
+        Two of ``'x'``, ``'y'``, ``'z'`` to project onto.  Default ``('x', 'y')``.
+    figsize : tuple
+        Figure size in inches.
+    cmap : str
+        Colormap name for redshift coloring.
+    title : str, optional
+        Figure title.
+    save_path : str, optional
+        If given, save the figure here.
+
+    Returns
+    -------
+    fig, ax : matplotlib Figure and Axes
+    """
+    import h5py
+    import matplotlib.pyplot as plt
+    import matplotlib.colors as mcolors
+
+    _POS = 'galaxy_data/pos'
+    _AX  = {'x': 0, 'y': 1, 'z': 2}
+    i0, i1 = _AX[projection[0]], _AX[projection[1]]
+
+    redshifts = np.asarray(redshifts, dtype=float)
+    track = np.asarray(galaxy.track, dtype=np.int64)
+    n_snaps = len(caesar_paths)
+
+    raw_pos = np.full((n_snaps, 3), np.nan)
+    for si, cpath in enumerate(caesar_paths):
+        idx = int(track[si])
+        if idx < 0:
+            continue
+        with h5py.File(cpath, 'r') as f:
+            if idx < f[_POS].shape[0]:
+                raw_pos[si] = f[_POS][idx]
+
+    pos = _unwrap_pos_1d(raw_pos, box_size)
+    valid = ~np.isnan(pos[:, i0])
+    z_valid = redshifts[valid]
+
+    norm = mcolors.Normalize(vmin=z_valid.min(), vmax=z_valid.max())
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.plot(pos[valid, i0], pos[valid, i1], '-', color='k', lw=0.8, alpha=0.35, zorder=2)
+    sc = ax.scatter(
+        pos[valid, i0], pos[valid, i1],
+        c=z_valid, cmap=cmap, norm=norm,
+        s=60, marker='*', edgecolors='k', lw=0.4, zorder=4,
+        label='Main galaxy',
+    )
+    fig.colorbar(sc, ax=ax, label='Redshift')
+    ax.set_xlabel(f'{projection[0]} [Mpc/h]', fontsize=12)
+    ax.set_ylabel(f'{projection[1]} [Mpc/h]', fontsize=12)
+    ax.set_title(title or f'Main galaxy track ({projection[0]}-{projection[1]})', fontsize=13)
+    ax.legend(fontsize=10)
+
+    if save_path:
+        out_dir = os.path.dirname(save_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        fig.savefig(save_path, bbox_inches='tight')
+
+    return fig, ax
+
+
+def plot_neighborhood_track(
+    galaxy,
+    caesar_paths,
+    redshifts,
+    box_size,
+    *,
+    radius_mpc=0.5,
+    projection=('x', 'y'),
+    mass_threshold=1e9,
+    mass_threshold_maj=0.25,
+    mass_threshold_min=0.10,
+    figsize=(10, 10),
+    cmap='plasma_r',
+    title=None,
+    save_path=None,
+):
+    """Plot the main galaxy track, all neighbors within *radius_mpc*, and merger events.
+
+    For every snapshot, every galaxy within *radius_mpc* of the tracked
+    galaxy (minimum-image convention) is shown as a small dot colored by
+    redshift.  Companions stored in ``galaxy._progenitors`` are additionally
+    highlighted: red pentagons for major mergers (mass ratio ≥
+    *mass_threshold_maj*), orange diamonds for minor.  All positions are
+    rendered in the unwrapped trajectory frame so the main galaxy's path is
+    continuous.
+
+    Parameters
+    ----------
+    galaxy : Galaxy
+        Output of ``process_galaxies_with_tracks``.  Must have ``.track``
+        and ``._progenitors`` populated.
+    caesar_paths : list of str
+        Caesar HDF5 catalog paths, one per snapshot.
+    redshifts : array-like
+        Redshift at each snapshot, same order as *caesar_paths*.
+    box_size : float
+        Periodic box side length in position units (Mpc/h).
+    radius_mpc : float
+        Neighbor search radius in Mpc/h.  Default 0.5 ≈ 500 kpc/h.
+    projection : tuple of str
+        Two of ``'x'``, ``'y'``, ``'z'`` to project onto.  Default ``('x', 'y')``.
+    mass_threshold : float
+        Minimum stellar mass (M☉) for neighbor galaxies shown in the scatter.
+        Default 1e9 to suppress noise from tiny objects.
+    mass_threshold_maj : float
+        Mass ratio threshold for major merger highlights (default 0.25).
+    mass_threshold_min : float
+        Minimum mass ratio for minor merger highlights (default 0.10).
+    figsize : tuple
+        Figure size in inches.
+    cmap : str
+        Colormap name for redshift coloring.
+    title : str, optional
+        Figure title.
+    save_path : str, optional
+        If given, save the figure here.
+
+    Returns
+    -------
+    fig, ax : matplotlib Figure and Axes
+    """
+    import h5py
+    import matplotlib.pyplot as plt
+    import matplotlib.colors as mcolors
+
+    _POS   = 'galaxy_data/pos'
+    _SMASS = 'galaxy_data/dicts/masses.stellar'
+    _AX    = {'x': 0, 'y': 1, 'z': 2}
+    i0, i1 = _AX[projection[0]], _AX[projection[1]]
+
+    redshifts = np.asarray(redshifts, dtype=float)
+    track = np.asarray(galaxy.track, dtype=np.int64)
+    n_snaps = len(caesar_paths)
+
+    # ── 1. Read and unwrap main galaxy track ─────────────────────────────────
+    raw_pos = np.full((n_snaps, 3), np.nan)
+    for si, cpath in enumerate(caesar_paths):
+        idx = int(track[si])
+        if idx < 0:
+            continue
+        with h5py.File(cpath, 'r') as f:
+            if idx < f[_POS].shape[0]:
+                raw_pos[si] = f[_POS][idx]
+
+    pos_uw = _unwrap_pos_1d(raw_pos, box_size)
+
+    # ── 2. Collect neighbor positions in unwrapped frame ─────────────────────
+    neigh_pos  = []
+    neigh_zval = []
+
+    for si, cpath in enumerate(caesar_paths):
+        main_idx = int(track[si])
+        if main_idx < 0 or np.isnan(raw_pos[si, 0]):
+            continue
+        with h5py.File(cpath, 'r') as f:
+            all_pos   = f[_POS][:]
+            all_smass = f[_SMASS][:]
+
+        dx = all_pos[:, 0] - raw_pos[si, 0]
+        dy = all_pos[:, 1] - raw_pos[si, 1]
+        dz = all_pos[:, 2] - raw_pos[si, 2]
+        dx -= box_size * np.round(dx / box_size)
+        dy -= box_size * np.round(dy / box_size)
+        dz -= box_size * np.round(dz / box_size)
+        dist = np.sqrt(dx**2 + dy**2 + dz**2)
+
+        mask = (
+            (np.arange(len(dx)) != main_idx)
+            & (dist < radius_mpc)
+            & (all_smass >= mass_threshold)
+        )
+        for i in np.where(mask)[0]:
+            neigh_pos.append(pos_uw[si] + np.array([dx[i], dy[i], dz[i]]))
+            neigh_zval.append(redshifts[si])
+
+    neigh_pos  = np.array(neigh_pos)  if neigh_pos  else np.zeros((0, 3))
+    neigh_zval = np.array(neigh_zval)
+
+    # ── 3. Collect merger events from progenitor record ──────────────────────
+    maj_pos, maj_zval = [], []
+    min_pos, min_zval = [], []
+
+    for prog in galaxy._progenitors.values():
+        if prog.merger != 1 or prog.fragmentation != 0:
+            continue
+        si = int(prog.snapshot)
+        if si >= n_snaps or np.isnan(raw_pos[si, 0]):
+            continue
+        dx_p = prog.x - raw_pos[si, 0]
+        dy_p = prog.y - raw_pos[si, 1]
+        dz_p = prog.z - raw_pos[si, 2]
+        dx_p -= box_size * np.round(dx_p / box_size)
+        dy_p -= box_size * np.round(dy_p / box_size)
+        dz_p -= box_size * np.round(dz_p / box_size)
+        pt = pos_uw[si] + np.array([dx_p, dy_p, dz_p])
+
+        if prog.mass >= mass_threshold_maj:
+            maj_pos.append(pt);  maj_zval.append(redshifts[si])
+        elif prog.mass >= mass_threshold_min:
+            min_pos.append(pt);  min_zval.append(redshifts[si])
+
+    maj_pos  = np.array(maj_pos)  if maj_pos  else np.zeros((0, 3))
+    min_pos  = np.array(min_pos)  if min_pos  else np.zeros((0, 3))
+    maj_zval = np.array(maj_zval)
+    min_zval = np.array(min_zval)
+
+    # ── 4. Plot ───────────────────────────────────────────────────────────────
+    valid   = ~np.isnan(pos_uw[:, i0])
+    z_valid = redshifts[valid]
+    norm    = mcolors.Normalize(vmin=redshifts.min(), vmax=redshifts.max())
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    if neigh_pos.shape[0]:
+        ax.scatter(
+            neigh_pos[:, i0], neigh_pos[:, i1],
+            c=neigh_zval, cmap=cmap, norm=norm,
+            s=15, alpha=0.5, marker='o', lw=0, zorder=3,
+            label=f'Neighbors (r < {radius_mpc} Mpc/h)',
+        )
+
+    ax.plot(pos_uw[valid, i0], pos_uw[valid, i1], '-', color='k', lw=0.8, alpha=0.35, zorder=4)
+    sc = ax.scatter(
+        pos_uw[valid, i0], pos_uw[valid, i1],
+        c=z_valid, cmap=cmap, norm=norm,
+        s=80, marker='*', edgecolors='k', lw=0.5, zorder=5,
+        label='Main galaxy',
+    )
+
+    if maj_pos.shape[0]:
+        ax.scatter(
+            maj_pos[:, i0], maj_pos[:, i1],
+            c='red', s=120, marker='p', edgecolors='darkred', lw=0.8,
+            zorder=6, label='Major merger companion',
+        )
+    if min_pos.shape[0]:
+        ax.scatter(
+            min_pos[:, i0], min_pos[:, i1],
+            c='orange', s=80, marker='D', edgecolors='saddlebrown', lw=0.8,
+            zorder=6, label='Minor merger companion',
+        )
+
+    fig.colorbar(sc, ax=ax, label='Redshift')
+    ax.set_xlabel(f'{projection[0]} [Mpc/h]', fontsize=12)
+    ax.set_ylabel(f'{projection[1]} [Mpc/h]', fontsize=12)
+    ax.set_title(
+        title or (
+            f'Galaxy neighborhood (r < {radius_mpc} Mpc/h) + merger events '
+            f'({projection[0]}-{projection[1]})'
+        ),
+        fontsize=12,
+    )
+    ax.legend(fontsize=9, loc='upper right')
+
+    if save_path:
+        out_dir = os.path.dirname(save_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        fig.savefig(save_path, bbox_inches='tight')
+
+    return fig, ax
