@@ -161,15 +161,37 @@ def rotation_matrices_from_angles(theta, phi):
 
 
 def get_normalized_image(image, vmin=1, vmax=99, mode='linear', zscale=False):
-    """Percentile-clip and optionally log/sqrt-scale an image array."""
+    """Percentile-clip and optionally log/sqrt/asinh-scale an image array.
+
+    Parameters
+    ----------
+    image : ndarray
+    vmin, vmax : float or None
+        Percentile bounds for clipping (default 1/99).  None uses those defaults.
+    mode : {'linear', 'log', 'sqrt', 'asinh'}
+        Stretch applied after clipping.  ``'asinh'`` is the Lupton et al. (2004)
+        stretch recommended for SPH composites.
+    zscale : bool
+        Apply Z-score normalisation after stretching.  Avoid combining with
+        ``mode='log'`` or ``mode='sqrt'`` — they already compress dynamic range.
+    """
+    if vmin is None:
+        vmin = 1
+    if vmax is None:
+        vmax = 99
+    image = image.copy().astype(float)
     lo = np.percentile(image, vmin)
     hi = np.percentile(image, vmax)
     image = np.clip(image, lo, hi)
     if mode == 'log':
-        mk = image > 0
-        image[mk] = np.log10(image[mk])
+        floor = lo if lo > 0 else image[image > 0].min() if np.any(image > 0) else 1e-30
+        image = np.log10(np.clip(image, floor, None))
     elif mode == 'sqrt':
         image = np.sqrt(np.clip(image, 0, None))
+    elif mode == 'asinh':
+        # Lupton et al. (2004): asinh stretch that preserves colour ratios
+        stretch = np.percentile(image, 50) + 1e-30
+        image = np.arcsinh(image / stretch)
     if zscale:
         mean, std = np.mean(image), np.std(image)
         if std > 0:
@@ -180,10 +202,21 @@ def get_normalized_image(image, vmin=1, vmax=99, mode='linear', zscale=False):
     return image - lo2
 
 
-def apply_dust_screen(image, dust):
-    """Attenuate *image* using a normalised *dust* map."""
+def apply_dust_screen(image, dust, tau_max=2.0):
+    """Attenuate *image* via Beer-Lambert exponential extinction.
+
+    Parameters
+    ----------
+    image : ndarray
+        Normalised [0, 1] channel image.
+    dust : ndarray
+        Dust surface density map (any units; will be normalised to [0, 1]).
+    tau_max : float
+        Peak optical depth.  ``tau_max=2`` gives ~86 % attenuation at max dust
+        surface density; ``tau_max=0`` disables attenuation.
+    """
     dust = (dust - dust.min()) / (dust.max() - dust.min() + 1e-30)
-    return image * (1 - dust)
+    return image * np.exp(-tau_max * dust)
 
 
 def gamma_correction(image, gamma=2.2):
@@ -303,8 +336,22 @@ class RenderRGB:
         self.phys_ext = R.get_extent()
         return R.get_image()
 
-    def generate_images(self, camera, vmin=None, vmax=None):
+    def generate_images(self, camera, vmin=1, vmax=99.5,
+                        mode='log', tau_max=1.5,
+                        star_cmap=cm.Greys_r, gas_cmap=cm.afmhot):
         """Generate a blended gas + star image.
+
+        Parameters
+        ----------
+        vmin, vmax : float
+            Percentile bounds for channel normalisation (default 1/99.5).
+        mode : str
+            Stretch for gas and star channels: ``'log'`` (default), ``'sqrt'``,
+            or ``'asinh'``.
+        tau_max : float
+            Optical depth for dust Beer-Lambert attenuation (default 1.5).
+        star_cmap, gas_cmap : matplotlib colormap
+            Colormaps for the two channels fed into the Screen blend.
 
         Returns
         -------
@@ -314,16 +361,17 @@ class RenderRGB:
         particles = self.set_particles()
         rgbs = [self.set_rgb(p, camera=camera, update=None) for p in particles[:2]]
 
-        gas = get_normalized_image(rgbs[0], vmin, vmax, mode='sqrt', zscale=True)
-        stars = get_normalized_image(rgbs[1], vmin, vmax, mode='sqrt', zscale=True)
+        gas   = get_normalized_image(rgbs[0], vmin, vmax, mode=mode,     zscale=False)
+        stars = get_normalized_image(rgbs[1], vmin, vmax, mode=mode,     zscale=False)
 
         if self.ifdust:
             dust_screen = self.set_rgb(particles[2], camera=camera, update=None)
-            dust_screen = get_normalized_image(dust_screen, vmin, vmax, mode='linear', zscale=True)
-            gas = apply_dust_screen(gas, dust_screen)
-            stars = apply_dust_screen(stars, dust_screen)
+            dust_screen = get_normalized_image(dust_screen, vmin, vmax,
+                                               mode='linear', zscale=False)
+            gas   = apply_dust_screen(gas,   dust_screen, tau_max)
+            stars = apply_dust_screen(stars, dust_screen, tau_max)
 
-        blend = Blend.Blend(cm.Greys_r(stars), cm.afmhot(gas))
+        blend = Blend.Blend(star_cmap(stars), gas_cmap(gas))
         return blend.Screen()
 
     def plot(self, image, xl, yl, name, correct=False, output_dir=None):
@@ -344,7 +392,8 @@ class RenderRGB:
 
     def set_video(self, num_frames, p=None, t=None, r='infinity',
                   extent=5, del_p=360, del_t=0, xsize=500, ysize=500,
-                  vmin=None, vmax=None, spos='faceon', zoom=1., output_dir=None):
+                  vmin=1, vmax=99.5, mode='log', tau_max=1.5,
+                  spos='faceon', zoom=1., output_dir=None):
         """Render individual frames for a rotation video."""
         targets = [self.gal.minpotpos.in_units('kpc').value]
         L = self.gal.rotation['gas_L']
@@ -371,14 +420,15 @@ class RenderRGB:
             cam_update.update({'xsize': xsize, 'ysize': ysize, 'roll': 0})
             rgbs = [self.set_rgb(p, camera=None, update=cam_update)
                     for p in particles[:2]]
-            gas = get_normalized_image(rgbs[0], vmin, vmax, mode='sqrt', zscale=True)
-            stars = get_normalized_image(rgbs[1], vmin, vmax, mode='sqrt', zscale=False)
+            gas   = get_normalized_image(rgbs[0], vmin, vmax, mode=mode, zscale=False)
+            stars = get_normalized_image(rgbs[1], vmin, vmax, mode=mode, zscale=False)
 
             if self.ifdust:
                 dust_img = self.set_rgb(particles[2], camera=None, update=cam_update)
-                dust_img = get_normalized_image(dust_img, vmin, vmax, mode='linear', zscale=True)
-                gas = apply_dust_screen(gas, dust_img)
-                stars = apply_dust_screen(stars, dust_img)
+                dust_img = get_normalized_image(dust_img, vmin, vmax,
+                                                mode='linear', zscale=False)
+                gas   = apply_dust_screen(gas,   dust_img, tau_max)
+                stars = apply_dust_screen(stars, dust_img, tau_max)
 
             blend = Blend.Blend(cm.Greys_r(stars), cm.afmhot(gas))
             plt.imsave(f'{frame_dir}/image_{h:04d}.png', blend.Screen())
@@ -423,11 +473,15 @@ class SingleRender:
     id : int
         Galaxy index.
     propr : tuple
-        ``(particle_type, property_name)``.
+        ``(particle_type, field_name)`` — e.g. ``('PartType0', 'Temperature')``,
+        ``('PartType0', 'StarFormationRate')``, ``('PartType0', 'H2I')``,
+        ``('PartType4', 'Masses')``.
     region : bool
-        Use all particles.
-    dim : str
-        Unit for the property (e.g. ``'Msun'``).
+        Use all particles instead of galaxy members.
+    dim : str or None
+        yt unit string for the field (e.g. ``'Msun'``, ``'K'``,
+        ``'Msun/yr'``, ``'cm**-3'``).  Pass ``None`` to use the raw value
+        without any unit conversion (useful for dimensionless quantities).
     """
 
     def __init__(self, snapfile, catfile, id, propr, region=False, dim='Msun'):
@@ -442,28 +496,24 @@ class SingleRender:
         self._initialize_data()
 
     def _initialize_data(self):
+        self.a = self.obj.simulation.scale_factor
+
         def get_data(ptype, prop, dim_unit, indices=None):
-            pos = self.ad[ptype, 'Coordinates']
-            mass = self.ad[ptype, prop[:-2] if '_s' in prop else prop]
+            pos   = self.ad[ptype, 'Coordinates']
+            field = self.ad[ptype, prop]
             if indices is not None:
-                pos, mass = pos[indices], mass[indices]
-            pos = pos.in_units('kpc').value * self.obj.simulation.scale_factor
-            if '_s' in prop:
-                mass = self.ds.arr(mass, 'code_mass').in_units(dim_unit).value
+                pos, field = pos[indices], field[indices]
+            pos = pos.in_units('kpc').value * self.a
+            if dim_unit is None:
+                val = np.asarray(field)
             else:
-                mass = mass.in_units(dim_unit).value
-            return pos, mass
+                val = field.in_units(dim_unit).value
+            return pos, val
 
-        if self.region:
-            self.pos, self.mass = get_data(self.propr[0], self.propr[1], self.dim)
-        else:
-            idx = self.gal.glist if self.propr[0] == 'PartType0' else self.gal.slist
-            self.pos, self.mass = get_data(self.propr[0], self.propr[1], self.dim, idx)
+        idx = self.gal.glist if self.propr[0] == 'PartType0' else self.gal.slist
+        indices = None if self.region else idx
+        self.pos, self.mass = get_data(self.propr[0], self.propr[1], self.dim, indices)
 
-        # self.a = self.obj.simulation.scale_factor
-        # self.pos *= self.a
-        # self.mass *= self.a
-        
 
     def single_map(self, center=None, ex=5, t=None, p=None,
                    r='infinity', roll=0, xsize=400, ysize=400,
@@ -546,13 +596,17 @@ class SingleRender:
         plt.show()
         return fig, ax
 
-    def plot(self, image, xl, yl, name, vmin=None, vmax=None, output_dir=None):
+    def plot(self, image, xl, yl, name, vmin=None, vmax=None,
+             cmap='viridis', output_dir=None):
         """Display and save a single-component map."""
         fig, ax = plt.subplots(figsize=(12, 12))
-        im = ax.imshow(image, extent=self.phys_ext, cmap='viridis')
+        im = ax.imshow(image, extent=self.phys_ext, cmap=cmap,
+                       vmin=vmin, vmax=vmax)
         ax.set_xlabel(xl)
         ax.set_ylabel(yl)
-        fig.colorbar(im, ax=ax, label='Mass [Msun]')
+        cbar_label = (f'{self.propr[1]} [{self.dim}]'
+                      if self.dim else self.propr[1])
+        fig.colorbar(im, ax=ax, label=cbar_label)
 
         if output_dir is None:
             sim_name = _infer_sim_name(getattr(self.obj, 'simulation', None))
