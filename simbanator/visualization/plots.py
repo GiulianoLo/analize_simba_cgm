@@ -373,20 +373,40 @@ def plot_merger_rate_by_phase(
 # ── Galaxy track and neighborhood diagnostic plots ───────────────────────────
 
 
-def _unwrap_pos_1d(raw_pos, box_size):
-    """Unwrap a (n_snap, 3) position track across periodic boundaries.
+def _read_main_pos(galaxy, caesar_paths):
+    """Return (n_snaps, 3) raw position array for the main galaxy.
 
-    NaN entries are preserved; offsets do not propagate through gaps.
+    Reads ``galaxy_data/pos`` from each Caesar HDF5 catalog at the index
+    given by ``galaxy.track``.  Invalid indices (< 0 or out of range) are
+    left as NaN.
     """
-    out = raw_pos.copy()
-    for i in range(1, len(out)):
-        if np.any(np.isnan(out[i])) or np.any(np.isnan(out[i - 1])):
+    import h5py
+    _POS  = 'galaxy_data/pos'
+    track = np.asarray(galaxy.track, dtype=np.int64)
+    n     = len(caesar_paths)
+    raw   = np.full((n, 3), np.nan)
+    for si, cpath in enumerate(caesar_paths):
+        idx = int(track[si])
+        if idx < 0:
             continue
-        d = out[i] - out[i - 1]
-        d[d >  0.5 * box_size] -= box_size
-        d[d < -0.5 * box_size] += box_size
-        out[i] = out[i - 1] + d
-    return out
+        with h5py.File(cpath, 'r') as f:
+            if idx < f[_POS].shape[0]:
+                raw[si] = f[_POS][idx]
+    return raw
+
+
+def _draw_track_line(ax, x, y, box_size, **kwargs):
+    """Draw a line that breaks at periodic-boundary jumps (|step| > box/2)."""
+    if len(x) < 2:
+        ax.plot(x, y, **kwargs)
+        return
+    jumps = np.sqrt(np.diff(x)**2 + np.diff(y)**2) > 0.5 * box_size
+    seg = 0
+    for k, jmp in enumerate(jumps):
+        if jmp:
+            ax.plot(x[seg:k + 1], y[seg:k + 1], **kwargs)
+            seg = k + 1
+    ax.plot(x[seg:], y[seg:], **kwargs)
 
 
 def plot_main_galaxy_track(
@@ -403,10 +423,11 @@ def plot_main_galaxy_track(
 ):
     """Plot the main galaxy position track as a line colored by redshift.
 
-    Mirrors the sfh_caesar line-plot approach (HDF5BuildHistory) but in
-    projected position space rather than property-vs-time space.
-    Periodic wrapping is removed via minimum-image unwrapping so the
-    trajectory is continuous.
+    Raw catalog positions are plotted directly (same units as the HDF5
+    ``galaxy_data/pos`` dataset).  The connecting line is broken wherever
+    consecutive snapshots are more than half a box-length apart, making
+    periodic-boundary crossings and bad progenitor matches immediately
+    visible.
 
     Parameters
     ----------
@@ -418,7 +439,7 @@ def plot_main_galaxy_track(
     redshifts : array-like
         Redshift at each snapshot, same order as *caesar_paths*.
     box_size : float
-        Periodic box side length in position units (Mpc/h).
+        Periodic box side length in position units (same as ``galaxy_data/pos``).
     projection : tuple of str
         Two of ``'x'``, ``'y'``, ``'z'`` to project onto.  Default ``('x', 'y')``.
     figsize : tuple
@@ -434,44 +455,33 @@ def plot_main_galaxy_track(
     -------
     fig, ax : matplotlib Figure and Axes
     """
-    import h5py
     import matplotlib.pyplot as plt
     import matplotlib.colors as mcolors
 
-    _POS = 'galaxy_data/pos'
-    _AX  = {'x': 0, 'y': 1, 'z': 2}
+    _AX = {'x': 0, 'y': 1, 'z': 2}
     i0, i1 = _AX[projection[0]], _AX[projection[1]]
 
     redshifts = np.asarray(redshifts, dtype=float)
-    track = np.asarray(galaxy.track, dtype=np.int64)
-    n_snaps = len(caesar_paths)
+    raw_pos   = _read_main_pos(galaxy, caesar_paths)
 
-    raw_pos = np.full((n_snaps, 3), np.nan)
-    for si, cpath in enumerate(caesar_paths):
-        idx = int(track[si])
-        if idx < 0:
-            continue
-        with h5py.File(cpath, 'r') as f:
-            if idx < f[_POS].shape[0]:
-                raw_pos[si] = f[_POS][idx]
-
-    pos = _unwrap_pos_1d(raw_pos, box_size)
-    valid = ~np.isnan(pos[:, i0])
+    valid   = ~np.isnan(raw_pos[:, i0])
+    x_v     = raw_pos[valid, i0]
+    y_v     = raw_pos[valid, i1]
     z_valid = redshifts[valid]
 
     norm = mcolors.Normalize(vmin=z_valid.min(), vmax=z_valid.max())
 
     fig, ax = plt.subplots(figsize=figsize)
-    ax.plot(pos[valid, i0], pos[valid, i1], '-', color='k', lw=0.8, alpha=0.35, zorder=2)
+    _draw_track_line(ax, x_v, y_v, box_size, color='k', lw=0.8, alpha=0.35, zorder=2)
     sc = ax.scatter(
-        pos[valid, i0], pos[valid, i1],
+        x_v, y_v,
         c=z_valid, cmap=cmap, norm=norm,
         s=60, marker='*', edgecolors='k', lw=0.4, zorder=4,
         label='Main galaxy',
     )
     fig.colorbar(sc, ax=ax, label='Redshift')
-    ax.set_xlabel(f'{projection[0]} [Mpc/h]', fontsize=12)
-    ax.set_ylabel(f'{projection[1]} [Mpc/h]', fontsize=12)
+    ax.set_xlabel(f'{projection[0]} [pos units]', fontsize=12)
+    ax.set_ylabel(f'{projection[1]} [pos units]', fontsize=12)
     ax.set_title(title or f'Main galaxy track ({projection[0]}-{projection[1]})', fontsize=13)
     ax.legend(fontsize=10)
 
@@ -490,7 +500,7 @@ def plot_neighborhood_track(
     redshifts,
     box_size,
     *,
-    radius_mpc=0.5,
+    radius=500.0,
     projection=('x', 'y'),
     mass_threshold=1e9,
     mass_threshold_maj=0.25,
@@ -500,15 +510,19 @@ def plot_neighborhood_track(
     title=None,
     save_path=None,
 ):
-    """Plot the main galaxy track, all neighbors within *radius_mpc*, and merger events.
+    """Plot the main galaxy track, all neighbors within *radius*, and merger events.
 
-    For every snapshot, every galaxy within *radius_mpc* of the tracked
-    galaxy (minimum-image convention) is shown as a small dot colored by
-    redshift.  Companions stored in ``galaxy._progenitors`` are additionally
+    For every snapshot, every galaxy within *radius* of the tracked galaxy
+    (minimum-image convention) is shown as a small dot colored by redshift.
+    Neighbors are plotted at ``main_pos + min_image_displacement`` so they
+    always appear spatially close to the main galaxy even across periodic
+    boundaries.  Companions stored in ``galaxy._progenitors`` are additionally
     highlighted: red pentagons for major mergers (mass ratio ≥
-    *mass_threshold_maj*), orange diamonds for minor.  All positions are
-    rendered in the unwrapped trajectory frame so the main galaxy's path is
-    continuous.
+    *mass_threshold_maj*), orange diamonds for minor.
+
+    The line connecting the main galaxy's snapshots is broken wherever
+    consecutive positions are more than half a box-length apart (periodic
+    crossing or bad progenitor match).
 
     Parameters
     ----------
@@ -520,9 +534,10 @@ def plot_neighborhood_track(
     redshifts : array-like
         Redshift at each snapshot, same order as *caesar_paths*.
     box_size : float
-        Periodic box side length in position units (Mpc/h).
-    radius_mpc : float
-        Neighbor search radius in Mpc/h.  Default 0.5 ≈ 500 kpc/h.
+        Periodic box side length in position units (same as ``galaxy_data/pos``).
+    radius : float
+        Neighbor search radius in the same units as ``galaxy_data/pos``.
+        Default 500 (kpc/h if Caesar stores positions in kpc/h).
     projection : tuple of str
         Two of ``'x'``, ``'y'``, ``'z'`` to project onto.  Default ``('x', 'y')``.
     mass_threshold : float
@@ -555,24 +570,14 @@ def plot_neighborhood_track(
     i0, i1 = _AX[projection[0]], _AX[projection[1]]
 
     redshifts = np.asarray(redshifts, dtype=float)
-    track = np.asarray(galaxy.track, dtype=np.int64)
-    n_snaps = len(caesar_paths)
+    track     = np.asarray(galaxy.track, dtype=np.int64)
+    n_snaps   = len(caesar_paths)
+    raw_pos   = _read_main_pos(galaxy, caesar_paths)
 
-    # ── 1. Read and unwrap main galaxy track ─────────────────────────────────
-    raw_pos = np.full((n_snaps, 3), np.nan)
-    for si, cpath in enumerate(caesar_paths):
-        idx = int(track[si])
-        if idx < 0:
-            continue
-        with h5py.File(cpath, 'r') as f:
-            if idx < f[_POS].shape[0]:
-                raw_pos[si] = f[_POS][idx]
-
-    pos_uw = _unwrap_pos_1d(raw_pos, box_size)
-
-    # ── 2. Collect neighbor positions in unwrapped frame ─────────────────────
-    neigh_pos  = []
-    neigh_zval = []
+    # ── 1. Collect neighbor positions anchored to main galaxy ─────────────────
+    # Each neighbor is plotted at (main_raw + min_image_displacement) so it
+    # always appears near the main galaxy in the figure regardless of box wrapping.
+    neigh_x, neigh_y, neigh_zval = [], [], []
 
     for si, cpath in enumerate(caesar_paths):
         main_idx = int(track[si])
@@ -592,19 +597,21 @@ def plot_neighborhood_track(
 
         mask = (
             (np.arange(len(dx)) != main_idx)
-            & (dist < radius_mpc)
+            & (dist < radius)
             & (all_smass >= mass_threshold)
         )
         for i in np.where(mask)[0]:
-            neigh_pos.append(pos_uw[si] + np.array([dx[i], dy[i], dz[i]]))
+            neigh_x.append(raw_pos[si, i0] + (dx[i] if i0 == 0 else dy[i] if i0 == 1 else dz[i]))
+            neigh_y.append(raw_pos[si, i1] + (dx[i] if i1 == 0 else dy[i] if i1 == 1 else dz[i]))
             neigh_zval.append(redshifts[si])
 
-    neigh_pos  = np.array(neigh_pos)  if neigh_pos  else np.zeros((0, 3))
+    neigh_x    = np.array(neigh_x)
+    neigh_y    = np.array(neigh_y)
     neigh_zval = np.array(neigh_zval)
 
-    # ── 3. Collect merger events from progenitor record ──────────────────────
-    maj_pos, maj_zval = [], []
-    min_pos, min_zval = [], []
+    # ── 2. Collect merger events from progenitor record ───────────────────────
+    maj_x, maj_y, maj_zval = [], [], []
+    min_x, min_y, min_zval = [], [], []
 
     for prog in galaxy._progenitors.values():
         if prog.merger != 1 or prog.fragmentation != 0:
@@ -612,66 +619,64 @@ def plot_neighborhood_track(
         si = int(prog.snapshot)
         if si >= n_snaps or np.isnan(raw_pos[si, 0]):
             continue
-        dx_p = prog.x - raw_pos[si, 0]
-        dy_p = prog.y - raw_pos[si, 1]
-        dz_p = prog.z - raw_pos[si, 2]
-        dx_p -= box_size * np.round(dx_p / box_size)
-        dy_p -= box_size * np.round(dy_p / box_size)
-        dz_p -= box_size * np.round(dz_p / box_size)
-        pt = pos_uw[si] + np.array([dx_p, dy_p, dz_p])
+        prog_raw = np.array([prog.x, prog.y, prog.z])
+        d = prog_raw - raw_pos[si]
+        d -= box_size * np.round(d / box_size)
+        px = raw_pos[si, i0] + d[i0]
+        py = raw_pos[si, i1] + d[i1]
 
         if prog.mass >= mass_threshold_maj:
-            maj_pos.append(pt);  maj_zval.append(redshifts[si])
+            maj_x.append(px); maj_y.append(py); maj_zval.append(redshifts[si])
         elif prog.mass >= mass_threshold_min:
-            min_pos.append(pt);  min_zval.append(redshifts[si])
+            min_x.append(px); min_y.append(py); min_zval.append(redshifts[si])
 
-    maj_pos  = np.array(maj_pos)  if maj_pos  else np.zeros((0, 3))
-    min_pos  = np.array(min_pos)  if min_pos  else np.zeros((0, 3))
-    maj_zval = np.array(maj_zval)
-    min_zval = np.array(min_zval)
+    maj_x, maj_y, maj_zval = np.array(maj_x), np.array(maj_y), np.array(maj_zval)
+    min_x, min_y, min_zval = np.array(min_x), np.array(min_y), np.array(min_zval)
 
-    # ── 4. Plot ───────────────────────────────────────────────────────────────
-    valid   = ~np.isnan(pos_uw[:, i0])
+    # ── 3. Plot ───────────────────────────────────────────────────────────────
+    valid   = ~np.isnan(raw_pos[:, i0])
+    x_v     = raw_pos[valid, i0]
+    y_v     = raw_pos[valid, i1]
     z_valid = redshifts[valid]
     norm    = mcolors.Normalize(vmin=redshifts.min(), vmax=redshifts.max())
 
     fig, ax = plt.subplots(figsize=figsize)
 
-    if neigh_pos.shape[0]:
+    if len(neigh_x):
         ax.scatter(
-            neigh_pos[:, i0], neigh_pos[:, i1],
+            neigh_x, neigh_y,
             c=neigh_zval, cmap=cmap, norm=norm,
             s=15, alpha=0.5, marker='o', lw=0, zorder=3,
-            label=f'Neighbors (r < {radius_mpc} Mpc/h)',
+            label=f'Neighbors (r < {radius:.0f} pos-units)',
         )
 
-    ax.plot(pos_uw[valid, i0], pos_uw[valid, i1], '-', color='k', lw=0.8, alpha=0.35, zorder=4)
+    _draw_track_line(ax, x_v, y_v, box_size, color='k', lw=0.8, alpha=0.35, zorder=4)
     sc = ax.scatter(
-        pos_uw[valid, i0], pos_uw[valid, i1],
+        x_v, y_v,
         c=z_valid, cmap=cmap, norm=norm,
         s=80, marker='*', edgecolors='k', lw=0.5, zorder=5,
         label='Main galaxy',
     )
 
-    if maj_pos.shape[0]:
+    if len(maj_x):
         ax.scatter(
-            maj_pos[:, i0], maj_pos[:, i1],
+            maj_x, maj_y,
             c='red', s=120, marker='p', edgecolors='darkred', lw=0.8,
             zorder=6, label='Major merger companion',
         )
-    if min_pos.shape[0]:
+    if len(min_x):
         ax.scatter(
-            min_pos[:, i0], min_pos[:, i1],
+            min_x, min_y,
             c='orange', s=80, marker='D', edgecolors='saddlebrown', lw=0.8,
             zorder=6, label='Minor merger companion',
         )
 
     fig.colorbar(sc, ax=ax, label='Redshift')
-    ax.set_xlabel(f'{projection[0]} [Mpc/h]', fontsize=12)
-    ax.set_ylabel(f'{projection[1]} [Mpc/h]', fontsize=12)
+    ax.set_xlabel(f'{projection[0]} [pos units]', fontsize=12)
+    ax.set_ylabel(f'{projection[1]} [pos units]', fontsize=12)
     ax.set_title(
         title or (
-            f'Galaxy neighborhood (r < {radius_mpc} Mpc/h) + merger events '
+            f'Galaxy neighborhood (r < {radius:.0f}) + merger events '
             f'({projection[0]}-{projection[1]})'
         ),
         fontsize=12,
