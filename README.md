@@ -57,19 +57,24 @@ out = sb.OutputPaths(sim.name)   # output/cis100/<task>/ created on first access
 ```
 simbanator/
 ├── io/
-│   ├── simba.py          # Simulation / Simba – path resolution and catalog loading
+│   ├── simba.py          # Simulation – path resolution, Caesar/snapshot loading
 │   ├── paths.py          # OutputPaths – structured output directory manager
-│   └── config.py         # ~/.simbanator/config.json helpers
+│   └── config.py         # ~/.simbanator/config.json read/write helpers
 ├── analysis/
-│   ├── progenitors.py    # caesar_read_progen / read_progen – merger-tree tracks
-│   ├── mergers.py        # process_galaxies_with_tracks / analyze_mergers
-│   ├── particles.py      # extract_particles – filtered snapshot HDF5 subsets
-│   ├── sfh_caesar.py     # HDF5BuildHistory – property histories from Caesar
-│   ├── profiles.py       # radial_profile – radial binning of particle properties
-│   └── quenching.py      # quenching time utilities
+│   ├── progenitors.py    # caesar_read_progen, read_progen – merger-tree track FITS
+│   ├── mergers.py        # Progenitor, Galaxy, process_galaxies_with_tracks,
+│   │                     #   analyze_mergers – companion detection & classification
+│   │                     #   Units: positions Mpc/h, r_half kpc/h, masses M☉
+│   ├── particles.py      # extract_particles – per-galaxy/halo/aperture HDF5 subsets
+│   ├── sfh_caesar.py     # HDF5BuildHistory – property histories from Caesar catalogs
+│   ├── sfh_fsps.py       # compute_sfh, bin_sfh, save_sfh, load_sfh – FSPS SFHs
+│   ├── profiles.py       # radial_profile – surface-density / mean radial profiles
+│   ├── quenching.py      # find_quenching_times, load_quenching_events
+│   ├── history.py        # deprecated shim → sfh_caesar
+│   └── sfh.py            # deprecated shim → sfh_fsps
 ├── sed/
-│   ├── makesed.py        # MakeSED – Powderday setup + flux extraction
-│   ├── flux_extraction.py# flux_extraction / get_svo_filters – SED → photometry
+│   ├── makesed.py        # MakeSED – Powderday setup + flux extraction (needs hyperion)
+│   ├── flux_extraction.py# flux_extraction, get_svo_filters – SED → photometry
 │   └── parameters_master.py / parameters_master-nodust.py
 ├── utils/
 │   ├── geometry.py       # shrink_center, principal_axes, rotate_to_frame
@@ -78,12 +83,18 @@ simbanator/
 │   ├── search.py         # findsatellites
 │   └── debug.py          # print_ram_usage
 ├── visualization/
-│   ├── plots.py          # HistoryPlots
-│   ├── animation.py      # create_animation
-│   └── rendering.py      # RenderRGB, SingleRender (requires yt / sphviewer)
+│   ├── plots.py          # HistoryPlots – generic multi-panel history figure
+│   │                     # plot_merger_rate_by_phase – bar chart of mergers by phase
+│   │                     # plot_main_galaxy_track – single-galaxy trajectory (unwrapped)
+│   │                     # plot_neighborhood_track – track + nearby galaxies + merger events
+│   │                     # plot_all_galaxy_tracks – all galaxy tracks overlaid (unwrapped)
+│   │                     #   All track plots: positions in Mpc/h, radius param in Mpc/h
+│   ├── animation.py      # create_animation – GIF from x/y frame sequence
+│   └── rendering.py      # ParticleProjectionRender, RenderRGB, SingleRender
+│                         #   (requires yt + py-sphviewer)
 └── data/
     ├── convert.py        # convert_hdf5_fits – Caesar HDF5 → FITS (legacy)
-    └── snap_z_maps/      # bundled snapshot → redshift tables
+    └── snap_z_maps/      # bundled snapshot → redshift tables per simulation box
 ```
 
 ---

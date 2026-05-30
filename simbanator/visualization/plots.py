@@ -504,8 +504,8 @@ def plot_main_galaxy_track(
         label='Main galaxy',
     )
     fig.colorbar(sc, ax=ax, label='Redshift')
-    ax.set_xlabel(f'{projection[0]} [Mpc/h]', fontsize=12)
-    ax.set_ylabel(f'{projection[1]} [Mpc/h]', fontsize=12)
+    ax.set_xlabel(f'{projection[0]} [kpc/h]', fontsize=12)
+    ax.set_ylabel(f'{projection[1]} [kpc/h]', fontsize=12)
     ax.set_title(title or f'Main galaxy track — unwrapped ({projection[0]}-{projection[1]})', fontsize=13)
     ax.legend(fontsize=10)
 
@@ -560,8 +560,8 @@ def plot_neighborhood_track(
     box_size : float
         Periodic box side length in position units (same as ``galaxy_data/pos``).
     radius : float
-        Neighbor search radius in **Mpc/h** (same units as ``galaxy_data/pos``).
-        Default 0.5 Mpc/h ≈ 500 kpc/h.
+        Neighbor search radius in **kpc/h** (same units as ``galaxy_data/pos``).
+        Default 500 kpc/h.
     projection : tuple of str
         Two of ``'x'``, ``'y'``, ``'z'`` to project onto.  Default ``('x', 'y')``.
     mass_threshold : float
@@ -696,11 +696,11 @@ def plot_neighborhood_track(
         )
 
     fig.colorbar(sc, ax=ax, label='Redshift')
-    ax.set_xlabel(f'{projection[0]} [Mpc/h]', fontsize=12)
-    ax.set_ylabel(f'{projection[1]} [Mpc/h]', fontsize=12)
+    ax.set_xlabel(f'{projection[0]} [kpc/h]', fontsize=12)
+    ax.set_ylabel(f'{projection[1]} [kpc/h]', fontsize=12)
     ax.set_title(
         title or (
-            f'Galaxy neighborhood (r < {radius:.3g} Mpc/h) + merger events '
+            f'Galaxy neighborhood (r < {radius:.3g} kpc/h) + merger events '
             f'({projection[0]}-{projection[1]})'
         ),
         fontsize=12,
@@ -808,7 +808,10 @@ def plot_all_galaxy_tracks(
             displacements.append(np.sqrt((xv[-1] - xv[0])**2 + (yv[-1] - yv[0])**2))
         if gi == hi_gi or len(xv) < 2:
             continue
-        ax.plot(xv, yv, lw=0.4, alpha=0.25, color='steelblue', zorder=2)
+        # Plot displacement relative to the galaxy's first valid position so that
+        # all tracks start at the origin and remain visible regardless of where
+        # each galaxy sits in the box (comoving displacement << box size).
+        ax.plot(xv - xv[0], yv - yv[0], lw=0.4, alpha=0.25, color='steelblue', zorder=2)
 
     # Highlighted galaxy drawn last (on top)
     uw_h    = _unwrap_track(raw_all[hi_gi], box_size)
@@ -817,22 +820,26 @@ def plot_all_galaxy_tracks(
     yh      = uw_h[valid_h, i1]
     zh      = redshifts[valid_h]
     norm    = mcolors.Normalize(vmin=redshifts.min(), vmax=redshifts.max())
-    ax.plot(xh, yh, lw=1.5, color='k', alpha=0.6, zorder=4)
+    xh_rel  = xh - xh[0] if len(xh) else xh
+    yh_rel  = yh - yh[0] if len(yh) else yh
+    ax.plot(xh_rel, yh_rel, lw=1.5, color='k', alpha=0.6, zorder=4)
     sc = ax.scatter(
-        xh, yh, c=zh, cmap='plasma_r', norm=norm,
+        xh_rel, yh_rel, c=zh, cmap='plasma_r', norm=norm,
         s=60, marker='*', edgecolors='k', lw=0.4, zorder=5,
         label=f'Galaxy {highlight_idx} (most companions)',
     )
 
     fig.colorbar(sc, ax=ax, label='Redshift')
-    ax.set_xlabel(f'{projection[0]} [Mpc/h]', fontsize=12)
-    ax.set_ylabel(f'{projection[1]} [Mpc/h]', fontsize=12)
+    # Caesar stores galaxy_data/pos in kpc/h; axes show displacement from each
+    # galaxy's starting position so all tracks are visible at the same scale.
+    ax.set_xlabel(f'Δ{projection[0]} [kpc/h]', fontsize=12)
+    ax.set_ylabel(f'Δ{projection[1]} [kpc/h]', fontsize=12)
 
     med_disp = float(np.median(displacements)) if displacements else float('nan')
     ax.set_title(
         title or (
-            f'All galaxy tracks — {n_gals} galaxies, unwrapped  '
-            f'(median displacement {med_disp:.2f} Mpc/h)\n'
+            f'All galaxy tracks — {n_gals} galaxies, unwrapped comoving displacement  '
+            f'(median {med_disp:.1f} kpc/h)\n'
             f'thin blue = all tracks  ★ = galaxy {highlight_idx}'
         ),
         fontsize=12,
