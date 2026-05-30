@@ -409,6 +409,28 @@ def _draw_track_line(ax, x, y, box_size, **kwargs):
     ax.plot(x[seg:], y[seg:], **kwargs)
 
 
+def _unwrap_track(raw_pos, box_size):
+    """Return raw_pos with periodic-boundary crossings unfolded into a continuous path.
+
+    Each valid step is replaced by the minimum-image displacement accumulated
+    from the previous valid position, so the galaxy never appears to jump
+    across the box.  NaN entries (galaxy absent at that snapshot) are preserved.
+    """
+    uw   = raw_pos.copy()
+    prev = None
+    for si in range(len(uw)):
+        if np.any(np.isnan(uw[si])):
+            continue
+        if prev is None:
+            prev = uw[si].copy()
+            continue
+        delta  = uw[si] - prev
+        delta -= box_size * np.round(delta / box_size)
+        uw[si] = prev + delta
+        prev   = uw[si].copy()
+    return uw
+
+
 def plot_main_galaxy_track(
     galaxy,
     caesar_paths,
@@ -463,16 +485,18 @@ def plot_main_galaxy_track(
 
     redshifts = np.asarray(redshifts, dtype=float)
     raw_pos   = _read_main_pos(galaxy, caesar_paths)
+    uw_pos    = _unwrap_track(raw_pos, box_size)
 
-    valid   = ~np.isnan(raw_pos[:, i0])
-    x_v     = raw_pos[valid, i0]
-    y_v     = raw_pos[valid, i1]
+    valid   = ~np.isnan(uw_pos[:, i0])
+    x_v     = uw_pos[valid, i0]
+    y_v     = uw_pos[valid, i1]
     z_valid = redshifts[valid]
 
     norm = mcolors.Normalize(vmin=z_valid.min(), vmax=z_valid.max())
 
     fig, ax = plt.subplots(figsize=figsize)
-    _draw_track_line(ax, x_v, y_v, box_size, color='k', lw=0.8, alpha=0.35, zorder=2)
+    # NaN entries in uw_pos naturally break the matplotlib line — no need to detect jumps.
+    ax.plot(uw_pos[:, i0], uw_pos[:, i1], color='k', lw=0.8, alpha=0.35, zorder=2)
     sc = ax.scatter(
         x_v, y_v,
         c=z_valid, cmap=cmap, norm=norm,
@@ -480,9 +504,9 @@ def plot_main_galaxy_track(
         label='Main galaxy',
     )
     fig.colorbar(sc, ax=ax, label='Redshift')
-    ax.set_xlabel(f'{projection[0]} [pos units]', fontsize=12)
-    ax.set_ylabel(f'{projection[1]} [pos units]', fontsize=12)
-    ax.set_title(title or f'Main galaxy track ({projection[0]}-{projection[1]})', fontsize=13)
+    ax.set_xlabel(f'{projection[0]} [Mpc/h]', fontsize=12)
+    ax.set_ylabel(f'{projection[1]} [Mpc/h]', fontsize=12)
+    ax.set_title(title or f'Main galaxy track — unwrapped ({projection[0]}-{projection[1]})', fontsize=13)
     ax.legend(fontsize=10)
 
     if save_path:
@@ -536,8 +560,8 @@ def plot_neighborhood_track(
     box_size : float
         Periodic box side length in position units (same as ``galaxy_data/pos``).
     radius : float
-        Neighbor search radius in the same units as ``galaxy_data/pos``.
-        Default 500 (kpc/h if Caesar stores positions in kpc/h).
+        Neighbor search radius in **Mpc/h** (same units as ``galaxy_data/pos``).
+        Default 0.5 Mpc/h ≈ 500 kpc/h.
     projection : tuple of str
         Two of ``'x'``, ``'y'``, ``'z'`` to project onto.  Default ``('x', 'y')``.
     mass_threshold : float
@@ -647,7 +671,7 @@ def plot_neighborhood_track(
             neigh_x, neigh_y,
             c=neigh_zval, cmap=cmap, norm=norm,
             s=15, alpha=0.5, marker='o', lw=0, zorder=3,
-            label=f'Neighbors (r < {radius:.0f} pos-units)',
+            label=f'Neighbors (r < {radius:.3g} Mpc/h)',
         )
 
     _draw_track_line(ax, x_v, y_v, box_size, color='k', lw=0.8, alpha=0.35, zorder=4)
@@ -672,16 +696,148 @@ def plot_neighborhood_track(
         )
 
     fig.colorbar(sc, ax=ax, label='Redshift')
-    ax.set_xlabel(f'{projection[0]} [pos units]', fontsize=12)
-    ax.set_ylabel(f'{projection[1]} [pos units]', fontsize=12)
+    ax.set_xlabel(f'{projection[0]} [Mpc/h]', fontsize=12)
+    ax.set_ylabel(f'{projection[1]} [Mpc/h]', fontsize=12)
     ax.set_title(
         title or (
-            f'Galaxy neighborhood (r < {radius:.0f}) + merger events '
+            f'Galaxy neighborhood (r < {radius:.3g} Mpc/h) + merger events '
             f'({projection[0]}-{projection[1]})'
         ),
         fontsize=12,
     )
     ax.legend(fontsize=9, loc='upper right')
+
+    if save_path:
+        out_dir = os.path.dirname(save_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        fig.savefig(save_path, bbox_inches='tight')
+
+    return fig, ax
+
+
+def plot_all_galaxy_tracks(
+    galaxies,
+    caesar_paths,
+    redshifts,
+    box_size,
+    *,
+    projection=('x', 'y'),
+    figsize=(10, 10),
+    highlight_idx=None,
+    title=None,
+    save_path=None,
+):
+    """Plot unwrapped trajectories for every tracked galaxy in one figure.
+
+    Periodic-boundary crossings are unfolded so each track appears as a
+    continuous path.  All tracks are shown as thin blue lines; one galaxy
+    (default: the one with the most progenitor entries) is highlighted in
+    colour.  Use this plot to spot physically impossible jumps (bad progenitor
+    matches) and to assess the typical comoving displacement per galaxy.
+
+    Parameters
+    ----------
+    galaxies : dict
+        Output of ``process_galaxies_with_tracks``.
+    caesar_paths : list of str
+        Caesar HDF5 catalog paths, one per snapshot.
+    redshifts : array-like
+        Redshift at each snapshot, same order as *caesar_paths*.
+    box_size : float
+        Periodic box side length in Mpc/h.
+    projection : tuple of str
+        Two of ``'x'``, ``'y'``, ``'z'``.  Default ``('x', 'y')``.
+    figsize : tuple
+        Figure size in inches.
+    highlight_idx : int or None
+        Galaxy key to draw in colour.  Defaults to the galaxy with the most
+        progenitor entries.
+    title : str, optional
+        Figure title.
+    save_path : str, optional
+        If given, save the figure here.
+
+    Returns
+    -------
+    fig, ax : matplotlib Figure and Axes
+    """
+    import h5py
+    import matplotlib.pyplot as plt
+    import matplotlib.colors as mcolors
+
+    _POS = 'galaxy_data/pos'
+    _AX  = {'x': 0, 'y': 1, 'z': 2}
+    i0, i1 = _AX[projection[0]], _AX[projection[1]]
+    redshifts = np.asarray(redshifts, dtype=float)
+
+    if highlight_idx is None:
+        highlight_idx = max(galaxies, key=lambda k: len(galaxies[k].progenitors))
+
+    gal_keys = list(galaxies.keys())
+    n_gals   = len(gal_keys)
+    n_snaps  = len(caesar_paths)
+
+    # Track array (n_gals, n_snaps) — one HDF5 open per snapshot
+    tracks = np.array([
+        np.asarray(galaxies[k].track, dtype=np.int64) for k in gal_keys
+    ])
+    raw_all = np.full((n_gals, n_snaps, 3), np.nan)
+
+    for si, cpath in enumerate(caesar_paths):
+        with h5py.File(cpath, 'r') as f:
+            pos_cat = f[_POS][:]
+        n_cat = pos_cat.shape[0]
+        for gi in range(n_gals):
+            idx = int(tracks[gi, si])
+            if 0 <= idx < n_cat:
+                raw_all[gi, si] = pos_cat[idx]
+
+    # Unwrap and collect displacement statistics
+    displacements = []
+    fig, ax = plt.subplots(figsize=figsize)
+
+    hi_gi = gal_keys.index(highlight_idx)
+
+    for gi, gk in enumerate(gal_keys):
+        uw    = _unwrap_track(raw_all[gi], box_size)
+        valid = ~np.isnan(uw[:, i0])
+        xv    = uw[valid, i0]
+        yv    = uw[valid, i1]
+        if len(xv) >= 2:
+            displacements.append(np.sqrt((xv[-1] - xv[0])**2 + (yv[-1] - yv[0])**2))
+        if gi == hi_gi or len(xv) < 2:
+            continue
+        ax.plot(xv, yv, lw=0.4, alpha=0.25, color='steelblue', zorder=2)
+
+    # Highlighted galaxy drawn last (on top)
+    uw_h    = _unwrap_track(raw_all[hi_gi], box_size)
+    valid_h = ~np.isnan(uw_h[:, i0])
+    xh      = uw_h[valid_h, i0]
+    yh      = uw_h[valid_h, i1]
+    zh      = redshifts[valid_h]
+    norm    = mcolors.Normalize(vmin=redshifts.min(), vmax=redshifts.max())
+    ax.plot(xh, yh, lw=1.5, color='k', alpha=0.6, zorder=4)
+    sc = ax.scatter(
+        xh, yh, c=zh, cmap='plasma_r', norm=norm,
+        s=60, marker='*', edgecolors='k', lw=0.4, zorder=5,
+        label=f'Galaxy {highlight_idx} (most companions)',
+    )
+
+    fig.colorbar(sc, ax=ax, label='Redshift')
+    ax.set_xlabel(f'{projection[0]} [Mpc/h]', fontsize=12)
+    ax.set_ylabel(f'{projection[1]} [Mpc/h]', fontsize=12)
+
+    med_disp = float(np.median(displacements)) if displacements else float('nan')
+    ax.set_title(
+        title or (
+            f'All galaxy tracks — {n_gals} galaxies, unwrapped  '
+            f'(median displacement {med_disp:.2f} Mpc/h)\n'
+            f'thin blue = all tracks  ★ = galaxy {highlight_idx}'
+        ),
+        fontsize=12,
+    )
+    ax.legend(fontsize=10)
 
     if save_path:
         out_dir = os.path.dirname(save_path)
