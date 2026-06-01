@@ -290,7 +290,7 @@ class MakeSED:
                     continue
 
                 for i, nh in enumerate(ids):
-                    model_dir_remote = os.path.join(model_dir, f'gal_{nh:06}')
+                    model_dir_remote = os.path.join(model_dir, f'gal_{nh}')
                     os.makedirs(model_dir_remote, exist_ok=True)
                     xpos, ypos, zpos = pos[i]
 
@@ -485,7 +485,7 @@ class MakeSED:
         """
         fig, ax = plt.subplots()
         run = os.path.join(
-            self.model_dir_base, f'snap_{snap:03}', f'gal_{gal:06}',
+            self.model_dir_base, f'snap_{snap:03}', f'gal_{gal}',
             f'snap{snap:03}.galaxy{gal:06}.rtout.sed',
         )
         z = self.sb.get_z_from_snap(snap)
@@ -544,7 +544,7 @@ class MakeSED:
         run = os.path.join(
             self.model_dir_base,
             f'snap_{snap:03}',
-            f'gal_{gal:06}',
+            f'gal_{gal}',
             f'snap{snap:03}.galaxy{gal:06}.rtout.sed',
         )
 
@@ -649,7 +649,7 @@ class MakeSED:
                 run = os.path.join(
                     self.model_dir_base,
                     f'snap_{snap:03}',
-                    f'gal_{gal:06}',
+                    f'gal_{gal}',
                     f'snap{snap:03}.galaxy{gal:06}.rtout.sed',
                 )
 
