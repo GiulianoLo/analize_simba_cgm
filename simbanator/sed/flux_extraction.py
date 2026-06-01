@@ -6,14 +6,11 @@ from astropy import units as u
 from astropy import constants
 from astropy.io import fits, ascii
 from scipy.interpolate import interp1d
-from astropy.cosmology import LambdaCDM, FlatwCDM
 import os
 from tqdm import trange
 
 from pathlib import Path
 from astroquery.svo_fps import SvoFps
-
-cosmo = LambdaCDM(H0 = 70, Om0= 0.3, Ode0= 0.7)
 
 def resolve_filter_ids(facility, instrument, filters=None):
     """
@@ -117,6 +114,39 @@ def get_svo_filters(facility, instrument, filters=None, wave_unit='micron'):
 
     return out
 
+
+def load_local_filters(local_filters_spec, wave_unit='micron'):
+    """Load filter transmission curves from local ASCII files.
+
+    Parameters
+    ----------
+    local_filters_spec : dict
+        ``{facility: {instrument: {filter_name: filepath}}}``.
+        Each file must be two-column ASCII: wavelength (Angstrom), transmission.
+    wave_unit : str
+        Output wavelength unit. Default ``'micron'``.
+
+    Returns
+    -------
+    dict
+        Same nested format as :func:`get_svo_filters`.
+    """
+    out = {}
+    for fac, inst_dict in local_filters_spec.items():
+        out.setdefault(fac, {})
+        for inst, filt_dict in inst_dict.items():
+            out[fac].setdefault(inst, {})
+            for fname, fpath in filt_dict.items():
+                try:
+                    data = np.loadtxt(fpath, comments=['#', '!'])
+                    wl = (data[:, 0] * u.AA).to(wave_unit).value
+                    trans = data[:, 1]
+                    out[fac][inst][fname] = {'Wavelength': wl, 'Transmission': trans}
+                except Exception as e:
+                    print(f"Skipping local filter {fname} ({fpath}): {e}")
+    return out
+
+
 def magTo_mJy(mag):
     mjy = 10 ** (-mag / 2.5) * 3631 * 1e3
     return mjy
@@ -152,7 +182,7 @@ def flux_extraction(facility, instrument, wav, flux, filters=None, wave_unit='mi
 
     # Convert SED wavelength to target unit
     wav = wav.to(wave_unit)
-    if filter_list != None:
+    if filter_list is not None:
         profiles = filter_list
     else:
         profiles = get_svo_filters(

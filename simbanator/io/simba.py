@@ -255,7 +255,11 @@ _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
 
 # ── SIMBA photometric filters ────────────────────────────────────────
 
-_SIMBA_BOXES = [25, 50, 100]
+_SIMBA_BOXES = {
+    25:  ("simba_m25n512",   "m25n512_{snap:03d}.hdf5"),
+    50:  ("simba_m50n512",   "m50n512_{snap:03d}.hdf5"),
+    100: ("simba_m100n1024", "m100n1024_{snap:03d}.hdf5"),
+}
 
 _SIMBA_FILTERS = [
     "GALEX_FUV", "GALEX_NUV",

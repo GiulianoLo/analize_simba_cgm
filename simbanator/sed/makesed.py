@@ -26,7 +26,19 @@ from astropy import constants
 from astropy.table import Table
 from astropy.table import vstack
 
-from simbanator.sed.flux_extraction import flux_extraction, get_svo_filters
+from simbanator.sed.flux_extraction import flux_extraction, get_svo_filters, load_local_filters
+
+def _sed_to_mJy(wav_raw, flux_raw, z, apply_redshift=False):
+    """Convert raw Powderday SED arrays to observed-frame (wav, flux) astropy Quantities."""
+    wav = np.asarray(wav_raw) * u.micron
+    if apply_redshift:
+        wav = wav * (1. + z)
+    flux = np.asarray(flux_raw) * u.erg / u.s
+    dl = Planck13.luminosity_distance(z).to(u.cm)
+    flux /= (4. * np.pi * dl ** 2)
+    nu = (constants.c.cgs / wav.to(u.cm)).to(u.Hz)
+    return wav, (flux / nu).to(u.mJy)
+
 
 def flatten_results(results, snap, gal):
     rows = []
@@ -365,7 +377,7 @@ class MakeSED:
                         f.write('echo "Starting local Powderday batch..."\n')
                         f.write(f'for id in $(cat {os.path.join(model_dir, "ids.txt")}); do\n')
                         f.write(
-                            '  python /home/lorenzong/powderday/pd_front_end.py . parameters_master '
+                            '  python "${POWDERDAY_ROOT:-$HOME}/powderday/pd_front_end.py" . parameters_master '
                             + f'snap{snap:03}_$id > gal_$id/snap{snap:03}_$id.LOG\n'
                         )
                         f.write('done\n')
@@ -463,6 +475,13 @@ class MakeSED:
             If *True*, return ``(fig, ax)``.
         retval: bool
             If True, return frequency and fluxes
+
+        Notes
+        -----
+        Wavelengths are always shifted to the observed frame (``wav * (1+z)``),
+        so the plot shows the SED as seen by a telescope.  The
+        ``extract_flux_*`` methods instead default to rest-frame convolution
+        (``redshift=False``) and let the caller opt in.
         """
         fig, ax = plt.subplots()
         run = os.path.join(
@@ -501,190 +520,193 @@ class MakeSED:
 
 
     def extract_flux_single(self, snap, gal, facility, instrument,
-                     filters=None, wave_unit='micron', findx=0, redshift=False):
-    
+                     filters=None, wave_unit='micron', findx=0, redshift=False,
+                     local_filters=None):
+        """Extract photometric fluxes for a single galaxy.
+
+        Parameters
+        ----------
+        snap : int
+        gal : int
+        facility : str or list of str
+        instrument : str or list of str
+        filters : list of str, optional
+        wave_unit : str
+        findx : int
+            Inclination index into the SED array.
+        redshift : bool
+            If True, shift wavelengths to observed frame before convolution.
+        local_filters : dict, optional
+            ``{facility: {instrument: {filter_name: filepath}}}`` of local
+            ASCII filter files (wavelength in Angstrom, transmission).
+            Merged with any SVO-fetched filters.
+        """
         run = os.path.join(
             self.model_dir_base,
             f'snap_{snap:03}',
             f'gal_{gal:06}',
             f'snap{snap:03}.galaxy{gal:06}.rtout.sed',
         )
-    
+
         z = self.sb.get_z_from_snap(snap)
-    
-        # --- Check file exists ---
+
         if not os.path.isfile(run):
             warnings.warn(f"[Missing SED] snap={snap:03}, gal={gal:06} → {run}")
             return None
 
         try:
             m = ModelOutput(run)
-            wav, flux = m.get_sed(inclination='all', aperture=-1)
+            wav_raw, flux_raw = m.get_sed(inclination='all', aperture=-1)
         except Exception as e:
             warnings.warn(f"[SED read error] snap={snap:03}, gal={gal:06} → {e}")
             return None
 
-        # --- Units ---
-        wav = np.asarray(wav) * u.micron
-        if redshift:
-            wav = wav * (1. + z)
-
-        flux = np.asarray(flux) * u.erg / u.s
-        dl = Planck13.luminosity_distance(z).to(u.cm)
-        flux /= (4. * np.pi * dl**2)
-    
-        nu = (constants.c.cgs / wav.to(u.cm)).to(u.Hz)
-        flux = (flux / nu).to(u.mJy)
-    
+        wav, flux = _sed_to_mJy(wav_raw, flux_raw, z, apply_redshift=redshift)
         flux = flux[findx]
-    
-        # --- Compute fluxes ---
+
+        profiles = get_svo_filters(facility, instrument, filters=filters, wave_unit=wave_unit)
+        if local_filters is not None:
+            for fac, inst_dict in load_local_filters(local_filters, wave_unit).items():
+                profiles.setdefault(fac, {})
+                for inst, filt_dict in inst_dict.items():
+                    profiles[fac].setdefault(inst, {})
+                    profiles[fac][inst].update(filt_dict)
+
         results = flux_extraction(
-            facility,
-            instrument,
-            wav,
-            flux,
-            filters=filters,
-            wave_unit=wave_unit
+            facility, instrument, wav, flux,
+            filters=filters, wave_unit=wave_unit,
+            filter_list=profiles,
         )
-    
-        # --- Flatten ---
+
         rows = flatten_results(results, snap, gal)
-    
-        # --- Output path ---
+
         outdir = os.path.join(self.output_dir, self.run_tag, 'sed_fluxes', f'snap_{snap:03}')
         os.makedirs(outdir, exist_ok=True)
-    
         filename = os.path.join(outdir, f'snap{snap:03}_gal_{gal:06}_fluxes.fits')
-    
-        # --- Save ---
-        table = Table(rows)
-        table.write(filename, overwrite=True)
-    
+
+        Table(rows).write(filename, overwrite=True)
         return filename
 
 
     
     def extract_flux_batch(self, snaps, gals, facility, instrument,
                       filters=None, wave_unit='micron',
-                      findx=0, redshift=False, funyt='mJy', outname=None):
+                      findx=0, redshift=False, funyt='mJy', outname=None,
+                      local_filters=None):
+        """Extract photometric fluxes for a batch of (snap, gal) pairs.
 
+        Parameters
+        ----------
+        snaps, gals : array-like of int
+            Paired snapshot numbers and galaxy IDs (must be same length).
+        facility : str or list of str
+        instrument : str or list of str
+        filters : list of str, optional
+        wave_unit : str
+        findx : int
+            Inclination index into the SED array.
+        redshift : bool
+            If True, shift wavelengths to observed frame before convolution.
+        funyt : str
+            Flux column to store in the output table (``'mJy'`` or ``'mag'``).
+        outname : str, optional
+            Override filename for the flux table (relative to sed_fluxes dir).
+        local_filters : dict, optional
+            ``{facility: {instrument: {filter_name: filepath}}}`` of local
+            ASCII filter files (wavelength in Angstrom, transmission).
+            Merged with any SVO-fetched filters.
+        """
         snaps = np.asarray(snaps)
         gals = np.asarray(gals)
-    
-        assert len(snaps) == len(gals), "snaps and gals must match in length"
-    
+
+        if len(snaps) != len(gals):
+            raise ValueError("snaps and gals must have the same length")
+
         all_tables = []
         xmean_rows = []
-    
+
         unique_snaps = np.unique(snaps)
 
-        # setup_filters for the entire batch
-        profiles = get_svo_filters(
-            facility,
-            instrument,
-            filters=filters,
-            wave_unit=wave_unit
-        )
-        
+        profiles = get_svo_filters(facility, instrument, filters=filters, wave_unit=wave_unit)
+        if local_filters is not None:
+            for fac, inst_dict in load_local_filters(local_filters, wave_unit).items():
+                profiles.setdefault(fac, {})
+                for inst, filt_dict in inst_dict.items():
+                    profiles[fac].setdefault(inst, {})
+                    profiles[fac][inst].update(filt_dict)
+
         for snap in unique_snaps:
-    
+
             mask = snaps == snap
             snap_gals = gals[mask]
-    
+
             z = self.sb.get_z_from_snap(snap)
-    
+
             rows = []
-    
+
             for gal in snap_gals:
-    
+
                 run = os.path.join(
                     self.model_dir_base,
                     f'snap_{snap:03}',
                     f'gal_{gal:06}',
                     f'snap{snap:03}.galaxy{gal:06}.rtout.sed',
                 )
-                # --- Check file exists ---
+
                 if not os.path.isfile(run):
                     warnings.warn(f"[Missing SED] snap={snap:03}, gal={gal:06} → {run}")
                     continue
-                
-                # --- Try reading SED ---
+
                 try:
                     m = ModelOutput(run)
-                    wav, flux = m.get_sed(inclination='all', aperture=-1)
+                    wav_raw, flux_raw = m.get_sed(inclination='all', aperture=-1)
                 except Exception as e:
                     warnings.warn(f"[SED read error] snap={snap:03}, gal={gal:06} → {e}")
                     continue
-    
-                # --- Units ---
-                wav = np.asarray(wav) * u.micron
-                if redshift:
-                    wav = wav * (1. + z)
-    
-                flux = np.asarray(flux) * u.erg / u.s
-                dl = Planck13.luminosity_distance(z).to(u.cm)
-                flux /= (4. * np.pi * dl**2)
-    
-                nu = (constants.c.cgs / wav.to(u.cm)).to(u.Hz)
-                flux = (flux / nu).to(u.mJy)
-    
+
+                wav, flux = _sed_to_mJy(wav_raw, flux_raw, z, apply_redshift=redshift)
                 flux = flux[findx]
-    
-                # --- Flux extraction ---
+
                 results = flux_extraction(
-                    facility,
-                    instrument,
-                    wav,
-                    flux,
-                    filters=filters,
-                    wave_unit=wave_unit,
-                    filter_list=profiles
+                    facility, instrument, wav, flux,
+                    filters=filters, wave_unit=wave_unit,
+                    filter_list=profiles,
                 )
-    
-                # --- Build row (one galaxy) ---
-                row = {
-                    'gal_id_at_snap': gal,
-                    'snap': snap,
-                    'redshift': z
-                }
+
+                row = {'gal_id_at_snap': gal, 'snap': snap, 'redshift': z}
 
                 for fac, inst_dict in results.items():
                     for inst, filt_dict in inst_dict.items():
                         for filt_name, filt_data in filt_dict.items():
                             colname = f"{fac}.{inst}.{filt_name}"
                             row[colname] = filt_data[funyt]
-                
                             xmean_rows.append({
                                 'gal_id_at_snap': gal,
                                 'snap': snap,
                                 'filter': colname,
-                                'xmean': filt_data.get('xmean', np.nan)
+                                'xmean': filt_data.get('xmean', np.nan),
                             })
-    
-                rows.append(row)
-    
-            table = Table(rows)
-            all_tables.append(table)
 
-    
-        # --- Combine all snapshots ---
-        final_table = vstack(all_tables)
-    
-        # --- Output paths ---
+                rows.append(row)
+
+            if rows:
+                all_tables.append(Table(rows))
+
+        if not all_tables:
+            warnings.warn("No galaxies produced valid flux results; output table is empty.")
+            final_table = Table()
+        else:
+            final_table = vstack(all_tables)
+
         outdir = os.path.join(self.output_dir, self.run_tag, 'sed_fluxes')
         os.makedirs(outdir, exist_ok=True)
-        if outname==None:
+        if outname is None:
             flux_file = os.path.join(outdir, 'all_galaxies_fluxes.fits')
-        else: 
+        else:
             flux_file = os.path.join(outdir, outname)
         xmean_file = os.path.join(outdir, 'all_xmean.fits')
-    
-        final_table.write(flux_file, overwrite=True)
-    
-        xmean_table = Table(xmean_rows)
-        xmean_table.write(xmean_file, overwrite=True)
-    
-        return flux_file, xmean_file
 
-        
+        final_table.write(flux_file, overwrite=True)
+        Table(xmean_rows).write(xmean_file, overwrite=True)
+
+        return flux_file, xmean_file

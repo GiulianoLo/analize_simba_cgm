@@ -482,9 +482,15 @@ class SingleRender:
         yt unit string for the field (e.g. ``'Msun'``, ``'K'``,
         ``'Msun/yr'``, ``'cm**-3'``).  Pass ``None`` to use the raw value
         without any unit conversion (useful for dimensionless quantities).
+    as_code_mass : bool
+        If ``True``, wrap the raw array in ``ds.arr(..., 'code_mass')`` before
+        unit conversion.  Required for SIMBA fields like ``Dust_Masses`` that
+        yt reads without units.  Equivalent to the legacy ``'FieldName_s'``
+        suffix convention.
     """
 
-    def __init__(self, snapfile, catfile, id, propr, region=False, dim='Msun'):
+    def __init__(self, snapfile, catfile, id, propr, region=False,
+                 dim='Msun', as_code_mass=False):
         self.ds = yt.load(snapfile)
         self.obj = caesar.load(catfile)
         self.ad = self.ds.all_data()
@@ -492,18 +498,31 @@ class SingleRender:
         self.propr = propr
         self.region = region
         self.dim = dim
+        self.as_code_mass = as_code_mass
         self.phys_ext = None
         self._initialize_data()
 
     def _initialize_data(self):
         self.a = self.obj.simulation.scale_factor
 
-        def get_data(ptype, prop, dim_unit, indices=None):
-            pos   = self.ad[ptype, 'Coordinates']
-            field = self.ad[ptype, prop]
+        # Legacy: field names ending in '_s' signal a SIMBA code_mass field.
+        # Preferred: pass as_code_mass=True with the real field name instead.
+        prop = self.propr[1]
+        use_code_mass = self.as_code_mass
+        if not use_code_mass and prop.endswith('_s'):
+            use_code_mass = True
+            prop = prop[:-2]
+
+        def get_data(ptype, actual_prop, dim_unit, indices=None):
+            pos = self.ad[ptype, 'Coordinates']
+            raw = self.ad[ptype, actual_prop]
             if indices is not None:
-                pos, field = pos[indices], field[indices]
+                pos, raw = pos[indices], raw[indices]
             pos = pos.in_units('kpc').value * self.a
+            if use_code_mass:
+                field = self.ds.arr(raw, 'code_mass')
+            else:
+                field = raw
             if dim_unit is None:
                 val = np.asarray(field)
             else:
@@ -512,7 +531,7 @@ class SingleRender:
 
         idx = self.gal.glist if self.propr[0] == 'PartType0' else self.gal.slist
         indices = None if self.region else idx
-        self.pos, self.mass = get_data(self.propr[0], self.propr[1], self.dim, indices)
+        self.pos, self.mass = get_data(self.propr[0], prop, self.dim, indices)
 
 
     def single_map(self, center=None, ex=5, t=None, p=None,

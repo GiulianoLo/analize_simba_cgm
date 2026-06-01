@@ -53,28 +53,35 @@ class Progenitor:
     Parameters
     ----------
     mass : float
-        Stellar mass ratio ``m_neighbour / m_main``.
+        Symmetric stellar mass ratio ``min(m_sec, m_main) / max(m_sec, m_main)`` ∈ (0, 1].
+    cat_index : int
+        Catalog row index of this companion in its snapshot HDF5 file.
+        Only meaningful within the same snapshot — Caesar IDs are not stable
+        across snapshots.
     x, y, z : float
         Position of the companion in catalog units.
     merger : int
         1 if this entry represents a merger candidate, 0 otherwise.
     fragmentation : int
-        1 if this entry represents a fragmentation event, 0 otherwise.
+        1 if this entry is a tidal fragment of an already-tracked companion
+        (detected by positional proximity + lower mass ratio), 0 otherwise.
+        Fragments are excluded from merger counts by :func:`analyze_mergers`.
     snapshot : int
-        Snapshot index at which this companion was recorded.
+        Snapshot index (0-based column) at which this companion was recorded.
     H2 : float
-        Molecular hydrogen mass of the companion.
+        Molecular hydrogen mass of the companion (M_sun).
     dust : float
-        Dust mass of the companion.
+        Dust mass of the companion (M_sun).
     distance : float, optional
-        Separation from the main galaxy in catalog units.
+        Separation from the main galaxy in catalog units (Mpc/h).
     processed : int, optional
         Flag marking whether this progenitor has been processed downstream.
     """
 
-    def __init__(self, mass, x, y, z, merger, fragmentation, snapshot, H2, dust,
-                 distance=0, processed=0):
+    def __init__(self, mass, x, y, z, merger, snapshot, H2, dust,
+                 cat_index=None, fragmentation=0, distance=0, processed=0):
         self.id = None
+        self.cat_index = cat_index
         self.mass = mass
         self.x = x
         self.y = y
@@ -96,7 +103,8 @@ class Progenitor:
 
     def print_info(self):
         print(f"Progenitor ID: {self.id}")
-        print(f"Mass: {self.mass}")
+        print(f"Cat index: {self.cat_index}")
+        print(f"Mass ratio: {self.mass}")
         print(f"Position: ({self.x}, {self.y}, {self.z})")
         print(f"Merger: {self.merger}")
         print(f"Fragmentation: {self.fragmentation}")
@@ -130,9 +138,9 @@ class Galaxy:
         self.z = z
 
     def add_progenitor(self, progenitor):
+        key = (progenitor.snapshot, progenitor.cat_index)
         for existing in self._progenitors.values():
-            if (progenitor.x, progenitor.y, progenitor.z) == (existing.x, existing.y, existing.z):
-                print("A progenitor with the same position already exists. Progenitor not added.")
+            if (existing.snapshot, existing.cat_index) == key:
                 return
         self._id_counter += 1
         progenitor.id = self._id_counter
@@ -226,6 +234,8 @@ def process_galaxies_with_tracks(
     search_radius_factor=5.0,
     mass_threshold=1e9,
     rhalf_unit_factor=1e-3,
+    match_radius=0.1,
+    frag_radius_factor=2.0,
 ):
     """Scan Caesar HDF5 snapshot catalogs and record merger companions.
 
@@ -260,11 +270,27 @@ def process_galaxies_with_tracks(
     rhalf_unit_factor : float, optional
         Converts the stored half-mass radius to position units.
         Default ``1e-3`` assumes radii in kpc/h, positions in Mpc/h.
+    match_radius : float, optional
+        Maximum separation (catalog position units, Mpc/h) within which a
+        companion at snapshot *t* is considered the same physical object as
+        one tracked at snapshot *t-1*.  Should comfortably cover the typical
+        comoving displacement between adjacent snapshots (~50–150 kpc/h for
+        SIMBA-100).  Default 0.1 Mpc/h (100 kpc/h).
+    frag_radius_factor : float, optional
+        A new companion (no positional match in the previous snapshot) is
+        flagged as a tidal fragment when an already-active companion lies
+        within ``frag_radius_factor * match_radius`` **and** carries a higher
+        stellar mass ratio.  This suppresses spurious extra merger events
+        caused by FoF splitting a single infalling object into pieces.
+        Default 2.0, giving a fragment-detection radius of 200 kpc/h with the
+        default *match_radius*.
 
     Returns
     -------
     dict
-        ``{galaxy_index: Galaxy}`` with progenitors recorded across all snapshots.
+        ``{galaxy_index: Galaxy}`` with one :class:`Progenitor` per companion
+        *approach* (first entry into the search sphere). Tidal fragments are
+        included but flagged with ``fragmentation=1``.
     """
     if caesar_paths is not None:
         catalog_paths = list(caesar_paths)
@@ -321,6 +347,14 @@ def process_galaxies_with_tracks(
         galaxy.set_track(track_row)
         galaxies[gal_idx] = galaxy
 
+    # Per-galaxy state for cross-snapshot companion matching.
+    # Caesar catalog IDs are not stable across snapshots, so companions are
+    # matched by minimum-image position within match_radius.
+    # active[gal_id] = {local_id: {'pos': ndarray(3,), 'mass_ratio': float}}
+    active_companions = {gal_id: {} for gal_id in galaxies}
+    active_counters   = {gal_id: 0  for gal_id in galaxies}
+    frag_radius = frag_radius_factor * match_radius
+
     for snap_idx, catalog_path in enumerate(catalog_paths):
         print(f"Processing snapshot {snap_idx}: {catalog_path}")
         t_start = time.time()
@@ -344,7 +378,7 @@ def process_galaxies_with_tracks(
             if main_mass == 0:
                 continue
 
-            main_pos    = pos[main_index]
+            main_pos      = pos[main_index]
             search_radius = search_radius_factor * rhalf[main_index] * rhalf_unit_factor
 
             # Minimum-image convention for periodic boundary conditions
@@ -360,14 +394,77 @@ def process_galaxies_with_tracks(
                     & (smass > mass_threshold)
                     & (dist < search_radius))
 
-            for i in np.where(mask)[0]:
+            candidate_indices = np.where(mask)[0]
+            active = active_companions[gal_id]
+
+            # ── cross-snapshot positional matching ────────────────────────
+            # For each candidate in this snapshot, find the nearest active
+            # companion (from the previous snapshot) by minimum-image distance.
+            # Matches within match_radius are continuations of the same physical
+            # object; everything else is a first entry into the search sphere.
+            matched_active_ids = set()
+            new_entries = []
+
+            for i in candidate_indices:
+                comp_pos   = pos[i]
+                mass_ratio = min(smass[i], main_mass) / max(smass[i], main_mass)
+
+                best_id   = None
+                best_dist = np.inf
+                for ac_id, ac in active.items():
+                    adx = comp_pos[0] - ac['pos'][0]
+                    ady = comp_pos[1] - ac['pos'][1]
+                    adz = comp_pos[2] - ac['pos'][2]
+                    adx -= box_size * np.round(adx / box_size)
+                    ady -= box_size * np.round(ady / box_size)
+                    adz -= box_size * np.round(adz / box_size)
+                    d = np.sqrt(adx**2 + ady**2 + adz**2)
+                    if d < best_dist:
+                        best_dist = d
+                        best_id   = ac_id
+
+                if best_id is not None and best_dist < match_radius:
+                    # Continuation — update tracked position and mass ratio
+                    matched_active_ids.add(best_id)
+                    active[best_id]['pos']        = comp_pos.copy()
+                    active[best_id]['mass_ratio'] = mass_ratio
+                else:
+                    new_entries.append((i, comp_pos, mass_ratio))
+
+            # Expire companions that left the sphere or were absorbed
+            for ac_id in [k for k in active if k not in matched_active_ids]:
+                del active[ac_id]
+
+            # ── first-entry and fragmentation detection ───────────────────
+            # A new companion appearing within frag_radius of an already-active
+            # companion that has a higher mass ratio is likely a tidal fragment
+            # produced when FoF splits the infalling object — not a new merger.
+            for i, comp_pos, mass_ratio in new_entries:
+                is_fragment = False
+                for ac in active.values():
+                    adx = comp_pos[0] - ac['pos'][0]
+                    ady = comp_pos[1] - ac['pos'][1]
+                    adz = comp_pos[2] - ac['pos'][2]
+                    adx -= box_size * np.round(adx / box_size)
+                    ady -= box_size * np.round(ady / box_size)
+                    adz -= box_size * np.round(adz / box_size)
+                    if (np.sqrt(adx**2 + ady**2 + adz**2) < frag_radius
+                            and ac['mass_ratio'] > mass_ratio):
+                        is_fragment = True
+                        break
+
+                active_counters[gal_id] += 1
+                new_id = active_counters[gal_id]
+                active[new_id] = {'pos': comp_pos.copy(), 'mass_ratio': mass_ratio}
+
                 progenitor = Progenitor(
-                    mass=smass[i] / main_mass,
-                    x=pos[i, 0],
-                    y=pos[i, 1],
-                    z=pos[i, 2],
+                    mass=mass_ratio,
+                    cat_index=int(i),
+                    x=comp_pos[0],
+                    y=comp_pos[1],
+                    z=comp_pos[2],
                     merger=1,
-                    fragmentation=0,
+                    fragmentation=int(is_fragment),
                     snapshot=snap_idx,
                     distance=dist[i],
                     processed=1,
@@ -376,10 +473,11 @@ def process_galaxies_with_tracks(
                 )
                 galaxy.add_progenitor(progenitor)
 
-            if snap_idx == 0:
-                galaxy.update_position(*main_pos)
-                galaxy.update_mass(main_mass)
-                galaxy.update_radii_stellar_half_mass(rhalf[main_index])
+            # Stored values reflect the last valid (lowest-z) snapshot since
+            # catalog_paths is sorted ascending.
+            galaxy.update_position(*main_pos)
+            galaxy.update_mass(main_mass)
+            galaxy.update_radii_stellar_half_mass(rhalf[main_index])
 
         t_end = time.time()
         print(f"Finished snapshot {snap_idx} in {t_end - t_start:.2f} sec")
@@ -388,7 +486,11 @@ def process_galaxies_with_tracks(
 
 
 def analyze_mergers(galaxies, array_size, mass_threshold_maj, mass_threshold_min):
-    """Classify recorded merger candidates into major and minor merger counts.
+    """Classify recorded merger companions into major and minor merger counts.
+
+    Only first-entry companions (``fragmentation == 0``) are counted.
+    Tidal fragments flagged by :func:`process_galaxies_with_tracks` are skipped
+    so that a single infalling object split by FoF is not counted multiple times.
 
     Parameters
     ----------
@@ -399,38 +501,27 @@ def analyze_mergers(galaxies, array_size, mass_threshold_maj, mass_threshold_min
     mass_threshold_maj : float
         Mass ratio above which a merger is classified as major (e.g. 0.25).
     mass_threshold_min : float
-        Minimum mass ratio for a minor merger (e.g. 0.10). Candidates below
+        Minimum mass ratio for a minor merger (e.g. 0.10). Companions below
         this threshold are ignored.
 
     Returns
     -------
     major_mergers, minor_mergers : ndarray of int, shape *array_size*
-        Per-snapshot, per-galaxy merger counts.
+        Per-snapshot, per-galaxy counts — one entry per companion approach.
     """
     major_mergers = np.zeros(array_size, dtype=int)
     minor_mergers = np.zeros(array_size, dtype=int)
 
     for col, (galaxy_id, galaxy) in enumerate(galaxies.items()):
-        progs = galaxy._progenitors
-        for progenitor in progs.values():
-            if progenitor.merger != 1:
+        for progenitor in galaxy._progenitors.values():
+            if progenitor.merger != 1 or progenitor.fragmentation == 1:
                 continue
             row = int(progenitor.snapshot)
-            if progenitor.fragmentation == 0:
-                if progenitor.mass >= mass_threshold_maj:
-                    major_mergers[row, col] += 1
-                elif progenitor.mass >= mass_threshold_min:
-                    minor_mergers[row, col] += 1
-            elif progenitor.fragmentation == 1:
-                same_snap = [
-                    p for p in progs.values()
-                    if p.snapshot == progenitor.snapshot
-                    and p.merger == 1
-                    and p.fragmentation == 1
-                ]
-                if len(same_snap) > 1:
-                    major_mergers[row, col] += 1
-                else:
-                    minor_mergers[row, col] += 1
+            if row >= array_size[0]:
+                continue
+            if progenitor.mass >= mass_threshold_maj:
+                major_mergers[row, col] += 1
+            elif progenitor.mass >= mass_threshold_min:
+                minor_mergers[row, col] += 1
 
     return major_mergers, minor_mergers
