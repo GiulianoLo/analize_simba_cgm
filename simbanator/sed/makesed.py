@@ -155,7 +155,12 @@ class MakeSED:
             data_dict[snap]['halo_GroupID'].extend(hidx[ids_for_snap])
             data_dict[snap]['code_coods'].extend(coods_code[ids_for_snap])
 
+        current_groups = {f'snap{s:03}' for s in grouped_ids}
         with h5py.File(filepath, 'a') as hf:
+            stale = [g for g in list(hf.keys()) if g not in current_groups]
+            for g in stale:
+                del hf[g]
+                warnings.warn(f"Removed stale selection group '{g}' not present in current snaps.")
             for snap, data in data_dict.items():
                 grp = f'snap{snap:03}'
                 if grp in hf:
@@ -277,9 +282,10 @@ class MakeSED:
                 os.makedirs(os.path.join(model_dir, 'err'), exist_ok=True)
 
                 if not os.path.isdir(hydro_dir):
-                    raise FileNotFoundError(
-                        f"Filtered snapshot folder not found for snap {snap:03}. "
-                        f"Looked under base: {self.hydro_dir_base}"
+                    warnings.warn(
+                        f"Filtered snapshot folder not found for snap {snap:03d} "
+                        f"(looked under {self.hydro_dir_base}); job files will still be "
+                        f"written but the SLURM job will fail at runtime."
                     )
 
                 redshift = self.sb.get_z_from_snap(snap)
