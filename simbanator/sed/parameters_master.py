@@ -82,7 +82,7 @@ use_cloudy_tables = True
 # ===============================================
 # BIRTH CLOUD INFORMATION
 # ===============================================
-CF_on = True
+CF_on = False
 birth_cloud_clearing_age = 0.01  # Gyr
 
 # ===============================================
