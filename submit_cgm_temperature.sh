@@ -10,7 +10,7 @@
 #SBATCH --array=0-15
 
 # --- environment ---
-source ~/.bashrc
+source /mnt/home/glorenzon/miniconda3/etc/profile.d/conda.sh
 conda activate pd39
 
 # --- go to working directory ---
