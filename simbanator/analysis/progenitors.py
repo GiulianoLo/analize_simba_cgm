@@ -49,7 +49,11 @@ def caesar_read_progen(ids, outname, snaplist, sb, output_dir=None):
             allids = allids[mask]
         progenid_dict[i] = np.column_stack((allids, progenid))
 
-    base_snapshot = np.sort(snaplist)[0]
+    # Anchor at the LATEST snapshot (START_SNAP) — the epoch where the input `ids`
+    # are defined and from which get_history_indx traces backward. Using the lowest
+    # snapshot here keyed the table at END_SNAP (high z), collapsing the sample to
+    # galaxies that already existed then (massive only; the low-mass end was missing).
+    base_snapshot = np.sort(snaplist)[-1]
     base_data = progenid_dict[base_snapshot]
     base_groupids = base_data[:, 0]
 
