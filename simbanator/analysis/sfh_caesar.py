@@ -137,57 +137,50 @@ class HDF5BuildHistory:
     # ── Progenitor index read ────────────────────────────────────────
 
     def get_history_indx(self, ids, start_snap, end_snap):
-        """Retrieve progenitor index chains for *ids* from start_snap to end_snap.
+        """Trace each galaxy's most-massive-progenitor catalog index backward.
 
-        Traverses backward using the progenitor FITS file.
+        ``ids`` are catalog galaxy indices at ``start_snap`` (the GroupID == the
+        position in galaxy_data at that snapshot). At each snapshot the chain
+        steps through ``tree_data/progen_galaxy_star[:, 0]`` directly from the
+        Caesar file: that array gives, for every galaxy at snapshot ``s``, the
+        catalog index of its most-massive progenitor at snapshot ``s - 1``.
+
+        Returns ``{snap_str: array}`` where each array holds the tracked
+        galaxies' catalog index at that snapshot (NaN once the progenitor chain
+        ends, or beyond an unreadable snapshot). Snapshots are assumed
+        consecutive. This reads the catalogs directly and does NOT use the
+        progenitor FITS — earlier versions keyed that table at the wrong
+        snapshot and conflated GroupID / FITS-row / catalog-index, which made a
+        fraction of chains follow unrelated galaxies (spatial teleports).
         """
         ids = np.atleast_1d(ids)
         self.galaxy_ids = np.asarray(ids, dtype=np.int64)
-        with fits.open(self.progen_file) as hdul:
-            data = hdul[1].data
-            id_column = np.asarray(data['GroupID'])
-            col_names = hdul[1].columns.names
+        n_gal = len(self.galaxy_ids)
 
-            # Build lookup: GroupID -> row index
-            id_lookup = {int(gid): idx for idx, gid in enumerate(id_column)}
-            missing = [int(i) for i in ids if int(i) not in id_lookup]
-            if missing:
-                raise ValueError(f"GroupIDs not found in progen file: {missing}")
+        snaps = list(range(int(start_snap), int(end_snap) - 1, -1))
+        indices = np.full((len(snaps), n_gal), np.nan, dtype=float)
+        indices[0, :] = self.galaxy_ids.astype(float)   # catalog indices at start_snap
 
-            # Starting row indices in FITS for the input GroupIDs
-            current_idx = np.array([id_lookup[int(i)] for i in ids])
-            n_gal = len(ids)
+        for i in range(1, len(snaps)):
+            s_from = snaps[i - 1]                        # progen @ s_from -> index @ (s_from - 1) == snaps[i]
+            try:
+                with h5py.File(self.sb.get_caesar_file(int(s_from)), 'r') as hf:
+                    progen = np.asarray(hf['tree_data']['progen_galaxy_star'][:, 0],
+                                        dtype=np.int64)
+            except (OSError, KeyError):
+                break                                    # unreadable link -> remaining snapshots stay NaN
 
-            # Snapshots in backward order
-            snaps = [str(snap) for snap in range(start_snap, end_snap - 1, -1)]
-            n_snaps = len(snaps)
+            prev = indices[i - 1, :]
+            ok = np.isfinite(prev)
+            pj = prev[ok].astype(np.int64)
+            good = (pj >= 0) & (pj < len(progen))
+            nxt = np.full(pj.shape, -1, dtype=np.int64)
+            nxt[good] = progen[pj[good]]
+            col = np.full(n_gal, np.nan)
+            col[np.where(ok)[0]] = np.where(nxt >= 0, nxt, np.nan)
+            indices[i, :] = col
 
-            # Initialize output array
-            indices = np.full((n_snaps, n_gal), np.nan, dtype=float)
-            
-            # Start with the input GroupIDs (these are row indices for start_snap)
-            indices[0, :] = current_idx
-
-            # Follow progenitor chain
-            for i in range(1, n_snaps):
-                prev_idx = indices[i - 1, :]
-                col_snap = snaps[i - 1]
-                for j in range(n_gal):
-                    if np.isnan(prev_idx[j]):
-                        indices[i, j] = np.nan
-                    else:
-                        idx = int(prev_idx[j])
-                        if 0 <= idx < len(data):
-                            val = data[col_snap][idx]
-                            indices[i, j] = val if val >= 0 else np.nan
-                        else:
-                            indices[i, j] = np.nan
-
-            # Build dict mapping snapshot string -> indices
-            self.history_indx = {snap: indices[i, :] for i, snap in enumerate(snaps)}
-            # for snap, ind in self.history_indx.items():
-            #     print(snap, ind)
-
+        self.history_indx = {str(snaps[i]): indices[i, :] for i in range(len(snaps))}
         return self.history_indx
     # ── Property read ────────────────────────────────────────────────
 
