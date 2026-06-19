@@ -98,11 +98,14 @@ def make_profiler(rmax, nbins):
                 return np.nan
             return float(Rarr[o][np.searchsorted(c, frac * c[-1])])
 
-        return dict(
-            sigma_dust=_sig(R, gdust), sigma_HI=_sig(R, gHI), sigma_H2=_sig(R, gH2), sigma_star=_sig(Rs, smass),
-            R50_dust=_renc(R, gdust, 0.5), R90_dust=_renc(R, gdust, 0.9),
-            R50_HI=_renc(R, gHI, 0.5), R50_H2=_renc(R, gH2, 0.5), R50_star=_renc(Rs, smass, 0.5),
-        )
+        comps = {"dust": (R, gdust), "HI": (R, gHI), "H2": (R, gH2), "star": (Rs, smass)}
+        out = {f"sigma_{c}": _sig(Ra, m) for c, (Ra, m) in comps.items()}
+        for c, (Ra, m) in comps.items():           # exact percentile radii (no binning)
+            out[f"R20_{c}"] = _renc(Ra, m, 0.2)
+            out[f"R50_{c}"] = _renc(Ra, m, 0.5)
+            out[f"R80_{c}"] = _renc(Ra, m, 0.8)
+        out["R90_dust"] = _renc(R, gdust, 0.9)
+        return out
 
     return _profile_one, rmid
 
@@ -181,7 +184,8 @@ def main():
         out.create_dataset("ri", data=np.array([r["ri"] for r in results], np.int32))
         out.create_dataset("si", data=np.array([r["si"] for r in results], np.int32))
         for c in ("dust", "HI", "H2", "star"):
-            out.create_dataset(f"R50_{c}", data=np.array([r[f"R50_{c}"] for r in results], np.float64))
+            for q in ("R20", "R50", "R80"):
+                out.create_dataset(f"{q}_{c}", data=np.array([r[f"{q}_{c}"] for r in results], np.float64))
         out.create_dataset("R90_dust", data=np.array([r["R90_dust"] for r in results], np.float64))
         if store_sigma:
             for c in ("dust", "HI", "H2", "star"):

@@ -31,6 +31,8 @@ def main():
     rmid = 0.5 * (edges[:-1] + edges[1:])
 
     R50 = {c: np.full((nrec, nst), np.nan) for c in ("dust", "HI", "H2", "star")}
+    R20 = {c: np.full((nrec, nst), np.nan) for c in ("dust", "HI", "H2", "star")}
+    R80 = {c: np.full((nrec, nst), np.nan) for c in ("dust", "HI", "H2", "star")}
     R90 = np.full((nrec, nst), np.nan)
     SIG = {c: np.full((nrec, nst, nbins), np.nan) for c in ("dust", "HI", "H2", "star")} if store_sigma else None
 
@@ -44,6 +46,9 @@ def main():
             tot += len(ri)
             for c in ("dust", "HI", "H2", "star"):
                 R50[c][ri, si] = f[f"R50_{c}"][:]
+                for q, D in (("R20", R20), ("R80", R80)):      # present once the job is rebuilt
+                    if f"{q}_{c}" in f:
+                        D[c][ri, si] = f[f"{q}_{c}"][:]
             R90[ri, si] = f["R90_dust"][:]
             if store_sigma and "sigma_dust" in f:
                 for c in ("dust", "HI", "H2", "star"):
@@ -54,7 +59,9 @@ def main():
         out.create_dataset("gid", data=gid)
         out.attrs["stages"] = stages
         for c in ("dust", "HI", "H2", "star"):
+            out.create_dataset(f"R20_{c}", data=R20[c])
             out.create_dataset(f"R50_{c}", data=R50[c])
+            out.create_dataset(f"R80_{c}", data=R80[c])
         out.create_dataset("R90_dust", data=R90)
         if store_sigma:
             for c in ("dust", "HI", "H2", "star"):
