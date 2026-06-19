@@ -96,7 +96,7 @@ def _temperature(u_code, ne, XH):
 
 def _make_bins(rmax, nbins):
     edges = np.linspace(0.0, rmax, nbins + 1)
-    return edges, 0.5 * (edges[:-1] + edges[1:]), np.pi * (edges[1:] ** 2 - edges[:-1] ** 2)
+    return edges, 0.5 * (edges[:-1] + edges[1:]), np.pi * (edges[1:] ** 2 - edges[:-1] ** 2), nbins
 
 
 def _renc(R, mass, frac):
