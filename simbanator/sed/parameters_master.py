@@ -29,7 +29,7 @@ n_MPI_processes = 12
 n_photons_initial = 1.e7
 n_photons_imaging = 1.e7
 n_photons_raytracing_sources = 1.e7
-n_photons_raytracing_dust = 1
+n_photons_raytracing_dust = 1.e7   # full dust radiative transfer
 n_photons_DIG = 1e7
 
 FORCE_RANDOM_SEED = False
@@ -42,8 +42,8 @@ dustdir = os.path.join(root, 'hyperion-dust', 'dust_files') + '/'
 dustfile = 'kmh94_3.1_hg.hdf5'
 PAH = True
 
-dust_grid_type = 'dtm'       # 'dtm', 'rr', or 'manual'
-dusttometals_ratio = 1e-12
+dust_grid_type = 'manual'    # 'manual' -> use SIMBA live dust masses from the snapshot
+dusttometals_ratio = 0.4   # unused under 'manual' (kept at the simulation/reference value)
 enforce_energy_range = False
 
 SUBLIMATION = False

@@ -630,6 +630,8 @@ class MakeSED:
 
         all_tables = []
         xmean_rows = []
+        missing_sed = []   # (snap, gal): no .rtout.sed file on disk
+        failed_read = []   # (snap, gal, error): file present but ModelOutput/get_sed raised
 
         unique_snaps = np.unique(snaps)
 
@@ -661,6 +663,7 @@ class MakeSED:
 
                 if not os.path.isfile(run):
                     warnings.warn(f"[Missing SED] snap={snap:03}, gal={gal:06} → {run}")
+                    missing_sed.append((int(snap), int(gal)))
                     continue
 
                 try:
@@ -668,6 +671,7 @@ class MakeSED:
                     wav_raw, flux_raw = m.get_sed(inclination='all', aperture=-1)
                 except Exception as e:
                     warnings.warn(f"[SED read error] snap={snap:03}, gal={gal:06} → {e}")
+                    failed_read.append((int(snap), int(gal), str(e)))
                     continue
 
                 wav, flux = _sed_to_mJy(wav_raw, flux_raw, z, apply_redshift=redshift)
@@ -714,5 +718,32 @@ class MakeSED:
 
         final_table.write(flux_file, overwrite=True)
         Table(xmean_rows).write(xmean_file, overwrite=True)
+
+        # --- dropped-source summary -------------------------------------------
+        # A galaxy is in the output only if its .rtout.sed exists AND reads cleanly;
+        # report every (snap, gal) that was requested but skipped so a count
+        # mismatch between runs (e.g. dust vs no-dust) is never silent.
+        n_req = len(snaps)
+        n_out = len(final_table)
+        n_drop = len(missing_sed) + len(failed_read)
+        print(f"[extract_flux_batch] run_tag='{self.run_tag}': "
+              f"requested={n_req}, written={n_out}, dropped={n_drop} "
+              f"({len(missing_sed)} missing SED, {len(failed_read)} read errors)")
+        missing_file = os.path.join(outdir, 'missing_sources.txt')
+        if n_drop:
+            print(f"[extract_flux_batch] dropped sources -> {missing_file}")
+            for snap, gal in missing_sed:
+                print(f"    missing SED  : snap={snap:03}, gal={gal:06}")
+            for snap, gal, err in failed_read:
+                print(f"    read error   : snap={snap:03}, gal={gal:06} ({err})")
+            with open(missing_file, 'w') as mf:
+                mf.write("# sources requested but absent from the flux table\n")
+                mf.write("# reason\tsnap\tgal\tdetail\n")
+                for snap, gal in missing_sed:
+                    mf.write(f"missing_sed\t{snap}\t{gal}\t\n")
+                for snap, gal, err in failed_read:
+                    mf.write(f"read_error\t{snap}\t{gal}\t{err}\n")
+        elif os.path.exists(missing_file):
+            os.remove(missing_file)   # clean run -> drop any stale report
 
         return flux_file, xmean_file
