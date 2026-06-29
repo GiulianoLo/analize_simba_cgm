@@ -28,6 +28,11 @@ Component masses (dust/HI/H2) are precomputed per particle with the same recipe 
 so only the minimal columns needed for Σ are stored. Bin them face-on (project onto evecs, R=√(x'²+y'²))
 or in 3D (r=‖pos‖); split ISM vs CGM with sfr>0 / sfr==0; choose any aperture — all in the notebook.
 
+Files are keyed globally by (snapshot, galaxy id), so running this per anchor is naturally
+idempotent: a galaxy already extracted for one anchor is skipped (before any particle load) when
+it recurs in another anchor's plan — no recompute, and every existing file still feeds the stats.
+Set REDUCED_OVERWRITE=1 to force re-extraction.
+
 Env: DUST_PLAN (plan, shared with build_profiles_job), REDUCED_RMAX_KPC (default 100),
      REDUCED_PREFIX (default 'm100n1024'), REDUCED_OVERWRITE (default 0).
 """
@@ -152,8 +157,13 @@ def process_snapshot(sim, snap, gxs):
     return out
 
 
+def _outname(snap, gx):
+    """Per-galaxy output filename (snap, gx) — the global dedup key shared across anchors."""
+    return f"{PREFIX}_snap{int(snap):03d}_gal{int(gx):06d}.h5"
+
+
 def _write(rec, snap, out_dir):
-    fpath = os.path.join(out_dir, f"{PREFIX}_snap{snap:03d}_gal{rec['gx']:06d}.h5")
+    fpath = os.path.join(out_dir, _outname(snap, rec["gx"]))
     if os.path.exists(fpath) and not OVERWRITE:
         return fpath, True
     with h5py.File(fpath, "w") as o:
@@ -201,6 +211,16 @@ def main():
         gxs = np.unique(gx[snap == sn]).astype(np.int64).tolist()   # one file per (snap, galaxy)
         out_dir = os.path.join(out_root, f"snap_{sn:03d}")
         os.makedirs(out_dir, exist_ok=True)
+        # dedup: skip galaxies whose reduced file already exists (e.g. extracted for another anchor)
+        # BEFORE the heavy particle load — lossless, the existing file still feeds the statistics.
+        n_plan = len(gxs)
+        if not OVERWRITE:
+            gxs = [g for g in gxs if not os.path.exists(os.path.join(out_dir, _outname(sn, g)))]
+        n_skipped += n_plan - len(gxs)
+        if not gxs:
+            print(f"  [task {task_id}] {k + 1}/{len(my_snaps)} snap {sn}: "
+                  f"all {n_plan} galaxies already present -> skipped (total skipped {n_skipped})", flush=True)
+            continue
         try:
             recs = process_snapshot(sim, sn, gxs)
         except OSError as e:
@@ -210,7 +230,7 @@ def main():
             _, existed = _write(rec, sn, out_dir)
             n_written += (not existed); n_skipped += existed
         print(f"  [task {task_id}] {k + 1}/{len(my_snaps)} snap {sn}: "
-              f"{len(recs)} galaxies ({n_written} written, {n_skipped} skipped so far)", flush=True)
+              f"{len(gxs)} new of {n_plan} planned ({n_written} written, {n_skipped} skipped so far)", flush=True)
 
     print(f"[task {task_id}] done: {n_written} written, {n_skipped} pre-existing -> {out_root}", flush=True)
 
