@@ -246,7 +246,11 @@ class HDF5BuildHistory:
                     if family == 'halo_data':
                         parent_path = 'galaxy_data/parent_halo_index'
                         if parent_path not in f:
-                            raise KeyError(f'{parent_path} not found in {h5path}')
+                            # no galaxy->halo map at this (early) snapshot -> halo props are NaN here
+                            for propr in properties:
+                                _o = np.full(len(galaxy_idx), np.nan)
+                                propr_out[propr].append(_o[0] if scalar_index else _o)
+                            continue
                         parent_halo = np.asarray(f[parent_path][:], dtype=np.int64)
                         # Map only valid galaxy indices to their parent halos
                         idx = parent_halo[galaxy_idx_valid]
