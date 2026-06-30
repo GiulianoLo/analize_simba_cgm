@@ -42,12 +42,16 @@ def caesar_read_progen(ids, outname, snaplist, sb, output_dir=None):
         del cs
         gc.collect()
 
-        with h5py.File(fname, 'r') as hf:
-            progenid = np.asarray(hf['tree_data']['progen_galaxy_star'])[:, 0]
-            mask = progenid != -1
-            progenid = progenid[mask]
-            allids = allids[mask]
-        progenid_dict[i] = np.column_stack((allids, progenid))
+        try:
+            with h5py.File(fname, 'r') as hf:
+                progenid = np.asarray(hf['tree_data']['progen_galaxy_star'])[:, 0]
+        except (KeyError, OSError):
+            # no merger tree at this snapshot (e.g. the earliest epoch — no previous galaxies
+            # in the volume). Treat as "no progenitors here" and carry on.
+            progenid_dict[i] = np.empty((0, 2), dtype=int)
+            continue
+        mask = progenid != -1
+        progenid_dict[i] = np.column_stack((allids[mask], progenid[mask]))
 
     # Anchor at the LATEST snapshot (START_SNAP) — the epoch where the input `ids`
     # are defined and from which get_history_indx traces backward. Using the lowest
@@ -62,6 +66,8 @@ def caesar_read_progen(ids, outname, snaplist, sb, output_dir=None):
 
     for i, snap in enumerate(np.sort(snaplist)):
         snap_data = progenid_dict[snap]
+        if snap_data.size == 0:                          # snapshot had no merger tree -> leave -1 (no progenitor)
+            continue
         snap_ids = snap_data[:, 0]
         snap_progens = snap_data[:, 1]
         # O(N log N) vectorised lookup via searchsorted
