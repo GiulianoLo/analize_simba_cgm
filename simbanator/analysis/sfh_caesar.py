@@ -282,7 +282,13 @@ class HDF5BuildHistory:
                         propr_out[propr].append(out)
 
         for propr in propr_out:
-            propr_out[propr] = np.asarray(propr_out[propr])
+            entries = propr_out[propr]
+            shapes = {np.shape(e) for e in entries}
+            if len(shapes) > 1:                          # NaN placeholders (missing-epoch) vs real arrays
+                target = max((np.shape(e) for e in entries),
+                             key=lambda sh: (len(sh), int(np.prod(sh)) if sh else 0))
+                entries = [e if np.shape(e) == target else np.full(target, np.nan) for e in entries]
+            propr_out[propr] = np.asarray(entries)
 
         redshift = {
             'Redshift': np.asarray(redshiftl),
