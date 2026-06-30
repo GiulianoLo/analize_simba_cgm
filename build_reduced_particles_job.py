@@ -21,17 +21,19 @@ build_profiles_job.py) it writes ONE lean HDF5 per galaxy:
   output/<sim>/reduced_particles/snap_NNN/<prefix>_snap<NNN>_gal<GX>.h5
     attrs : sim_name, snap, gx, redshift, a, hub, box_kpc, rmax_kpc,
             center_kpc(3), evecs(3,3)              # stellar principal frame, for face-on projection
-    gas/  : pos(n,3) [kpc, RELATIVE to centre], m_gas, m_dust, m_HI, m_H2, sfr   [Msun, Msun/yr]
+    gas/  : pos(n,3) [kpc, RELATIVE to centre], m_gas, m_dust, m_HI, m_H2, sfr, temp [Msun, Msun/yr, K]
     star/ : pos(m,3) [kpc, relative], m_star                                     [Msun]
 
-Component masses (dust/HI/H2) are precomputed per particle with the same recipe as the profile job,
+Component masses (dust/HI/H2) and the per-particle temperature (same recipe as the profile job's
+_temperature) are precomputed,
 so only the minimal columns needed for Σ are stored. Bin them face-on (project onto evecs, R=√(x'²+y'²))
 or in 3D (r=‖pos‖); split ISM vs CGM with sfr>0 / sfr==0; choose any aperture — all in the notebook.
 
 Files are keyed globally by (snapshot, galaxy id), so running this per anchor is naturally
 idempotent: a galaxy already extracted for one anchor is skipped (before any particle load) when
 it recurs in another anchor's plan — no recompute, and every existing file still feeds the stats.
-Set REDUCED_OVERWRITE=1 to force re-extraction.
+A file is "done" only if it already carries `temp`, so re-running this updated job fills temperature
+into older (pre-temperature) files without re-extracting the rest. REDUCED_OVERWRITE=1 forces all.
 
 Env: DUST_PLAN (plan, shared with build_profiles_job), REDUCED_RMAX_KPC (default 100),
      REDUCED_PREFIX (default 'm100n1024'), REDUCED_OVERWRITE (default 0).
@@ -44,7 +46,8 @@ import h5py
 from simbanator.io.simba import Simulation
 from simbanator.utils.geometry import shrink_center, principal_axes
 # reuse the EXACT unit/field recipes the profile job is validated against
-from build_profiles_job import header_units, _to_kpc, _to_msun, _detect, _components, _halo_of
+from build_profiles_job import (header_units, _to_kpc, _to_msun, _detect, _components, _halo_of,
+                                _temperature, _XH)
 
 PLAN_PATH = os.environ.get(
     "DUST_PLAN", os.path.join("output", "cis100", "caesar_sfh", "dust_profile_plan.hdf5"))
@@ -135,12 +138,22 @@ def process_snapshot(sim, snap, gxs):
                         g[fld["fmol"]][kg] if fld["fmol"] else None)
                     sfr = (np.asarray(g[fld["sfr"]][kg], float) if fld["sfr"]
                            else np.zeros(len(kg)))
+                    # per-particle temperature [K] — same recipe as build_profiles_job
+                    Zc = g[fld["Z"]][kg] if fld["Z"] else None
+                    if fld["Tdir"]:
+                        T = np.asarray(g[fld["Tdir"]][kg], np.float64)
+                    elif fld["u"] and fld["ne"]:
+                        T = _temperature(np.asarray(g[fld["u"]][kg], np.float64),
+                                         np.asarray(g[fld["ne"]][kg], np.float64), _XH(Zc, len(kg)))
+                    else:
+                        T = np.full(len(kg), np.nan)
                     rec["gas_pos"] = d[keep].astype(np.float32)
                     rec["m_gas"] = mgas.astype(np.float32)
                     rec["m_dust"] = np.asarray(m_dust, np.float32)
                     rec["m_HI"] = np.asarray(m_HI, np.float32)
                     rec["m_H2"] = np.asarray(m_H2, np.float32)
                     rec["sfr"] = sfr.astype(np.float32)
+                    rec["temp"] = T.astype(np.float32)
 
             # stars inside the aperture
             if s is not None and len(cand_s):
@@ -162,9 +175,21 @@ def _outname(snap, gx):
     return f"{PREFIX}_snap{int(snap):03d}_gal{int(gx):06d}.h5"
 
 
+def _file_complete(path):
+    """A reduced file counts as done only if it exists AND already carries the temperature field,
+    so re-running fills `temp` into older (pre-temperature) files without overwriting good ones."""
+    if not os.path.exists(path):
+        return False
+    try:
+        with h5py.File(path, "r") as f:
+            return ("gas" not in f) or ("temp" in f["gas"])
+    except OSError:
+        return False
+
+
 def _write(rec, snap, out_dir):
     fpath = os.path.join(out_dir, _outname(snap, rec["gx"]))
-    if os.path.exists(fpath) and not OVERWRITE:
+    if _file_complete(fpath) and not OVERWRITE:
         return fpath, True
     with h5py.File(fpath, "w") as o:
         o.attrs["sim_name"] = PREFIX
@@ -178,7 +203,7 @@ def _write(rec, snap, out_dir):
         o.attrs["evecs"] = rec["evecs"]
         gg = o.create_group("gas")
         for k, ds in (("pos", "gas_pos"), ("m_gas", "m_gas"), ("m_dust", "m_dust"),
-                      ("m_HI", "m_HI"), ("m_H2", "m_H2"), ("sfr", "sfr")):
+                      ("m_HI", "m_HI"), ("m_H2", "m_H2"), ("sfr", "sfr"), ("temp", "temp")):
             if ds in rec:
                 gg.create_dataset(k, data=rec[ds], compression="gzip")
         ss = o.create_group("star")
@@ -215,7 +240,7 @@ def main():
         # BEFORE the heavy particle load — lossless, the existing file still feeds the statistics.
         n_plan = len(gxs)
         if not OVERWRITE:
-            gxs = [g for g in gxs if not os.path.exists(os.path.join(out_dir, _outname(sn, g)))]
+            gxs = [g for g in gxs if not _file_complete(os.path.join(out_dir, _outname(sn, g)))]
         n_skipped += n_plan - len(gxs)
         if not gxs:
             print(f"  [task {task_id}] {k + 1}/{len(my_snaps)} snap {sn}: "
