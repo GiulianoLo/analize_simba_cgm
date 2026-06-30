@@ -260,9 +260,11 @@ class HDF5BuildHistory:
                     for propr in properties:
                         ds_path = _resolve_h5_path(family, propr)
                         if ds_path not in f:
-                            raise KeyError(
-                                f'Dataset {ds_path} not found in {h5path}.'
-                            )
+                            # dataset absent at this (early) snapshot -> NaN here, but keep the
+                            # property (don't drop it everywhere just because one epoch lacks it)
+                            _o = np.full(len(galaxy_idx), np.nan)
+                            propr_out[propr].append(_o[0] if scalar_index else _o)
+                            continue
 
                         valid_values = _read_h5_property(f, ds_path, idx)
 
