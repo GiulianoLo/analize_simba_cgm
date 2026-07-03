@@ -52,8 +52,19 @@ Files are keyed globally by (snapshot, galaxy id), so running this per anchor is
 idempotent: a galaxy already complete for one anchor is skipped (before any load) when it recurs in
 another anchor's plan.
 
+Performance
+-----------
+All snapshot I/O is batched per snapshot: a catalog pass collects every planned galaxy's candidate
+indices (halo lists cached across galaxies sharing a halo), then each needed snapshot column is
+slab-streamed ONCE at the sorted union of all candidates (sequential reads at disk bandwidth; slabs
+holding no wanted row are skipped) and galaxies are served by in-memory slicing. This replaces the
+per-galaxy-per-field h5py fancy reads that dominated the old runtime. Datasets are lzf-compressed
+(much faster than gzip to write AND to read back in the notebook cache build; h5py reads both
+transparently, so old gzip files coexist).
+
 Env: DUST_PLAN (plan, shared with build_profiles_job), REDUCED_RMAX_KPC (default 100),
-     REDUCED_PREFIX (default 'm100n1024'), REDUCED_OVERWRITE (default 0).
+     REDUCED_PREFIX (default 'm100n1024'), REDUCED_OVERWRITE (default 0),
+     REDUCED_GATHER_MB (slab budget per streamed read, default 256).
 """
 import os
 import gc
@@ -105,47 +116,85 @@ def _frame(spos, smass, gpos):
     return center, evecs
 
 
-# ── field producers: fn(ctx, idx) -> {dataset_name: array} for the given global indices ───────────
-# A producer may return several datasets at once (e.g. the H/dust/H2 split shares one mass read); the
-# caller keeps only the ones it asked for. `ctx` bundles the open snapshot part-groups + the catalog
-# galaxy + units, so a producer reads exactly what it needs at `idx` (fancy-indexed) and nothing else.
-class _Ctx:
-    __slots__ = ("g", "s", "gal", "a", "hub", "fld")
+# ── snapshot column store + field producers ───────────────────────────────────────────────────────
+# h5py fancy indexing with >~1e5 scattered indices on a compressed 1e9-row dataset is pathologically
+# slow (each galaxy triggers a huge hyperslab selection and re-decompresses chunks its neighbours
+# already touched). Instead, every column is gathered ONCE per snapshot at the sorted union of ALL
+# candidate indices via sequential slab streaming (disk-bandwidth reads; slabs holding no wanted row
+# are skipped entirely), and each galaxy is then served by in-memory slicing.
+GATHER_MB = float(os.environ.get("REDUCED_GATHER_MB", 256))  # slab budget per read [MB]
 
-    def __init__(self, g, s, gal, a, hub, fld):
-        self.g, self.s, self.gal, self.a, self.hub, self.fld = g, s, gal, a, hub, fld
+
+def _gather(dset, uidx):
+    """dset[uidx] (uidx sorted unique int64) via sequential slab streaming."""
+    rowbytes = max(int(np.prod(dset.shape[1:], dtype=int)), 1) * dset.dtype.itemsize
+    slab = max(int(GATHER_MB * 1e6 // rowbytes), 1_000_000)
+    out = np.empty((len(uidx),) + dset.shape[1:], dset.dtype)
+    n, j0 = dset.shape[0], 0
+    while j0 < len(uidx):
+        start = (int(uidx[j0]) // slab) * slab                 # jump straight to the next needed slab
+        stop = min(start + slab, n)
+        j1 = np.searchsorted(uidx, stop, side="left")
+        block = dset[start:stop]
+        out[j0:j1] = block[uidx[j0:j1] - start]
+        del block
+        j0 = j1
+    return out
+
+
+class _Ctx:
+    """Per-snapshot context: lazy union-gathered snapshot columns + per-galaxy catalog object + units.
+    `take(part, name, idx)` returns column values at global indices idx (idx ⊆ the part's union);
+    the column is streamed from disk on first use and cached for every later galaxy."""
+    __slots__ = ("_src", "_u", "_cache", "gal", "a", "hub", "fld")
+
+    def __init__(self, f, u_gas, u_star, a, hub, fld):
+        self._src = {"gas": (f["PartType0"] if f is not None else None),
+                     "star": (f["PartType4"] if (f is not None and "PartType4" in f) else None)}
+        self._u = {"gas": u_gas, "star": u_star}
+        self._cache = {}
+        self.gal, self.a, self.hub, self.fld = None, a, hub, fld
+
+    def has(self, part):
+        return self._src[part] is not None
+
+    def take(self, part, name, idx):
+        key = (part, name)
+        if key not in self._cache:
+            self._cache[key] = _gather(self._src[part][name], self._u[part])
+        return self._cache[key][np.searchsorted(self._u[part], idx)]
 
 
 def _gas_components(ctx, idx):
     """m_gas + the dust/HI/H2 split (De Vis-style neutral·molecular fractions), all from one read."""
-    g, fld, hub = ctx.g, ctx.fld, ctx.hub
-    mgas = _to_msun(g["Masses"][idx], hub)
+    fld, hub = ctx.fld, ctx.hub
+    mgas = _to_msun(ctx.take("gas", "Masses", idx), hub)
     m_dust, m_HI, m_H2 = _components(
         mgas,
-        _to_msun(g[fld["dust"]][idx], hub) if fld["dust"] else None,
-        g[fld["Z"]][idx] if fld["Z"] else None,
-        g[fld["fneut"]][idx] if fld["fneut"] else None,
-        g[fld["fmol"]][idx] if fld["fmol"] else None)
+        _to_msun(ctx.take("gas", fld["dust"], idx), hub) if fld["dust"] else None,
+        ctx.take("gas", fld["Z"], idx) if fld["Z"] else None,
+        ctx.take("gas", fld["fneut"], idx) if fld["fneut"] else None,
+        ctx.take("gas", fld["fmol"], idx) if fld["fmol"] else None)
     return {"m_gas": mgas.astype(np.float32), "m_dust": np.asarray(m_dust, np.float32),
             "m_HI": np.asarray(m_HI, np.float32), "m_H2": np.asarray(m_H2, np.float32)}
 
 
 def _gas_sfr(ctx, idx):
     fld = ctx.fld
-    sfr = (np.asarray(ctx.g[fld["sfr"]][idx], np.float32) if fld["sfr"]
+    sfr = (np.asarray(ctx.take("gas", fld["sfr"], idx), np.float32) if fld["sfr"]
            else np.zeros(len(idx), np.float32))
     return {"sfr": sfr}
 
 
 def _gas_temp(ctx, idx):
     """Per-particle temperature [K] — same recipe as build_profiles_job._temperature."""
-    g, fld = ctx.g, ctx.fld
-    Zc = g[fld["Z"]][idx] if fld["Z"] else None
+    fld = ctx.fld
+    Zc = ctx.take("gas", fld["Z"], idx) if fld["Z"] else None
     if fld["Tdir"]:
-        T = np.asarray(g[fld["Tdir"]][idx], np.float64)
+        T = np.asarray(ctx.take("gas", fld["Tdir"], idx), np.float64)
     elif fld["u"] and fld["ne"]:
-        T = _temperature(np.asarray(g[fld["u"]][idx], np.float64),
-                         np.asarray(g[fld["ne"]][idx], np.float64), _XH(Zc, len(idx)))
+        T = _temperature(np.asarray(ctx.take("gas", fld["u"], idx), np.float64),
+                         np.asarray(ctx.take("gas", fld["ne"], idx), np.float64), _XH(Zc, len(idx)))
     else:
         T = np.full(len(idx), np.nan)
     return {"temp": T.astype(np.float32)}
@@ -157,7 +206,7 @@ def _gas_member(ctx, idx):
 
 
 def _star_mass(ctx, idx):
-    return {"m_star": _to_msun(ctx.s["Masses"][idx], ctx.hub).astype(np.float32)}
+    return {"m_star": _to_msun(ctx.take("star", "Masses", idx), ctx.hub).astype(np.float32)}
 
 
 def _star_member(ctx, idx):
@@ -202,64 +251,70 @@ def _needs_snapshot(miss):
     return False
 
 
-# ── geometry pass ────────────────────────────────────────────────────────────
-def _extract_geometry(cs, f, gx, a, hub, L):
-    """Stellar frame + aperture selection for one galaxy. Returns (rec, gal) with rec[grp]['idx'/'pos']
-    populated (idx = GLOBAL, ascending snapshot indices), plus center/evecs attrs; (None, None) on fail."""
-    try:
-        gal = cs.galaxies[gx]
-    except (IndexError, KeyError):
-        return None, None
-    g = f["PartType0"]
-    s = f["PartType4"] if "PartType4" in f else None
+# ── catalog pass + geometry ──────────────────────────────────────────────────
+def _catalog_pass(cs, gxs):
+    """Per-galaxy member + candidate index lists, collected BEFORE any snapshot read so the snapshot
+    columns can be gathered once at the union. The candidate set is the parent halo gas+stars (incl.
+    CGM) UNION the galaxy members; halo lists are cached, so several galaxies sharing one halo read
+    its (possibly huge) lists once."""
+    plans, halo_cache = {}, {}
+    for gx in gxs:
+        try:
+            gal = cs.galaxies[gx]
+        except (IndexError, KeyError):
+            continue
+        gsl = np.unique(np.asarray(getattr(gal, "slist", []), dtype=np.int64))
+        gml = np.unique(np.asarray(gal.glist, dtype=np.int64))
+        halo = _halo_of(gal, cs)
+        hkey = int(getattr(halo, "GroupID", -1)) if halo is not None else None
+        if hkey not in halo_cache:
+            halo_cache[hkey] = (
+                (np.unique(np.asarray(getattr(halo, "glist", []), dtype=np.int64)),
+                 np.unique(np.asarray(getattr(halo, "slist", []), dtype=np.int64)))
+                if halo is not None else (None, None))
+        hg, hs = halo_cache[hkey]
+        plans[int(gx)] = dict(gal=gal, gsl=gsl, gml=gml,
+                              cand_g=np.union1d(hg, gml) if hg is not None else gml,
+                              cand_s=np.union1d(hs, gsl) if hs is not None else gsl)
+    return plans
 
-    gsl = np.unique(np.asarray(getattr(gal, "slist", []), dtype=np.int64))
-    gml = np.unique(np.asarray(gal.glist, dtype=np.int64))
+
+def _extract_full(ctx, plan, L):
+    """Full record for a fresh galaxy file: stellar frame + aperture selection + all fields, served
+    entirely from the ctx column store. idx stays GLOBAL & ascending (union1d + boolean masks)."""
+    gal, gsl, gml = plan["gal"], plan["gsl"], plan["gml"]
+    cand_g, cand_s = plan["cand_g"], plan["cand_s"]
+    ctx.gal = gal
+    a, hub = ctx.a, ctx.hub
 
     # stellar principal frame from the galaxy's OWN member stars
-    if s is not None and len(gsl):
-        fpos = _to_kpc(s["Coordinates"][gsl], a, hub)
-        fmass = _to_msun(s["Masses"][gsl], hub)
+    if ctx.has("star") and len(gsl):
+        fpos = _to_kpc(ctx.take("star", "Coordinates", gsl), a, hub)
+        fmass = _to_msun(ctx.take("star", "Masses", gsl), hub)
     else:
         fpos, fmass = np.empty((0, 3)), np.empty(0)
-    gmpos = _to_kpc(g["Coordinates"][gml], a, hub) if len(gml) else np.empty((0, 3))
+    gmpos = _to_kpc(ctx.take("gas", "Coordinates", gml), a, hub) if len(gml) else np.empty((0, 3))
     center, evecs = _frame(fpos, fmass, gmpos)
     if center is None:
-        return None, None
+        return None
 
-    # candidate set: parent halo gas+stars (incl. CGM) UNION the galaxy members, cut to RMAX; but
-    # member particles are ALWAYS kept (aperture OR member) so the member subset == CAESAR's gal list.
-    halo = _halo_of(gal, cs)
-    cand_g = np.union1d(np.unique(np.asarray(getattr(halo, "glist", []), dtype=np.int64))
-                        if halo is not None else gml, gml)
-    cand_s = np.union1d(np.unique(np.asarray(getattr(halo, "slist", []), dtype=np.int64))
-                        if halo is not None else gsl, gsl)
-
-    rec = dict(gx=int(gx), z=float(1.0 / a - 1.0), a=float(a), hub=float(hub),
+    rec = dict(gx=int(plan["gx"]), z=float(1.0 / a - 1.0), a=float(a), hub=float(hub),
                center=np.asarray(center, float), evecs=np.asarray(evecs, float),
                gas={}, star={})
-
+    # aperture cut; member particles are ALWAYS kept (aperture OR member) so the member subset ==
+    # CAESAR's galaxy list.
     if len(cand_g):
-        d = _min_image(_to_kpc(g["Coordinates"][cand_g], a, hub) - center, L)
+        d = _min_image(_to_kpc(ctx.take("gas", "Coordinates", cand_g), a, hub) - center, L)
         keep = (np.sum(d * d, axis=1) < RMAX * RMAX) | np.isin(cand_g, gml)
         if np.any(keep):
-            rec["gas"]["idx"] = cand_g[keep].astype(np.int64)      # ascending (union1d + bool mask)
+            rec["gas"]["idx"] = cand_g[keep].astype(np.int64)
             rec["gas"]["pos"] = d[keep].astype(np.float32)
-    if s is not None and len(cand_s):
-        d = _min_image(_to_kpc(s["Coordinates"][cand_s], a, hub) - center, L)
+    if ctx.has("star") and len(cand_s):
+        d = _min_image(_to_kpc(ctx.take("star", "Coordinates", cand_s), a, hub) - center, L)
         keep = (np.sum(d * d, axis=1) < RMAX * RMAX) | np.isin(cand_s, gsl)
         if np.any(keep):
             rec["star"]["idx"] = cand_s[keep].astype(np.int64)
             rec["star"]["pos"] = d[keep].astype(np.float32)
-    return rec, gal
-
-
-def _extract_full(cs, f, gx, a, hub, L, fld):
-    """Full record for a fresh file: geometry + all fields."""
-    rec, gal = _extract_geometry(cs, f, gx, a, hub, L)
-    if rec is None:
-        return None
-    ctx = _Ctx(f["PartType0"], f["PartType4"] if "PartType4" in f else None, gal, a, hub, fld)
     _produce_into(rec, ctx, {"gas": set(GAS_FIELDS), "star": set(STAR_FIELDS)})
     return rec
 
@@ -310,7 +365,7 @@ def _write_full(rec, snap, out_dir):
         for grp in ("gas", "star"):
             gg = o.require_group(grp)
             for k, v in rec[grp].items():
-                gg.create_dataset(k, data=v, compression="gzip")
+                gg.create_dataset(k, data=v, compression="lzf")   # lzf: ~5-10x faster than gzip
     return fpath
 
 
@@ -322,23 +377,30 @@ def _append_fields(path, add):
             for k, v in add.get(grp, {}).items():
                 if k in o[grp]:
                     del o[grp][k]                                 # replace a stray/partial one
-                o[grp].create_dataset(k, data=v, compression="gzip")
+                o[grp].create_dataset(k, data=v, compression="lzf")
 
 
-def _backfill_one(path, gx, miss, cs, ctx_snap):
-    """Compute only the missing fields from the file's stored idx and append them. ctx_snap carries
-    the open snapshot part-groups/units (Nones when only catalog fields are missing). Returns True if
-    anything was written."""
-    try:
-        gal = cs.galaxies[gx]
-    except (IndexError, KeyError):
-        return False
-    rec = dict(gx=int(gx), gas={}, star={})
+def _stored_idx(path, miss):
+    """{'gas': idx|None, 'star': idx|None} stored in an existing file, for the groups being backfilled."""
+    out = {"gas": None, "star": None}
     with h5py.File(path, "r") as o:
         for grp in ("gas", "star"):
             if miss.get(grp) and grp in o and "idx" in o[grp]:
-                rec[grp]["idx"] = np.asarray(o[grp]["idx"][:], np.int64)
-    ctx = _Ctx(ctx_snap["g"], ctx_snap["s"], gal, ctx_snap["a"], ctx_snap["hub"], ctx_snap["fld"])
+                out[grp] = np.asarray(o[grp]["idx"][:], np.int64)
+    return out
+
+
+def _backfill_one(path, gx, miss, idx_of, cs, ctx):
+    """Compute only the missing fields from the file's stored idx (already read into idx_of) and
+    append them. Returns True if anything was written."""
+    try:
+        ctx.gal = cs.galaxies[gx]
+    except (IndexError, KeyError):
+        return False
+    rec = dict(gx=int(gx), gas={}, star={})
+    for grp in ("gas", "star"):
+        if idx_of.get(grp) is not None:
+            rec[grp]["idx"] = idx_of[grp]
     _produce_into(rec, ctx, miss)
     add = {grp: {k: v for k, v in rec[grp].items() if k in miss.get(grp, set())}
            for grp in ("gas", "star")}
@@ -353,8 +415,15 @@ def _plan_gxs(gx, snap, sn):
     return np.unique(gx[snap == sn]).astype(np.int64).tolist()
 
 
+def _union(arrays):
+    arrays = [a for a in arrays if a is not None and len(a)]
+    return (np.unique(np.concatenate(arrays)) if arrays else np.empty(0, np.int64))
+
+
 def process_snapshot(sim, snap, gxs, out_dir):
-    """Full + incremental processing of `gxs` in `snap`. Returns (n_full, n_backfill, n_skipped)."""
+    """Full + incremental processing of `gxs` in `snap`. Returns (n_full, n_backfill, n_skipped).
+    All snapshot I/O is batched: the catalog pass collects every galaxy's candidate indices first,
+    then each needed column is slab-streamed ONCE at the union and galaxies are served from memory."""
     todo_full, todo_part, n_skip = [], {}, 0
     for gx in gxs:
         path = os.path.join(out_dir, _outname(snap, gx))
@@ -374,24 +443,33 @@ def process_snapshot(sim, snap, gxs, out_dir):
     cs = sim.load_catalog(snap=snap)                              # catalog is cheap; needed either way
     n_full = n_part = 0
     try:
+        plans = _catalog_pass(cs, todo_full)
+        for gx, p in plans.items():
+            p["gx"] = gx
+        bf_idx = {gx: _stored_idx(os.path.join(out_dir, _outname(snap, gx)), miss)
+                  for gx, miss in todo_part.items()}
         if need_snap:
             with h5py.File(sim.get_snapshot_file(snap), "r") as f:
                 a, hub = header_units(f)
                 L = _box_kpc(f, a, hub)
-                fld = _detect(f)
-                ctx_snap = dict(g=f["PartType0"], s=f["PartType4"] if "PartType4" in f else None,
-                                a=a, hub=hub, fld=fld)
-                for gx in todo_full:
-                    rec = _extract_full(cs, f, gx, a, hub, L, fld)
+                u_gas = _union([p["cand_g"] for p in plans.values()]
+                               + [ix["gas"] for ix in bf_idx.values()])
+                u_star = _union([p["cand_s"] for p in plans.values()]
+                                + [ix["star"] for ix in bf_idx.values()])
+                ctx = _Ctx(f, u_gas, u_star, a, hub, _detect(f))
+                for gx, p in plans.items():
+                    rec = _extract_full(ctx, p, L)
                     if rec is not None:
                         _write_full(rec, snap, out_dir); n_full += 1
                 for gx, miss in todo_part.items():
-                    if _backfill_one(os.path.join(out_dir, _outname(snap, gx)), gx, miss, cs, ctx_snap):
+                    if _backfill_one(os.path.join(out_dir, _outname(snap, gx)), gx, miss,
+                                     bf_idx[gx], cs, ctx):
                         n_part += 1
         else:                                                    # only catalog-derived fields missing
-            ctx_snap = dict(g=None, s=None, a=None, hub=None, fld=None)
+            ctx = _Ctx(None, None, None, None, None, None)
             for gx, miss in todo_part.items():
-                if _backfill_one(os.path.join(out_dir, _outname(snap, gx)), gx, miss, cs, ctx_snap):
+                if _backfill_one(os.path.join(out_dir, _outname(snap, gx)), gx, miss,
+                                 bf_idx[gx], cs, ctx):
                     n_part += 1
     finally:
         del cs
