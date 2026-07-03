@@ -97,6 +97,32 @@ simbanator/
     └── snap_z_maps/      # bundled snapshot → redshift tables per simulation box
 ```
 
+Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile pipeline):
+
+```
+├── build_profiles_job.py           # SLURM worker: fixed-binning Σ profiles from a shared plan;
+│                                   #   exports the unit/field recipes reused by the reduced job
+│                                   #   (header_units, _to_kpc, _to_msun, _detect, _components,
+│                                   #    _temperature, _halo_of)
+├── build_reduced_particles_job.py  # SLURM worker: lean 100 kpc reduced particle files (ISM+CGM)
+│                                   #   Batched snapshot I/O: _catalog_pass (per-galaxy candidate
+│                                   #   lists, halo-cached), _gather (slab-streamed reads at the
+│                                   #   sorted union of indices; skips unneeded slabs), _Ctx (lazy
+│                                   #   per-snapshot column store serving galaxies from memory).
+│                                   #   Extensible field producers backfill new fields from the
+│                                   #   stored idx without redoing geometry; datasets are lzf.
+│                                   #   Env: DUST_PLAN, REDUCED_RMAX_KPC, REDUCED_PREFIX,
+│                                   #        REDUCED_OVERWRITE, REDUCED_GATHER_MB
+├── submit_reduced_particles.sh     # sbatch wrapper (array over snapshots; DUST_PLAN per anchor)
+└── quench_mode_vs_sigma_gas.ipynb  # multi-z quench-mode analysis. Part 2 defines the shared
+                                    #   helpers every stage plot rides on: _stage_key/_stage_stack/
+                                    #   _cached_rows (record → row_<stage> → progenitor → cached
+                                    #   profile resolution, incl. the sft_p500/../qt_p1000 offset
+                                    #   pseudo-stages), _med_band_floor (floored log-median bands),
+                                    #   load_reduced(keys=) selective reads, and the parallel
+                                    #   profile cache build (CACHE_WORKERS fork pool)
+```
+
 ---
 
 ## Configuration
