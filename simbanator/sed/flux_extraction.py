@@ -155,7 +155,21 @@ def mJyToMag(mJy):
     mag = -2.5*np.log10(jy/3631)
     return mag
 
-def convolveFilterWithSED(sedX, sedY, transX, transY):
+def _trapz_weights(x):
+    """Weights w such that np.trapz(y, x) == np.sum(w * y) (trapezoid quadrature)."""
+    w = np.zeros(len(x), dtype=float)
+    dx = np.diff(x)
+    w[:-1] += dx / 2.0
+    w[1:] += dx / 2.0
+    return w
+
+
+def convolveFilterWithSED(sedX, sedY, transX, transY, sedYerr=None):
+    """Filter-convolve an SED; if `sedYerr` (same shape/units as sedY) is given,
+    propagate it through the same quadrature assuming independent wavelength bins:
+    sigma_conv = sqrt(sum (w_i T_i sigma_i)^2) / int T dlambda.
+
+    Returns (xmean, realY, realYerr); realYerr is NaN*unit when sedYerr is None."""
     ind = np.where((sedX.value > np.min(transX)) & (sedX.value < np.max(transX)))[0]
     xnew = sedX[ind].value
     fluxNew = sedY[ind]
@@ -169,9 +183,21 @@ def convolveFilterWithSED(sedX, sedY, transX, transY):
     norm = np.trapz(ynew, xnew)
     xmean = transX[transY == np.max(transY)][0]
     realY = yFlux / norm
-    return xmean, realY
+    if sedYerr is None:
+        realYerr = np.nan * realY
+    else:
+        w = _trapz_weights(xnew)
+        realYerr = np.sqrt(np.sum((w * ynew * sedYerr[ind]) ** 2)) / norm
+    return xmean, realY, realYerr
 
-def flux_extraction(facility, instrument, wav, flux, filters=None, wave_unit='micron', filter_list=None):
+def flux_extraction(facility, instrument, wav, flux, filters=None, wave_unit='micron', filter_list=None,
+                    flux_unc=None):
+    """Per-filter photometry from an SED.
+
+    If `flux_unc` (same shape/units as `flux`, e.g. the Hyperion Monte-Carlo
+    uncertainty) is given, each filter entry also carries 'mJy_err' / 'mag_err'
+    propagated through the same filter convolution; otherwise they are NaN.
+    """
 
     from astropy import units as u
     import numpy as np
@@ -217,18 +243,25 @@ def flux_extraction(facility, instrument, wav, flux, filters=None, wave_unit='mi
                     continue
 
                 try:
-                    xmean, flux_conv = convolveFilterWithSED(
-                        wav, flux, filtw, filtf
+                    xmean, flux_conv, flux_conv_err = convolveFilterWithSED(
+                        wav, flux, filtw, filtf, sedYerr=flux_unc
                     )
 
                     # --- Convert flux ---
                     mJy = flux_conv
                     mag = mJyToMag(mJy)
+                    mJy_err = flux_conv_err
+                    with np.errstate(all='ignore'):
+                        # dm = 2.5/ln(10) * (sigma_f / f)
+                        mag_err = float(2.5 / np.log(10) * (mJy_err / mJy).decompose().value) \
+                            if np.isfinite(mJy_err.value) else np.nan
 
                     results[fac][inst][f] = {
                         'xmean': xmean,
                         'mJy': mJy,
-                        'mag': mag
+                        'mag': mag,
+                        'mJy_err': mJy_err,
+                        'mag_err': mag_err,
                     }
 
                 except Exception as e:

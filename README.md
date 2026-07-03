@@ -74,8 +74,14 @@ simbanator/
 │   └── sfh.py            # deprecated shim → sfh_fsps
 ├── sed/
 │   ├── makesed.py        # MakeSED – Powderday setup + flux extraction (needs hyperion)
+│   │                     #   extract_flux_* take aperture= (Hyperion SED aperture index) and
+│   │                     #   uncertainties= (MC errors → <filter>_err); list_sed_apertures QC
 │   ├── flux_extraction.py# flux_extraction, get_svo_filters – SED → photometry
+│   │                     #   flux_unc= propagates an SED uncertainty → mJy_err / mag_err
 │   └── parameters_master.py / parameters_master-nodust.py
+│                         #   SED_APERTURE_NAP/MIN_KPC/MAX_KPC – multi-aperture SEDs
+│                         #   (read by the powderday patch documented in
+│                         #    powderday_flux_quenched_m25.ipynb; stock powderday ignores them)
 ├── utils/
 │   ├── geometry.py       # shrink_center, principal_axes, rotate_to_frame
 │   ├── svo_filters.py    # download_svo_filters – fetch filter curves from SVO
@@ -114,13 +120,19 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   Env: DUST_PLAN, REDUCED_RMAX_KPC, REDUCED_PREFIX,
 │                                   #        REDUCED_OVERWRITE, REDUCED_GATHER_MB
 ├── submit_reduced_particles.sh     # sbatch wrapper (array over snapshots; DUST_PLAN per anchor)
-└── quench_mode_vs_sigma_gas.ipynb  # multi-z quench-mode analysis. Part 2 defines the shared
-                                    #   helpers every stage plot rides on: _stage_key/_stage_stack/
-                                    #   _cached_rows (record → row_<stage> → progenitor → cached
-                                    #   profile resolution, incl. the sft_p500/../qt_p1000 offset
-                                    #   pseudo-stages), _med_band_floor (floored log-median bands),
-                                    #   load_reduced(keys=) selective reads, and the parallel
-                                    #   profile cache build (CACHE_WORKERS fork pool)
+├── quench_mode_vs_sigma_gas.ipynb  # multi-z quench-mode analysis. Part 2 defines the shared
+│                                   #   helpers every stage plot rides on: _stage_key/_stage_stack/
+│                                   #   _cached_rows (record → row_<stage> → progenitor → cached
+│                                   #   profile resolution, incl. the sft_p500/../qt_p1000 offset
+│                                   #   pseudo-stages), _med_band_floor (floored log-median bands),
+│                                   #   load_reduced(keys=) selective reads, and the parallel
+│                                   #   profile cache build (CACHE_WORKERS fork pool)
+└── powderday_flux_quenched_m25.ipynb # Powderday flux catalogs for quenched (0.2/τ, logM*>10,
+                                    #   ngas>20) cis25 galaxies at z≈0.3/0.6/0.7/1/2, split by
+                                    #   weak/strong AGN coupling over [SFT,QT]; per-anchor gated
+                                    #   history+BH builds → sample stats → dust_on/off RT over
+                                    #   5 log-spaced apertures (10–160 kpc, powderday patch) →
+                                    #   per-aperture flux catalogs with MC errors
 ```
 
 ---
@@ -343,10 +355,21 @@ flux_file, xmean_file = makesed.extract_flux_batch(
     instrument = ["WFC3", "NIRCam", "IRAC",  "SPIRE"],
     wave_unit  = "micron",
     findx      = 0,           # inclination index
+    aperture   = -1,          # Hyperion SED aperture index (-1 = largest/total);
+                              #   loop 0..N-1 with distinct outname= for per-aperture catalogs
+    uncertainties = True,     # Hyperion MC errors → <filter>_err columns (NaN if absent)
 )
 # Outputs: output/<sim>/sed/<run_tag>/sed_fluxes/all_galaxies_fluxes.fits
 #          output/<sim>/sed/<run_tag>/sed_fluxes/all_xmean.fits
+# With outname="fluxes_X.fits": companion files fluxes_X_xmean.fits /
+# missing_sources_fluxes_X.txt, so per-aperture calls never overwrite each other.
 ```
+
+Multi-aperture SEDs need the one-time powderday patch (reads `SED_APERTURE_*` from the
+parameter master) documented in `powderday_flux_quenched_m25.ipynb`, which is the end-to-end
+example: quenched (0.2/τ) log M*>10 galaxies with >20 gas particles in the high-res 25 Mpc box
+(`cis25`) at z≈0.3–2, split by weak/strong AGN–ISM coupling over the quench window [SFT, QT],
+run through dust_on/dust_off Powderday and extracted into per-aperture flux+error catalogs.
 
 **Output directory tree under `output/<sim>/sed/<run_tag>/`:**
 

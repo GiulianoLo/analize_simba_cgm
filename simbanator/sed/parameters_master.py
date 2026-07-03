@@ -116,6 +116,15 @@ NTHETA = 1
 NPHI = 1
 SED = True
 
+# ── multi-aperture SEDs (read by the patched powderday; stock powderday ignores these) ──
+# The patch calls image.set_aperture_range(SED_APERTURE_NAP, min*kpc, max*kpc) on the
+# peeled-image conf, so the .rtout.sed carries SED_APERTURE_NAP log-spaced projected
+# apertures; extract each with MakeSED.extract_flux_batch(..., aperture=i).
+# 10->160 kpc with 5 apertures = exactly 10, 20, 40, 80, 160 kpc (factor-2 log spacing).
+SED_APERTURE_NAP = 5
+SED_APERTURE_MIN_KPC = 10.
+SED_APERTURE_MAX_KPC = 160.
+
 SED_MONOCHROMATIC = False
 FIX_SED_MONOCHROMATIC_WAVELENGTHS = False
 SED_MONOCHROMATIC_min_lam = 0.3  # micron

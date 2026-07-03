@@ -40,6 +40,48 @@ def _sed_to_mJy(wav_raw, flux_raw, z, apply_redshift=False):
     return wav, (flux / nu).to(u.mJy)
 
 
+def _read_sed(rtout_path, aperture=-1, uncertainties=True):
+    """Read one .rtout.sed -> (wav_raw, flux_raw, unc_raw|None) at a given aperture index.
+
+    `aperture` is the Hyperion aperture index (0-based; -1 = largest/total).
+    Tries the Monte-Carlo `uncertainties=True` read first; Hyperion versions or runs
+    without stored uncertainties fall back to a plain read with unc=None (the caller
+    then writes NaN errors rather than failing the whole extraction).
+    """
+    m = ModelOutput(rtout_path)
+    if uncertainties:
+        try:
+            out = m.get_sed(inclination='all', aperture=aperture, uncertainties=True)
+            if len(out) == 3:
+                return out[0], out[1], out[2]
+        except Exception as e:
+            warnings.warn(f"[SED uncertainties unavailable] {rtout_path} -> {e}; "
+                          f"falling back to flux-only read (errors will be NaN)")
+    wav_raw, flux_raw = m.get_sed(inclination='all', aperture=aperture)
+    return wav_raw, flux_raw, None
+
+
+def list_sed_apertures(rtout_path):
+    """QC helper: report the SED aperture layout stored in a .rtout.sed.
+
+    Returns a dict with, per peeled group, the raw `seds` dataset shape and every
+    dataset/group attribute Hyperion stored (ap_min/ap_max/n_ap live here in most
+    versions). Use it after the first RT run to confirm the powderday aperture
+    patch took effect and to map aperture index -> physical radius.
+    """
+    info = {}
+    with h5py.File(rtout_path, 'r') as f:
+        if 'Peeled' not in f:
+            return info
+        for gname, g in f['Peeled'].items():
+            entry = {'group_attrs': {k: g.attrs[k] for k in g.attrs}}
+            if 'seds' in g:
+                entry['seds_shape'] = g['seds'].shape
+                entry['seds_attrs'] = {k: g['seds'].attrs[k] for k in g['seds'].attrs}
+            info[gname] = entry
+    return info
+
+
 def flatten_results(results, snap, gal):
     rows = []
 
@@ -56,7 +98,9 @@ def flatten_results(results, snap, gal):
                     'filter': f,
                     'xmean': entry['xmean'],
                     'mJy': entry['mJy'],
-                    'mag': entry['mag']
+                    'mag': entry['mag'],
+                    'mJy_err': entry.get('mJy_err', np.nan),
+                    'mag_err': entry.get('mag_err', np.nan),
                 })
 
     return rows
@@ -527,7 +571,7 @@ class MakeSED:
 
     def extract_flux_single(self, snap, gal, facility, instrument,
                      filters=None, wave_unit='micron', findx=0, redshift=False,
-                     local_filters=None):
+                     local_filters=None, aperture=-1, uncertainties=True):
         """Extract photometric fluxes for a single galaxy.
 
         Parameters
@@ -546,6 +590,12 @@ class MakeSED:
             ``{facility: {instrument: {filter_name: filepath}}}`` of local
             ASCII filter files (wavelength in Angstrom, transmission).
             Merged with any SVO-fetched filters.
+        aperture : int
+            Hyperion SED aperture index (0-based; -1 = largest/total aperture).
+        uncertainties : bool
+            Propagate the Hyperion Monte-Carlo SED uncertainty through the
+            filter convolution (per-filter mJy_err / mag_err; NaN if the run
+            stored no uncertainties).
         """
         run = os.path.join(
             self.model_dir_base,
@@ -561,14 +611,18 @@ class MakeSED:
             return None
 
         try:
-            m = ModelOutput(run)
-            wav_raw, flux_raw = m.get_sed(inclination='all', aperture=-1)
+            wav_raw, flux_raw, unc_raw = _read_sed(run, aperture=aperture,
+                                                   uncertainties=uncertainties)
         except Exception as e:
             warnings.warn(f"[SED read error] snap={snap:03}, gal={gal:06} → {e}")
             return None
 
         wav, flux = _sed_to_mJy(wav_raw, flux_raw, z, apply_redshift=redshift)
         flux = flux[findx]
+        flux_unc = None
+        if unc_raw is not None:
+            _, flux_unc = _sed_to_mJy(wav_raw, unc_raw, z, apply_redshift=redshift)
+            flux_unc = flux_unc[findx]
 
         profiles = get_svo_filters(facility, instrument, filters=filters, wave_unit=wave_unit)
         if local_filters is not None:
@@ -581,7 +635,7 @@ class MakeSED:
         results = flux_extraction(
             facility, instrument, wav, flux,
             filters=filters, wave_unit=wave_unit,
-            filter_list=profiles,
+            filter_list=profiles, flux_unc=flux_unc,
         )
 
         rows = flatten_results(results, snap, gal)
@@ -598,7 +652,7 @@ class MakeSED:
     def extract_flux_batch(self, snaps, gals, facility, instrument,
                       filters=None, wave_unit='micron',
                       findx=0, redshift=False, funyt='mJy', outname=None,
-                      local_filters=None):
+                      local_filters=None, aperture=-1, uncertainties=True):
         """Extract photometric fluxes for a batch of (snap, gal) pairs.
 
         Parameters
@@ -617,10 +671,21 @@ class MakeSED:
             Flux column to store in the output table (``'mJy'`` or ``'mag'``).
         outname : str, optional
             Override filename for the flux table (relative to sed_fluxes dir).
+            When given, the companion xmean / missing-sources files are named
+            ``<stem>_xmean.fits`` / ``missing_sources_<stem>.txt`` so per-aperture
+            calls never overwrite each other.
         local_filters : dict, optional
             ``{facility: {instrument: {filter_name: filepath}}}`` of local
             ASCII filter files (wavelength in Angstrom, transmission).
             Merged with any SVO-fetched filters.
+        aperture : int
+            Hyperion SED aperture index (0-based; -1 = largest/total aperture).
+            Call once per aperture with a distinct ``outname`` to build
+            per-aperture catalogs from the same .rtout.sed files.
+        uncertainties : bool
+            Propagate the Hyperion Monte-Carlo SED uncertainty through the
+            filter convolution; each ``<filter>`` column gains a
+            ``<filter>_err`` companion (NaN if the run stored no uncertainties).
         """
         snaps = np.asarray(snaps)
         gals = np.asarray(gals)
@@ -667,8 +732,8 @@ class MakeSED:
                     continue
 
                 try:
-                    m = ModelOutput(run)
-                    wav_raw, flux_raw = m.get_sed(inclination='all', aperture=-1)
+                    wav_raw, flux_raw, unc_raw = _read_sed(run, aperture=aperture,
+                                                           uncertainties=uncertainties)
                 except Exception as e:
                     warnings.warn(f"[SED read error] snap={snap:03}, gal={gal:06} → {e}")
                     failed_read.append((int(snap), int(gal), str(e)))
@@ -676,11 +741,15 @@ class MakeSED:
 
                 wav, flux = _sed_to_mJy(wav_raw, flux_raw, z, apply_redshift=redshift)
                 flux = flux[findx]
+                flux_unc = None
+                if unc_raw is not None:
+                    _, flux_unc = _sed_to_mJy(wav_raw, unc_raw, z, apply_redshift=redshift)
+                    flux_unc = flux_unc[findx]
 
                 results = flux_extraction(
                     facility, instrument, wav, flux,
                     filters=filters, wave_unit=wave_unit,
-                    filter_list=profiles,
+                    filter_list=profiles, flux_unc=flux_unc,
                 )
 
                 row = {'gal_id_at_snap': gal, 'snap': snap, 'redshift': z}
@@ -690,6 +759,7 @@ class MakeSED:
                         for filt_name, filt_data in filt_dict.items():
                             colname = f"{fac}.{inst}.{filt_name}"
                             row[colname] = filt_data[funyt]
+                            row[f"{colname}_err"] = filt_data.get(f"{funyt}_err", np.nan)
                             xmean_rows.append({
                                 'gal_id_at_snap': gal,
                                 'snap': snap,
@@ -712,9 +782,13 @@ class MakeSED:
         os.makedirs(outdir, exist_ok=True)
         if outname is None:
             flux_file = os.path.join(outdir, 'all_galaxies_fluxes.fits')
+            xmean_file = os.path.join(outdir, 'all_xmean.fits')
+            missing_name = 'missing_sources.txt'
         else:
             flux_file = os.path.join(outdir, outname)
-        xmean_file = os.path.join(outdir, 'all_xmean.fits')
+            _stem = os.path.splitext(os.path.basename(outname))[0]
+            xmean_file = os.path.join(outdir, f'{_stem}_xmean.fits')
+            missing_name = f'missing_sources_{_stem}.txt'
 
         final_table.write(flux_file, overwrite=True)
         Table(xmean_rows).write(xmean_file, overwrite=True)
@@ -729,7 +803,7 @@ class MakeSED:
         print(f"[extract_flux_batch] run_tag='{self.run_tag}': "
               f"requested={n_req}, written={n_out}, dropped={n_drop} "
               f"({len(missing_sed)} missing SED, {len(failed_read)} read errors)")
-        missing_file = os.path.join(outdir, 'missing_sources.txt')
+        missing_file = os.path.join(outdir, missing_name)
         if n_drop:
             print(f"[extract_flux_batch] dropped sources -> {missing_file}")
             for snap, gal in missing_sed:
