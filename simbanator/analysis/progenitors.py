@@ -59,6 +59,15 @@ def caesar_read_progen(ids, outname, snaplist, sb, output_dir=None):
     # galaxies that already existed then (massive only; the low-mass end was missing).
     base_snapshot = np.sort(snaplist)[-1]
     base_data = progenid_dict[base_snapshot]
+    if base_data.size == 0:
+        # Writing an empty FITS here would silently collapse every downstream
+        # selection to zero galaxies (empty valid_ids -> empty histories).
+        raise RuntimeError(
+            f"No 'tree_data/progen_galaxy_star' in the Caesar catalog at the base "
+            f"snapshot {base_snapshot} ({sb.get_caesar_file(int(base_snapshot))}). "
+            f"Merger trees were never computed for this box — run caesar progen first "
+            f"(see find_progen_m25_job.py), then rebuild the progenitor table."
+        )
     base_groupids = base_data[:, 0]
 
     progenid_table = np.full((len(base_groupids), len(snaplist) + 1), -1, dtype=int)

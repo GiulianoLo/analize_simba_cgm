@@ -55,7 +55,8 @@ def _read_h5_property(h5file, h5path, indices):
     ds = h5file[h5path]
     indices = np.asarray(indices, dtype=np.int64)
     if len(indices) == 0:
-        return np.array([], dtype=ds.dtype)
+        # keep trailing dims so 2-D datasets (pos, vel) stack to (n_snap, 0, ncols)
+        return np.empty((0,) + ds.shape[1:], dtype=ds.dtype)
     # h5py requires indices to be sorted and unique, but we want to preserve duplicates and order
     unique_idx, inverse = np.unique(indices, return_inverse=True)
     unique_data = ds[unique_idx]
@@ -156,6 +157,12 @@ class HDF5BuildHistory:
         ids = np.atleast_1d(ids)
         self.galaxy_ids = np.asarray(ids, dtype=np.int64)
         n_gal = len(self.galaxy_ids)
+        if n_gal == 0:
+            raise ValueError(
+                "get_history_indx() received an empty id list — no galaxies to track. "
+                "If the ids came from a progenitor FITS, the table is likely empty "
+                "because the Caesar catalogs have no tree_data (run caesar progen first)."
+            )
 
         snaps = list(range(int(start_snap), int(end_snap) - 1, -1))
         indices = np.full((len(snaps), n_gal), np.nan, dtype=float)
