@@ -52,6 +52,9 @@ def _read_sed(rtout_path, aperture=-1, uncertainties=True):
     if uncertainties:
         try:
             out = m.get_sed(inclination='all', aperture=aperture, uncertainties=True)
+            # hyperion >= 0.9 returns an SED object (no __len__); its __iter__
+            # yields (wav, val, unc) when uncertainties are stored, (wav, val) otherwise
+            out = tuple(out)
             if len(out) == 3:
                 return out[0], out[1], out[2]
         except Exception as e:
