@@ -505,3 +505,52 @@ def run(run_dir, pcigale_cmd="pcigale", skip_if_done=False):
 def read_results(run_dir):
     """Load ``<run_dir>/out/results.fits`` (Bayesian + best-fit estimates)."""
     return Table.read(os.path.join(run_dir, "out", "results.fits"))
+
+
+def plot_seds(run_dir, format="pdf", type="mJy", xrange=None, yrange=None,
+              series=None, nologo=True, outdir=None,
+              pcigale_plots_cmd="pcigale-plots"):
+    """`pcigale-plots sed` — one best-fit SED figure per object.
+
+    Needs a completed :func:`run` with ``save_best_sed=True`` (the default
+    here): the plots are drawn from the ``<id>_best_model.fits`` files in
+    ``<run_dir>/out/``, where the figures also land (one
+    ``<id>_best_model.<format>`` each) unless *outdir* is given.
+
+    Parameters
+    ----------
+    format : str
+        'pdf' or 'png' (any matplotlib-supported format).
+    type : str
+        'mJy' (observed-frame flux) or 'lum' (rest-frame luminosity).
+    xrange, yrange : str, optional
+        Axis ranges as ``'<min>:<max>'`` (either side may be empty),
+        x in μm.
+    series : sequence of str, optional
+        Components to draw: stellar_attenuated, stellar_unattenuated,
+        nebular, dust, agn, radio, model. Default: all.
+    """
+    if not os.path.exists(os.path.join(run_dir, "out", "results.fits")):
+        raise FileNotFoundError(f"no out/results.fits in {run_dir} — "
+                                "run() must complete first")
+    cmd = [pcigale_plots_cmd, "sed", "--type", type, "--format", format]
+    if nologo:
+        cmd.append("--nologo")
+    if xrange:
+        cmd += ["--xrange", xrange]
+    if yrange:
+        cmd += ["--yrange", yrange]
+    if outdir:
+        cmd += ["--outdir", outdir]
+    if series:
+        cmd += ["--series", *series]
+    try:
+        proc = subprocess.run(cmd, cwd=run_dir)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"'{pcigale_plots_cmd}' not found on PATH — pass "
+            "pcigale_plots_cmd='/path/to/pcigale-plots'")
+    if proc.returncode != 0:
+        raise RuntimeError(f"pcigale-plots sed failed (exit {proc.returncode})"
+                           f" in {run_dir}")
+    return outdir or os.path.join(run_dir, "out")
