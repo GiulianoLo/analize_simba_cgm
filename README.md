@@ -78,6 +78,10 @@ simbanator/
 │   │                     #   uncertainties= (MC errors → <filter>_err); list_sed_apertures QC
 │   ├── flux_extraction.py# flux_extraction, get_svo_filters – SED → photometry
 │   │                     #   flux_unc= propagates an SED uncertainty → mJy_err / mag_err
+│   ├── cigale.py         # CIGALE 2025.0 end-to-end: write_cigale_input (flux table →
+│   │                     #   data_file, DB band names), prepare_run (pcigale.ini/.spec,
+│   │                     #   replaces init+genconf), check/run/read_results wrappers.
+│   │                     #   No simbanator imports — loadable standalone in a CIGALE env.
 │   └── parameters_master.py / parameters_master-nodust.py
 │                         #   SED_APERTURE_NAP/MIN_KPC/MAX_KPC – multi-aperture SEDs
 │                         #   (read by the powderday patch documented in
