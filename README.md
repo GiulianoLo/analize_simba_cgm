@@ -120,10 +120,14 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   Env: DUST_PLAN, REDUCED_RMAX_KPC, REDUCED_PREFIX,
 │                                   #        REDUCED_OVERWRITE, REDUCED_GATHER_MB
 ├── submit_reduced_particles.sh     # sbatch wrapper (array over snapshots; DUST_PLAN per anchor)
-├── find_progen_m25_job.py          # one-time cluster job: caesar run_progen over the SIMBA_25
-│                                   #   catalogs (they ship WITHOUT tree_data, unlike cis50/100;
-│                                   #   prefix='' — m25 catalogs have no 'caesar_' prefix). Needs
-│                                   #   both snapshots of each pair (slist indices -> particle IDs)
+├── submit_find_progen_m25.sh       # sbatch wrapper (4-task array over disjoint sidecar ranges)
+├── find_progen_m25_job.py          # one-time cluster job: merger-tree links for the SIMBA_25
+│                                   #   catalogs (they ship WITHOUT tree_data, unlike cis50/100).
+│                                   #   The share is file-level read-only -> progen_finder(save=
+│                                   #   False) + sidecar files output/cis25/progen_links/*.hdf5
+│                                   #   ((ngal,2) progen_galaxy_star; readers fall back via
+│                                   #   progen_tree_file). Needs both snapshots of each pair
+│                                   #   (slist indices -> particle IDs); resumable per sidecar
 ├── quench_mode_vs_sigma_gas.ipynb  # multi-z quench-mode analysis. Part 2 defines the shared
 │                                   #   helpers every stage plot rides on: _stage_key/_stage_stack/
 │                                   #   _cached_rows (record → row_<stage> → progenitor → cached

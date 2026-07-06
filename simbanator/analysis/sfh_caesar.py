@@ -7,6 +7,7 @@ from scipy.interpolate import interp1d, splrep, splev
 from astropy.cosmology import Planck15 as _default_cosmo
 
 from ..visualization.plots import HistoryPlots
+from .progenitors import progen_tree_file
 
 
 def _resolve_h5_path(family, propr):
@@ -170,8 +171,11 @@ class HDF5BuildHistory:
 
         for i in range(1, len(snaps)):
             s_from = snaps[i - 1]                        # progen @ s_from -> index @ (s_from - 1) == snaps[i]
+            tree_file = progen_tree_file(self.sb, int(s_from))   # catalog, else progen_links sidecar
+            if tree_file is None:
+                break                                    # no tree link anywhere -> remaining snapshots stay NaN
             try:
-                with h5py.File(self.sb.get_caesar_file(int(s_from)), 'r') as hf:
+                with h5py.File(tree_file, 'r') as hf:
                     progen = np.asarray(hf['tree_data']['progen_galaxy_star'][:, 0],
                                         dtype=np.int64)
             except (OSError, KeyError):

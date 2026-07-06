@@ -16,6 +16,31 @@ from astropy.table import Table
 from ..io.paths import OutputPaths
 
 
+def progen_tree_file(sb, snap):
+    """Return the file holding ``tree_data/progen_galaxy_star`` for *snap*, or None.
+
+    Prefers the Caesar catalog itself (cis50/cis100 ship the trees in-catalog); falls
+    back to a sidecar under ``output/<sim>/progen_links/`` written by
+    ``find_progen_m25_job.py`` when the shared catalogs are read-only.
+    """
+    cat = sb.get_caesar_file(int(snap))
+    try:
+        with h5py.File(cat, 'r') as f:
+            if 'tree_data/progen_galaxy_star' in f:
+                return cat
+    except OSError:
+        pass
+    side = os.path.join(os.getcwd(), 'output', sb.name, 'progen_links',
+                        os.path.basename(cat))
+    try:
+        with h5py.File(side, 'r') as f:
+            if 'tree_data/progen_galaxy_star' in f:
+                return side
+    except OSError:
+        pass
+    return None
+
+
 def caesar_read_progen(ids, outname, snaplist, sb, output_dir=None):
     """Build a FITS progenitor table from Caesar catalogs.
 
@@ -38,11 +63,13 @@ def caesar_read_progen(ids, outname, snaplist, sb, output_dir=None):
     for i in np.sort(snaplist)[::-1]:
         cs = sb.get_caesar(i)
         allids = np.asarray([galaxy.GroupID for galaxy in cs.galaxies])
-        fname = cs.data_file
         del cs
         gc.collect()
 
         try:
+            fname = progen_tree_file(sb, i)     # catalog tree_data, else progen_links sidecar
+            if fname is None:
+                raise KeyError('tree_data/progen_galaxy_star')
             with h5py.File(fname, 'r') as hf:
                 progenid = np.asarray(hf['tree_data']['progen_galaxy_star'])[:, 0]
         except (KeyError, OSError):
@@ -63,10 +90,11 @@ def caesar_read_progen(ids, outname, snaplist, sb, output_dir=None):
         # Writing an empty FITS here would silently collapse every downstream
         # selection to zero galaxies (empty valid_ids -> empty histories).
         raise RuntimeError(
-            f"No 'tree_data/progen_galaxy_star' in the Caesar catalog at the base "
-            f"snapshot {base_snapshot} ({sb.get_caesar_file(int(base_snapshot))}). "
-            f"Merger trees were never computed for this box — run caesar progen first "
-            f"(see find_progen_m25_job.py), then rebuild the progenitor table."
+            f"No 'tree_data/progen_galaxy_star' for the base snapshot {base_snapshot} — "
+            f"neither in the Caesar catalog ({sb.get_caesar_file(int(base_snapshot))}) nor "
+            f"as a sidecar in output/{sb.name}/progen_links/. Merger trees were never "
+            f"computed for this box — run find_progen_m25_job.py (writes the sidecars), "
+            f"then rebuild the progenitor table."
         )
     base_groupids = base_data[:, 0]
 
