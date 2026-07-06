@@ -62,8 +62,9 @@ per-galaxy-per-field h5py fancy reads that dominated the old runtime. Datasets a
 (much faster than gzip to write AND to read back in the notebook cache build; h5py reads both
 transparently, so old gzip files coexist).
 
-Env: DUST_PLAN (plan, shared with build_profiles_job), REDUCED_RMAX_KPC (default 100),
-     REDUCED_PREFIX (default 'm100n1024'), REDUCED_OVERWRITE (default 0),
+Env: DUST_PLAN (plan, shared with build_profiles_job; REQUIRED — the plan carries the sim name),
+     REDUCED_RMAX_KPC (default 100), REDUCED_PREFIX (default: derived from the plan's sim
+     file_format, e.g. m100n1024 / m50n512), REDUCED_OVERWRITE (default 0),
      REDUCED_GATHER_MB (slab budget per streamed read, default 256).
 """
 import os
@@ -77,10 +78,9 @@ from simbanator.utils.geometry import shrink_center, principal_axes
 from build_profiles_job import (header_units, _to_kpc, _to_msun, _detect, _components, _halo_of,
                                 _temperature, _XH)
 
-PLAN_PATH = os.environ.get(
-    "DUST_PLAN", os.path.join("output", "cis100", "caesar_sfh", "dust_profile_plan.hdf5"))
+PLAN_PATH = os.environ.get("DUST_PLAN")                     # REQUIRED — the plan carries the sim
 RMAX = float(os.environ.get("REDUCED_RMAX_KPC", 100.0))     # aperture [physical kpc]
-PREFIX = os.environ.get("REDUCED_PREFIX", "m100n1024")
+PREFIX = os.environ.get("REDUCED_PREFIX") or None           # None -> derived from the plan's sim in main()
 OVERWRITE = int(os.environ.get("REDUCED_OVERWRITE", 0)) == 1
 
 
@@ -478,15 +478,21 @@ def process_snapshot(sim, snap, gxs, out_dir):
 
 
 def main():
+    global PREFIX
     task_id = int(os.environ.get("SLURM_ARRAY_TASK_ID", 0))
     n_task = int(os.environ.get("SLURM_ARRAY_TASK_COUNT", 1))
 
+    if not PLAN_PATH:
+        raise SystemExit("DUST_PLAN is not set — point it at "
+                         "output/<sim>/caesar_sfh/prof_<tag>/dust_profile_plan_<tag>.hdf5")
     with h5py.File(PLAN_PATH, "r") as f:
         sim_name = str(f.attrs["sim_name"])
         gx = f["entry_gx"][:]
         snap = f["entry_snap"][:]
 
     sim = Simulation(sim_name)
+    if PREFIX is None:
+        PREFIX = sim.file_format.split("_{")[0]    # matches the notebook loader's REDUCED_PREFIX
     out_root = os.path.join(os.getcwd(), "output", sim_name, "reduced_particles")
 
     snaps_all = np.sort(np.unique(snap))[::-1]                    # newest first

@@ -18,13 +18,17 @@ cd /mnt/home/glorenzon/analize_simba_cgm
 
 # --- plan written by the notebook cell "5a·plan" (SHARED with build_profiles_job.py) ---
 # Run ONCE PER ANCHOR, pointing DUST_PLAN at that anchor's plan:
-#   DUST_PLAN=output/cis100/caesar_sfh/prof_<tag>/dust_profile_plan_<tag>.hdf5 \
+#   DUST_PLAN=output/<SIM_NAME>/caesar_sfh/prof_<tag>/dust_profile_plan_<tag>.hdf5 \
 #     sbatch --array=0-15 submit_reduced_particles.sh
-export DUST_PLAN=${DUST_PLAN:-output/cis100/caesar_sfh/dust_profile_plan.hdf5}
+# REQUIRED (no default): a silent cis100 fallback processed the wrong sim when the
+# env was forgotten. The plan file itself carries the sim name the job runs on.
+: "${DUST_PLAN:?set DUST_PLAN=output/<SIM_NAME>/caesar_sfh/prof_<tag>/dust_profile_plan_<tag>.hdf5}"
+export DUST_PLAN
 
 # --- aperture + naming (must match the notebook reduced-particle loader) ---
 export REDUCED_RMAX_KPC=${REDUCED_RMAX_KPC:-100}   # ISM+CGM physical aperture [kpc]
-export REDUCED_PREFIX=${REDUCED_PREFIX:-m100n1024}
+# REDUCED_PREFIX: leave unset — the job derives it from the plan's sim (m100n1024 / m50n512 / ...)
+if [ -n "${REDUCED_PREFIX:-}" ]; then export REDUCED_PREFIX; fi
 export REDUCED_OVERWRITE=${REDUCED_OVERWRITE:-0}
 
 # --- ONE pass per snapshot: lean reduced gas+star particle files in the aperture ---
