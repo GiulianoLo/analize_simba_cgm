@@ -310,7 +310,15 @@ def _fmt(value):
         return ", ".join(vals)
     if isinstance(value, (bool, np.bool_)):
         return "True" if value else "False"
-    return str(value)
+    s = str(value)
+    if isinstance(value, str) and ("," in s or s != s.strip()):
+        # configobj splits unquoted comma-containing values into lists
+        # (bites e.g. gvfs paths: 'sftp:host=...,user=...'); quote them
+        if '"' in s:
+            raise ValueError(f"cannot represent value with both a comma and "
+                             f"a double quote in pcigale.ini: {s!r}")
+        s = f'"{s}"'
+    return s
 
 
 def prepare_run(run_dir, data_file, sed_modules=None, module_params=None,
