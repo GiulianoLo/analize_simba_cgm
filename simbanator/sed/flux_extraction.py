@@ -187,7 +187,9 @@ def convolveFilterWithSED(sedX, sedY, transX, transY, sedYerr=None):
         realYerr = np.nan * realY
     else:
         w = _trapz_weights(xnew)
-        realYerr = np.sqrt(np.sum((w * ynew * sedYerr[ind]) ** 2)) / norm
+        # abs(norm): with descending-wavelength SEDs (hyperion) both integrals
+        # are negative — the flux ratio self-corrects but the sqrt does not
+        realYerr = np.sqrt(np.sum((w * ynew * sedYerr[ind]) ** 2)) / np.abs(norm)
     return xmean, realY, realYerr
 
 def flux_extraction(facility, instrument, wav, flux, filters=None, wave_unit='micron', filter_list=None,
