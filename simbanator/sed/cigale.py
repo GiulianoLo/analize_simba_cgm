@@ -17,6 +17,10 @@ fit without ever touching ``pcigale init / genconf`` by hand:
 5. :func:`compare_results` — truth table vs the fitted ``out/results.fits``:
    per-galaxy print, offset/scatter stats, one-to-one figures; table + figure
    saved into that run's ``out/``.
+6. :func:`plot_parameter_priors` — for every gridded parameter, the fitted
+   distribution over the sample against the grid nodes (the priors), with
+   printed grid-refinement advice (extend / refine / trim); saved into
+   that run's ``out/``.
 
 Only needs numpy + astropy (matplotlib just for :func:`compare_results`);
 ``pcigale`` itself is required just where :func:`run`/:func:`check` execute.
@@ -37,6 +41,7 @@ from astropy.cosmology import Planck13
 __all__ = [
     "cigale_band", "write_cigale_input", "prepare_run", "describe_run",
     "check", "run", "read_results", "plot_seds", "compare_results",
+    "plot_parameter_priors",
     "DEFAULT_SED_MODULES", "DEFAULT_MODULE_PARAMS",
     "DEFAULT_ANALYSIS_PARAMS", "CIGALE_KNOWN_BANDS",
 ]
@@ -1083,3 +1088,292 @@ def compare_results(run_dir, truth, log_props=None, outdir=None,
     else:
         plt.close(fig)
     return comp
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# parameter-grid diagnostics (how well the grid samples the posteriors)
+# ══════════════════════════════════════════════════════════════════════════
+
+# short axis labels for the parameters that are usually put on a grid, keyed
+# by the module-input (leaf) name — the way they appear in DEFAULT_MODULE_PARAMS
+_GRID_LABELS = {
+    "tau_main": r"$\tau_\mathrm{main}$ [Myr]",
+    "age_main": r"age$_\mathrm{main}$ [Myr]",
+    "age_bq": r"age$_\mathrm{bq}$ [Myr]",
+    "r_sfr": r"$r_\mathrm{SFR}$ (after/before age$_\mathrm{bq}$)",
+    "metallicity": "Z (stellar)",
+    "Av_ISM": r"$A_{V,\,\mathrm{ISM}}$ [mag]",
+    "mu": r"$\mu$ (ISM/total attenuation)",
+    "qpah": r"$q_\mathrm{PAH}$ [%]",
+    "umin": r"$U_\mathrm{min}$",
+    "gamma": r"$\gamma$ (PDR fraction)",
+    "alpha": r"$\alpha$ (dust)",
+    "logU": "log $U$",
+    "zgas": "Z$_\\mathrm{gas}$",
+}
+
+
+def _parse_grid(display):
+    """Grid values (sorted floats) from a pcigale.ini value, or None.
+
+    Accepts what :func:`_read_ini` returns — e.g. ``"500, 1000, 2000"`` or a
+    one-element ``"0.02,"``. Returns None when any token is non-numeric (a
+    string parameter like ``filters`` or an empty auto-filled grid).
+    """
+    toks = [t.strip() for t in str(display).split(",")]
+    toks = [t for t in toks if t]
+    if not toks:
+        return None
+    try:
+        vals = sorted({float(t) for t in toks})
+    except ValueError:
+        return None
+    return vals
+
+
+def _result_cols(colnames, param):
+    """(bayes_col, best_col) whose dotted leaf equals *param*, else (None,..).
+
+    CIGALE writes the fitted parameters as ``<estimator>.<prefix>.<leaf>``
+    (``best.sfh.tau_main``, ``bayes.stellar.metallicity``, ...); matching on
+    the leaf avoids hard-coding each module's output prefix. ``_err`` columns
+    have leaf ``<leaf>_err`` and are skipped by the exact-match.
+    """
+    def pick(kind):
+        hits = [c for c in colnames
+                if c.startswith(kind + ".") and c.split(".")[-1] == param]
+        return hits[0] if hits else None
+    return pick("bayes"), pick("best")
+
+
+def plot_parameter_priors(run_dir, module_params=None, sed_modules=None,
+                          analysis_params=None, min_grid=2,
+                          edge_frac=0.15, gap_frac=0.25, unused_frac=0.02,
+                          outdir=None, basename="param_priors",
+                          show=True, verbose=True):
+    """Fitted distribution of each gridded parameter vs. the prior grid nodes.
+
+    For every parameter sampled on a grid (≥ *min_grid* values in the run's
+    ``pcigale.ini``) this draws, over the whole fitted sample:
+
+    * the **prior grid nodes** you chose (triangles on the axis);
+    * the **best-fit usage** of each node (stems = fraction of galaxies whose
+      best model sits on that node) — reveals never-picked nodes and pile-up;
+    * the **Bayesian posterior** spread (filled histogram of the PDF-weighted
+      ``bayes.*`` estimate, binned one cell per node with an over/under-flow
+      bin) — reveals mass falling *between* nodes or pushing *past* an edge.
+
+    and prints a one-line verdict per parameter so you can decide how to
+    change the grid:
+
+    * **extend** — too much mass sits on / past an end node (``edge_frac``);
+    * **refine** — a between-node cell holds a large posterior share while the
+      fits split across it (``gap_frac``): the grid is too coarse there;
+    * **trim** — a node is essentially never selected (``unused_frac``).
+
+    Parameters
+    ----------
+    run_dir : str
+        A completed run directory (reads ``<run_dir>/out/results.fits`` and,
+        for the grid, ``<run_dir>/pcigale.ini``).
+    module_params, sed_modules, analysis_params
+        Optional. If given, the grid is taken from these merged with the
+        package defaults (as in :func:`prepare_run`) instead of from the ini —
+        use to preview a grid you have not written yet against existing
+        results. ``analysis_params`` is accepted for signature parity and is
+        unused here.
+    min_grid : int
+        Only parameters with at least this many grid values are shown
+        (1 to include fixed, single-value parameters too).
+    edge_frac, gap_frac, unused_frac : float
+        Thresholds (fraction of the sample) for the extend / refine / trim
+        verdicts described above.
+    outdir : str, optional
+        Where to write ``<basename>.fits`` + ``<basename>.png`` (default
+        ``<run_dir>/out``).
+    show : bool
+        Show the figure (else only saved and closed).
+
+    Returns
+    -------
+    :class:`~astropy.table.Table`
+        One row per gridded parameter: ``param``, ``property`` (the matched
+        results column stem), ``grid`` (nodes as a string), ``n_grid``,
+        ``n_obj``, ``frac_low_node``/``frac_high_node`` (best-fit usage of the
+        end nodes), ``frac_below``/``frac_above`` (posterior mass past the end
+        nodes), ``n_unused`` and ``verdict`` — also saved to ``<basename>.fits``.
+    """
+    import matplotlib.pyplot as plt
+
+    res = read_results(run_dir)
+
+    # ── grid (priors): from the ini that ran, or from merged overrides ──
+    if module_params is not None or sed_modules is not None:
+        modules, mp, _ = _merged_params(sed_modules, module_params,
+                                        analysis_params)
+        grids = {(mod, par): _parse_grid(_fmt(mp[mod][par]))
+                 for mod in modules for par in mp[mod]}
+    else:
+        _, mods, _ = _read_ini(os.path.join(run_dir, "pcigale.ini"))
+        grids = {(mod, par): _parse_grid(val)
+                 for mod, pars in mods.items() for par, val in pars.items()}
+
+    # keep numeric grids with >= min_grid nodes that have a results column
+    items = []
+    skipped = []
+    for (mod, par), g in grids.items():
+        if g is None or len(g) < min_grid:
+            continue
+        bcol, best = _result_cols(res.colnames, par)
+        if bcol is None and best is None:
+            skipped.append(f"{mod}.{par} (no bayes.*/best.*.{par} column)")
+            continue
+        prop = (bcol or best).split(".", 1)[1]        # strip estimator prefix
+        items.append((mod, par, np.array(g, float), prop, bcol, best))
+    if not items:
+        raise ValueError(
+            "no gridded parameter matched a results column — need >= "
+            f"{min_grid} grid values and a bayes.*/best.* output. Skipped: "
+            + ("; ".join(skipped) if skipped else "none"))
+    if skipped and verbose:
+        print("[cigale] not plotted (no matching output column): "
+              + "; ".join(skipped))
+
+    # ── figure ──
+    n = len(items)
+    ncols = min(3, n)
+    nrows = int(np.ceil(n / ncols))
+    fig, axes = plt.subplots(nrows, ncols,
+                             figsize=(4.8 * ncols, 3.9 * nrows),
+                             squeeze=False)
+
+    rows = []
+    for k, (mod, par, g, prop, bcol, best) in enumerate(items):
+        ax = axes[k // ncols][k % ncols]
+        nnode = len(g)
+        # bin edges: one cell per node (midpoints), plus an over/under-flow bin
+        mids = 0.5 * (g[:-1] + g[1:])
+        step = np.median(np.diff(g)) if nnode > 1 else (abs(g[0]) or 1.0)
+        inner = np.concatenate([[g[0] - 0.5 * step], mids,
+                                [g[-1] + 0.5 * step]])
+        edges = np.concatenate([[inner[0] - step], inner, [inner[-1] + step]])
+
+        # best-fit usage per node (snap to nearest node to absorb float noise)
+        best_frac = np.zeros(nnode)
+        nb = 0
+        if best is not None:
+            bv = np.asarray(res[best], float)
+            bv = bv[np.isfinite(bv)]
+            nb = len(bv)
+            if nb:
+                idx = np.abs(bv[:, None] - g[None, :]).argmin(axis=1)
+                best_frac = np.bincount(idx, minlength=nnode) / nb
+
+        # bayesian spread + edge pressure
+        frac_below = frac_above = np.nan
+        nby = 0
+        if bcol is not None:
+            yv = np.asarray(res[bcol], float)
+            yv = yv[np.isfinite(yv)]
+            nby = len(yv)
+            if nby:
+                frac_below = np.mean(yv < g[0])
+                frac_above = np.mean(yv > g[-1])
+                clip = np.clip(yv, edges[0] + 1e-9 * step, edges[-1] - 1e-9 * step)
+                hist, _ = np.histogram(clip, bins=edges)
+                ax.stairs(hist / nby, edges, fill=True, alpha=0.35,
+                          color="#0072B2",
+                          label=f"posterior (bayes, N={nby})")
+
+        # prior grid nodes + best-fit usage stems
+        ax.plot(g, np.zeros(nnode), marker="^", ls="none", ms=9,
+                color="0.35", clip_on=False, label="prior grid node")
+        if nb:
+            ax.vlines(g, 0, best_frac, color="#D55E00", lw=2, zorder=3)
+            ax.plot(g, best_frac, "o", color="#D55E00", ms=5, zorder=4,
+                    label=f"best-fit usage (N={nb})")
+
+        # verdicts
+        verdicts = []
+        if nb:
+            if best_frac[0] >= edge_frac:
+                verdicts.append("extend-low")
+            if best_frac[-1] >= edge_frac:
+                verdicts.append("extend-high")
+        if np.isfinite(frac_below) and frac_below >= edge_frac:
+            verdicts.append("extend-low")
+        if np.isfinite(frac_above) and frac_above >= edge_frac:
+            verdicts.append("extend-high")
+        n_unused = int(np.sum(best_frac < unused_frac)) if nb else 0
+        if nb and n_unused:
+            verdicts.append(f"trim({n_unused})")
+        # refine: a lot of posterior mass sits in the *middle* of an inter-node
+        # gap (central half of a cell), i.e. between nodes rather than hugging
+        # one — the grid is too coarse to resolve it there. Mass peaking ON a
+        # node (the common, healthy case) is excluded by the central-half band.
+        if nby and nnode > 1:
+            mid_share = [np.mean((yv > lo + 0.25 * (hi - lo)) &
+                                 (yv < hi - 0.25 * (hi - lo)))
+                         for lo, hi in zip(g[:-1], g[1:])]
+            if max(mid_share, default=0.0) >= gap_frac:
+                verdicts.append("refine")
+        verdict = ", ".join(dict.fromkeys(verdicts)) or "ok"
+
+        # cosmetics
+        if g[0] > 0 and g[-1] / g[0] >= 50:
+            ax.set_xscale("log")
+        ax.set_xlabel(_GRID_LABELS.get(par, f"{mod}.{par}"))
+        ax.set_ylabel("fraction of galaxies")
+        ax.set_ylim(bottom=0)
+        ax.set_title(f"{prop}   [{verdict}]", fontsize=10)
+        ax.margins(x=0.08)
+        if k == 0:
+            ax.legend(fontsize=7.5, frameon=False, loc="upper right")
+
+        rows.append({
+            "param": f"{mod}.{par}", "property": prop,
+            "grid": ", ".join(f"{v:g}" for v in g), "n_grid": nnode,
+            "n_obj": max(nb, nby),
+            "frac_low_node": round(float(best_frac[0]), 3) if nb else np.nan,
+            "frac_high_node": round(float(best_frac[-1]), 3) if nb else np.nan,
+            "frac_below": (round(float(frac_below), 3)
+                           if np.isfinite(frac_below) else np.nan),
+            "frac_above": (round(float(frac_above), 3)
+                           if np.isfinite(frac_above) else np.nan),
+            "n_unused": n_unused, "verdict": verdict,
+        })
+
+    for k in range(n, nrows * ncols):
+        axes[k // ncols][k % ncols].set_axis_off()
+    fig.suptitle(f"{os.path.basename(os.path.normpath(run_dir))} — "
+                 "parameter grid vs. fitted distribution", y=1.0)
+    fig.tight_layout()
+
+    summary = Table(rows=rows, names=list(rows[0].keys()))
+    if verbose:
+        print("[cigale] grid diagnostics "
+              "(verdict: extend/refine/trim = act; ok = leave):")
+        summary.pprint(max_lines=-1, max_width=-1)
+        acts = [r for r in rows if r["verdict"] != "ok"]
+        if acts:
+            print("\n  suggested grid changes:")
+            for r in acts:
+                print(f"    {r['param']:<32} [{r['grid']}]  -> {r['verdict']}")
+        else:
+            print("\n  grid looks well-matched to the posteriors "
+                  "(no edge pile-up, gaps or dead nodes).")
+
+    outdir = outdir or os.path.join(run_dir, "out")
+    os.makedirs(outdir, exist_ok=True)
+    fits_path = os.path.join(outdir, f"{basename}.fits")
+    png_path = os.path.join(outdir, f"{basename}.png")
+    summary.write(fits_path, overwrite=True)
+    fig.savefig(png_path, dpi=150, bbox_inches="tight")
+    if verbose:
+        print(f"\n[cigale] grid-diagnostics table  -> {fits_path}")
+        print(f"[cigale] grid-diagnostics figure -> {png_path}")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+    return summary
