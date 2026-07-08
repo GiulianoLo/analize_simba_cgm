@@ -93,6 +93,9 @@ def extract_particles(
     galaxy_ids : iterable of int, optional
         List of galaxy GroupIDs to extract in one pass from a single open
         snapshot file. When provided, one output file is created per galaxy.
+        Combined with *radius*, each file holds ALL particles in a spherical
+        region of that radius (proper kpc) around the galaxy centre instead
+        of the caesar member particles (glist/slist).
 
     halo_id : int, optional
         Halo GroupID to extract.
@@ -101,7 +104,10 @@ def extract_particles(
         Spatial center [x,y,z].
 
     radius : float, optional
-        Aperture radius (same units as snapshot coordinates).
+        Aperture radius. With *galaxy_ids*: **proper kpc** around each galaxy
+        centre (converted to code units internally; periodic minimum-image
+        selection, coordinates unwrapped around the centre). With *center*:
+        snapshot coordinate units (legacy behaviour).
 
     orientation : str
         'face-on' (default), 'edge-on', or 'none'.
@@ -150,7 +156,10 @@ def extract_particles(
 
         return particle_lists_local
 
-    def _write_output(inp, particle_lists_local, outpath):
+    def _write_output(inp, particle_lists_local, outpath, unwrap=None):
+        # unwrap = (center_code, box_size): write Coordinates as the periodic
+        # minimum image around center_code so a cutout crossing the box edge
+        # stays spatially contiguous for downstream gridding.
         center_vec_local = None
         evecs_local = None
 
@@ -193,6 +202,11 @@ def extract_particles(
 
                     data = read_ranges(dataset, idx_local)
 
+                    if k == "Coordinates" and unwrap is not None:
+                        uw_center, uw_box = unwrap
+                        d = data - uw_center
+                        data = uw_center + (d - uw_box * np.round(d / uw_box))
+
                     if k in ("Coordinates", "Velocities") and orientation != "none":
 
                         if k == "Coordinates":
@@ -225,8 +239,8 @@ def extract_particles(
     if galaxy_ids is not None and galaxy_id is not None:
         raise ValueError("Provide either galaxy_id or galaxy_ids, not both")
 
-    if galaxy_ids is not None and (halo_id is not None or center is not None or radius is not None):
-        raise ValueError("galaxy_ids mode cannot be combined with halo/aperture selection")
+    if galaxy_ids is not None and (halo_id is not None or center is not None):
+        raise ValueError("galaxy_ids mode cannot be combined with halo/center selection")
 
     if sim_name is None:
         # Derive from the simfile basename, stripping snap-number suffix
@@ -246,6 +260,23 @@ def extract_particles(
             print("Reading snapshot once for batch extraction:", simfile)
 
         with h5py.File(simfile, "r") as inp:
+            coords_code = None
+            radius_code = None
+            box_code = None
+            if radius is not None:
+                # spherical region of `radius` (proper kpc) around each galaxy,
+                # in snapshot code units (same convention as g.pos 'code_length')
+                hdr = inp["Header"].attrs
+                a_scale = float(hdr["Time"])
+                hubble = float(hdr["HubbleParam"])
+                box_code = float(hdr["BoxSize"])
+                radius_code = float(radius) / a_scale * hubble
+                coords_code = {pt: inp[pt]["Coordinates"][:]
+                               for pt in ptypes if pt in inp}
+                if verbose:
+                    print(f"Region mode: r = {radius} pkpc -> {radius_code:.1f} code units "
+                          f"(a={a_scale:.4f}, h={hubble}, box={box_code:g})")
+
             for gid in galaxy_ids:
                 gid = int(gid)
                 fname = (f'{prefix}_snap{snap:03}_gal{gid:06}.h5' if prefix
@@ -259,13 +290,26 @@ def extract_particles(
                     continue
 
                 gal = cs.galaxies[gid]
-                particle_lists = _build_particle_lists_from_obj(gal)
+                unwrap = None
+                if radius is not None:
+                    center_code = gal.pos.in_units('code_length').value
+                    unwrap = (center_code, box_code)
+                    particle_lists = {}
+                    for pt, pos in coords_code.items():
+                        d = pos - center_code
+                        d -= box_code * np.round(d / box_code)   # minimum image
+                        rr = np.sqrt(np.sum(d ** 2, axis=1))
+                        idx = np.where(rr <= radius_code)[0]
+                        if len(idx) > 0:
+                            particle_lists[pt] = idx
+                else:
+                    particle_lists = _build_particle_lists_from_obj(gal)
 
                 if verbose:
                     for pt in particle_lists:
                         print(f"gal {gid} {pt} particles:", len(particle_lists[pt]))
 
-                outputs.append(_write_output(inp, particle_lists, outpath))
+                outputs.append(_write_output(inp, particle_lists, outpath, unwrap=unwrap))
 
         return outputs
 

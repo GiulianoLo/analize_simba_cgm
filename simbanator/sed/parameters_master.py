@@ -14,8 +14,9 @@ pd_source_dir = os.path.join(root, 'powderday') + '/'
 # ===============================================
 oref = 0
 n_ref = 8
-zoom_box_len = 30   # kpc; box will be +/- zoom_box_len from centre
-bbox_lim = 60       # kpc - initial bounding box (+/- bbox_lim)
+zoom_box_len = 100  # kpc; box will be +/- zoom_box_len from centre
+                    # (= the largest SED aperture and the Stage-0 cutout radius)
+bbox_lim = 200      # kpc - initial bounding box (+/- bbox_lim)
 
 # ===============================================
 # PARALLELIZATION
@@ -120,10 +121,11 @@ SED = True
 # The patch calls image.set_aperture_range(SED_APERTURE_NAP, min*kpc, max*kpc) on the
 # peeled-image conf, so the .rtout.sed carries SED_APERTURE_NAP log-spaced projected
 # apertures; extract each with MakeSED.extract_flux_batch(..., aperture=i).
-# 10->160 kpc with 5 apertures = exactly 10, 20, 40, 80, 160 kpc (factor-2 log spacing).
+# 1->100 kpc with 5 apertures = 10^(k/2) ladder: 1, 3.16, 10, 31.6, 100 kpc
+# (central -> outskirts).
 SED_APERTURE_NAP = 5
-SED_APERTURE_MIN_KPC = 10.
-SED_APERTURE_MAX_KPC = 160.
+SED_APERTURE_MIN_KPC = 1.
+SED_APERTURE_MAX_KPC = 100.
 
 SED_MONOCHROMATIC = False
 FIX_SED_MONOCHROMATIC_WAVELENGTHS = False
@@ -143,9 +145,12 @@ TRANSMISSION_FILTER_REDSHIFT = 3.1
 # ===============================================
 # GRID INFORMATION
 # ===============================================
-MANUAL_ORIENTATION = False
-THETA = 0
-PHI = 0
+# 4 quasi-orthogonal sightlines (deg); galaxies are randomly oriented in the box,
+# so these sample the per-galaxy orientation spread. get_sed/extract_flux_batch
+# picks one with the inclination index findx = 0..3.
+MANUAL_ORIENTATION = True
+THETA = [0, 45, 90, 135]
+PHI = [0, 90, 180, 270]
 
 # ===============================================
 # OTHER INFORMATION

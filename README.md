@@ -311,11 +311,19 @@ extract_particles(
 )
 # Output: output/<sim>/filtered_particles/snap_<NNN>/m100n1024_snap<NNN>_gal<GGGGGG>.h5
 
+# Batch mode + radius — same files/names, but each holds ALL particles within a
+# spherical region of `radius` (PROPER kpc) around the galaxy centre (CGM,
+# satellites, ...) instead of the caesar member particles. Selection uses the
+# periodic minimum image and Coordinates are unwrapped around the centre.
+extract_particles(cs=cs, simfile=snap_file, snap=snap,
+                  galaxy_ids=list_of_galaxy_ids, radius=100.0,
+                  sim_name=sim.name, prefix="m100n1024")
+
 # Single galaxy
 extract_particles(cs=cs, simfile=snap_file, snap=snap,
                   galaxy_id=42, sim_name=sim.name)
 
-# Spatial aperture
+# Spatial aperture (radius here in snapshot coordinate units, legacy behaviour)
 extract_particles(cs=cs, simfile=snap_file, snap=snap,
                   center=[x, y, z], radius=50.0, sim_name=sim.name)
 ```

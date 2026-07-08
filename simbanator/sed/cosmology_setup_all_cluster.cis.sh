@@ -46,7 +46,7 @@ if [ -n "$snapshot_prefix" ]; then
     snapnum_str=$(printf "%03d" "$snap")
     galaxy_num_str=$(printf "%06d" "$galaxy")
     snapshot_name_expr_plist="f'${snapshot_prefix}_snap${snapnum_str}_gal${galaxy_num_str}.h5'"
-    snapshot_name_expr_region="${snapshot_prefix}_snap${snapnum_str}_gal${galaxy_num_str}.h5"
+    snapshot_name_expr_region="f'${snapshot_prefix}_snap${snapnum_str}_gal${galaxy_num_str}.h5'"
 else
     snapshot_name_expr_plist="f'snap{snapnum_str}_gal'+galaxy_num_str+'.h5'"
     snapshot_name_expr_region="f'region_snap{snapnum_str}_r${radius}_gal'+galaxy_num_str+'.h5'"
