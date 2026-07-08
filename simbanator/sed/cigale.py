@@ -43,8 +43,9 @@ __all__ = [
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# band-name mapping: '<Facility>.<Instrument>.<filter>' -> CIGALE 2025.0 names
-# (sets verified against pcigale/data/filters of the 2025.0 release)
+# band-name mapping: '<Facility>.<Instrument>.<filter>' -> CIGALE names
+# (sets verified against pcigale/data/filters; 2025.1 splits WFC3 UVIS into
+#  per-chip uvis1/uvis2 — we map to uvis1, the primary/reference CCD)
 # ══════════════════════════════════════════════════════════════════════════
 
 WFC3_IR_FILTERS = {
@@ -76,7 +77,7 @@ CIGALE_KNOWN_BANDS = (
         "herschel.spire.PLW_ext",
     }
     | {f"hst.wfc3.ir.{f}" for f in WFC3_IR_FILTERS}
-    | {f"hst.wfc3.uvis.{f}" for f in WFC3_UVIS_FILTERS}
+    | {f"hst.wfc3.uvis1.{f}" for f in WFC3_UVIS_FILTERS}
     | {f"jwst.nircam.{f}" for f in NIRCAM_FILTERS}
 )
 
@@ -103,7 +104,7 @@ def cigale_band(col):
     except ValueError:
         return None
     if fac == "HST" and inst == "WFC3":
-        sub = "ir" if filt in WFC3_IR_FILTERS else "uvis"
+        sub = "ir" if filt in WFC3_IR_FILTERS else "uvis1"
         name = f"hst.wfc3.{sub}.{filt}"
     else:
         name = f"{fac.lower()}.{inst.lower()}.{filt}"
