@@ -11,10 +11,12 @@ from .mergers import (
     analyze_mergers,
 )
 from .sfh_fsps import *
+from .sfh_utils import smooth_resample_sfh, recent_sfr
 
 __all__ = [
     "HDF5BuildHistory",
     "find_property_threshold_crossings_from_hdf5",
+    "smooth_resample_sfh", "recent_sfr",
     "extract_particles",
     "radial_profile",
     "caesar_read_progen", "read_progen",
