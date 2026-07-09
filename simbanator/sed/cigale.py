@@ -998,7 +998,8 @@ def _nmad(x):
 
 
 def compare_results(run_dir, truth, log_props=None, outdir=None,
-                    basename="simba_vs_cigale", show=True, verbose=True):
+                    basename="simba_vs_cigale", show=True, verbose=True,
+                    highlight_col="dusty"):
     """Truth (simulation) vs CIGALE estimates: print, plot, save into out/.
 
     Parameters
@@ -1022,6 +1023,12 @@ def compare_results(run_dir, truth, log_props=None, outdir=None,
         Stem of the saved files: ``<basename>.fits`` + ``<basename>.png``.
     show : bool
         Show the figure (else it is only saved and closed).
+    highlight_col : str, optional
+        Name of a 1/0(/−1 = unknown) truth column marking a subsample to
+        highlight (default ``'dusty'``, silently skipped when absent):
+        value-1 objects get a red ring in every panel on top of the redshift
+        colors, and the offset/NMAD stats are additionally printed for the
+        1 and 0 subsamples separately. Pass None to disable.
 
     Returns
     -------
@@ -1067,6 +1074,13 @@ def compare_results(run_dir, truth, log_props=None, outdir=None,
     extras = [c for c in truth.colnames if c != "id" and c not in props]
     for c in extras:
         comp[c] = truth[c][keep]
+
+    # highlighted subsample (e.g. the Part 7a' dusty flag): 1 / 0 / -1-unknown
+    hmask = nmask = None
+    if highlight_col and highlight_col in extras:
+        _hv = np.asarray(comp[highlight_col], float)
+        hmask = _hv == 1
+        nmask = _hv == 0
     for p in props:
         comp[f"{p}_true"] = np.asarray(truth[p], float)[keep]
         comp[f"{p}_cigale"] = np.asarray(res[f"bayes.{p}"], float)[ridx]
@@ -1111,6 +1125,15 @@ def compare_results(run_dir, truth, log_props=None, outdir=None,
                 continue
             print(f"  {p}: median offset {np.median(d[ok]):+.2f}{unit}, "
                   f"NMAD {_nmad(d):.2f}{unit}  ({ok.sum()}/{len(d)} valid)")
+            if hmask is not None:
+                for _lab, _mm in ((highlight_col, hmask),
+                                  (f"non-{highlight_col}", nmask)):
+                    _okm = ok & _mm
+                    if _okm.any():
+                        print(f"      {_lab:>12s}: median "
+                              f"{np.median(d[_okm]):+.2f}{unit}, "
+                              f"NMAD {_nmad(d[_okm]):.2f}{unit}  "
+                              f"({_okm.sum()})")
 
     # ── one-to-one panels ──
     zcol = next((c for c in ("z_snap", "redshift", "z_target")
@@ -1179,6 +1202,11 @@ def compare_results(run_dir, truth, log_props=None, outdir=None,
             if (m & pinned).any():
                 ax.scatter(tt[m & pinned], ee[m & pinned], s=40,
                            facecolors="none", edgecolors=color, zorder=3)
+        if hmask is not None and (hmask & both).any():
+            _hm = hmask & both               # ring on top of the z colors
+            ax.scatter(tt[_hm], ee[_hm], s=110, facecolors="none",
+                       edgecolors="#c0392b", lw=1.3, zorder=4,
+                       label=highlight_col if k == 0 else None)
         if logp:
             ax.set_xscale("log"), ax.set_yscale("log")
             if pinned.any():
@@ -1190,7 +1218,7 @@ def compare_results(run_dir, truth, log_props=None, outdir=None,
         ax.set_xlabel(f"SIMBA {unit}")
         ax.set_ylabel(f"CIGALE {unit}")
         ax.set_title(p, fontsize=11)
-        if k == 0 and groups[0][0] is not None:
+        if k == 0 and (groups[0][0] is not None or hmask is not None):
             ax.legend(fontsize=8, frameon=False)
     for k in range(n, nrows * ncols):
         axes[k // ncols][k % ncols].set_axis_off()
