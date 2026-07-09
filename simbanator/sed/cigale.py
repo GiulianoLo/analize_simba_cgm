@@ -433,7 +433,8 @@ DEFAULT_MODULE_PARAMS = {
 DEFAULT_ANALYSIS_PARAMS = {
     "variables": ["stellar.m_star", "stellar.metallicity",
                   "sfh.sfr", "sfh.sfr10Myrs", "sfh.sfr100Myrs",
-                  "sfh.tau_main", "sfh.age_bq", "sfh.r_sfr",
+                  "sfh.tau_main", "sfh.age_main", "sfh.age_bq", "sfh.r_sfr",
+                  "stellar.age_m_star", "attenuation.Av_ISM",
                   "dust.luminosity"],
     "save_best_sed": True,
 }
@@ -789,6 +790,129 @@ def run(run_dir, pcigale_cmd="pcigale", skip_if_done=False):
 def read_results(run_dir):
     """Load ``<run_dir>/out/results.fits`` (Bayesian + best-fit estimates)."""
     return Table.read(os.path.join(run_dir, "out", "results.fits"))
+
+
+def write_slurm_array(run_dirs, job_file, pcigale_cmd="pcigale",
+                      partition=None, cores=8, mem_per_cpu_mb=3800,
+                      time="0-08:00", array_throttle=None, plots=True,
+                      plots_format="png", job_name="cigale_fits",
+                      verbose=True):
+    """Write a SLURM job array that runs ``pcigale run`` in every *run_dirs*.
+
+    One array task per run directory — the right parallel unit: CIGALE builds
+    its model grid once per run and shares it across all objects in the data
+    file (row-splitting a catalog would recompute the same grid per chunk),
+    while within a task pcigale itself fans out over ``cores`` processes.
+
+    Each task ``cd``s into its run dir, **skips if ``out/results.fits``
+    already exists** (resubmitting after a partial failure is cheap), rewrites
+    ``cores`` in ``pcigale.ini`` to the actual ``$SLURM_CPUS_PER_TASK``, sets
+    ``OMP_NUM_THREADS=1`` (pcigale multiprocessing + threaded BLAS would
+    oversubscribe), runs the fit, and optionally ``pcigale-plots sed``
+    (plot failures do not fail the task).
+
+    Parameters
+    ----------
+    run_dirs : sequence of str
+        Prepared run directories (each must contain a ``pcigale.ini`` from
+        :func:`prepare_run`).
+    job_file : str
+        Path of the sbatch script to write; the run-dir list goes next to it
+        (``<stem>.dirs``) and logs into ``<dirname>/slurm_logs/``.
+    pcigale_cmd : str
+        Absolute path to the ``pcigale`` executable of the CIGALE conda env
+        (calling the binary directly needs no ``conda activate``);
+        ``<pcigale_cmd>-plots`` is used for the figures.
+    partition : str, optional
+        SLURM partition(s); omitted from the script if None (pass at submit
+        time via ``sbatch -p ...``).
+    cores : int
+        ``--cpus-per-task`` (pcigale worker processes per task).
+    mem_per_cpu_mb : int
+        ``--mem-per-cpu`` in MB.
+    time : str
+        SLURM time limit per task.
+    array_throttle : int, optional
+        Max tasks running simultaneously (``--array=...%N``).
+    plots : bool
+        Append the ``pcigale-plots sed`` step to each task.
+
+    Returns
+    -------
+    str : *job_file*
+    """
+    run_dirs = [os.path.abspath(d) for d in run_dirs]
+    if not run_dirs:
+        raise ValueError("run_dirs is empty")
+    missing = [d for d in run_dirs
+               if not os.path.exists(os.path.join(d, "pcigale.ini"))]
+    if missing:
+        raise FileNotFoundError(f"no pcigale.ini in {missing} — "
+                                "call prepare_run on every run dir first")
+
+    job_file = os.path.abspath(job_file)
+    base = os.path.dirname(job_file)
+    log_dir = os.path.join(base, "slurm_logs")
+    os.makedirs(log_dir, exist_ok=True)
+    dirs_file = os.path.splitext(job_file)[0] + ".dirs"
+    with open(dirs_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(run_dirs) + "\n")
+
+    array = f"0-{len(run_dirs) - 1}"
+    if array_throttle:
+        array += f"%{int(array_throttle)}"
+
+    lines = [
+        "#!/bin/bash",
+        f"#SBATCH --job-name={job_name}",
+        f"#SBATCH --output={log_dir}/{job_name}.%A_%a.o",
+        f"#SBATCH --error={log_dir}/{job_name}.%A_%a.e",
+    ]
+    if partition:
+        lines.append(f"#SBATCH -p {partition}")
+    lines += [
+        f"#SBATCH -t {time}",
+        "#SBATCH --ntasks=1",
+        f"#SBATCH --cpus-per-task={int(cores)}",
+        f"#SBATCH --mem-per-cpu={int(mem_per_cpu_mb)}",
+        f"#SBATCH --array={array}",
+        "",
+        "set -euo pipefail",
+        f'PCIGALE="{pcigale_cmd}"',
+        f'DIRS_FILE="{dirs_file}"',
+        'RUN_DIR=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$DIRS_FILE")',
+        'echo "[task ${SLURM_ARRAY_TASK_ID}] ${RUN_DIR}"',
+        'cd "$RUN_DIR"',
+        'if [ -s out/results.fits ]; then',
+        '    echo "out/results.fits exists — skipping"',
+        '    exit 0',
+        'fi',
+        '# match the pcigale worker count to the actual allocation',
+        'sed -i "s/^cores = .*/cores = ${SLURM_CPUS_PER_TASK}/" pcigale.ini',
+        '# pcigale parallelizes over processes; keep BLAS single-threaded',
+        'export OMP_NUM_THREADS=1',
+        '"$PCIGALE" run',
+    ]
+    if plots:
+        lines += [
+            f'"${{PCIGALE}}-plots" sed --format {plots_format} --nologo '
+            '|| echo "[warn] pcigale-plots failed (fit results unaffected)"',
+        ]
+    lines.append('echo "[task ${SLURM_ARRAY_TASK_ID}] done"')
+
+    with open(job_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    os.chmod(job_file, 0o755)
+
+    if verbose:
+        n_done = sum(os.path.exists(os.path.join(d, "out", "results.fits"))
+                     for d in run_dirs)
+        print(f"[cigale] job array: {len(run_dirs)} tasks "
+              f"({n_done} already have results.fits -> skipped in-task)")
+        print(f"[cigale]   run-dir list -> {dirs_file}")
+        print(f"[cigale]   submit with:  sbatch"
+              + ("" if partition else " -p <partition>") + f" {job_file}")
+    return job_file
 
 
 def plot_seds(run_dir, format="pdf", type="mJy", xrange=None, yrange=None,

@@ -90,7 +90,9 @@ simbanator/
 │   │                     #   (truth vs bayes.*: per-galaxy print, offset/NMAD stats,
 │   │                     #   one-to-one panels → <run_dir>/out/simba_vs_cigale.fits+.png),
 │   │                     #   plot_parameter_priors (per gridded param: fitted distribution
-│   │                     #   vs prior nodes + extend/refine/trim advice → param_priors.*).
+│   │                     #   vs prior nodes + extend/refine/trim advice → param_priors.*),
+│   │                     #   write_slurm_array (one SLURM array task per prepared run dir;
+│   │                     #   in-task skip of finished runs → cheap resubmits).
 │   │                     #   No simbanator imports — loadable standalone in a CIGALE env.
 │   └── parameters_master.py / parameters_master-nodust.py
 │                         #   SED_APERTURE_NAP/MIN_KPC/MAX_KPC – multi-aperture SEDs
