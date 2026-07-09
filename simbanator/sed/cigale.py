@@ -71,6 +71,16 @@ NIRCAM_FILTERS = {
     "F322W2", "F323N", "F335M", "F356W", "F360M", "F405N", "F410M", "F430M",
     "F444W", "F460M", "F466N", "F470N", "F480M",
 }
+MIRI_FILTERS = {
+    "F560W", "F770W", "F1000W", "F1130W", "F1280W", "F1500W", "F1800W",
+    "F2100W", "F2550W",
+}
+HSC_FILTERS = {"g", "r", "i", "z", "Y"}
+MEGACAM_FILTERS = {"u", "u_1", "g", "g_1", "r", "r_1", "i", "i_1", "i_2",
+                   "z", "z_1"}
+# SVO lists VISTA under Paranal/VIRCAM; CIGALE names them paranal.vircam.*
+VIRCAM_FILTERS = {"Z", "Y", "J", "H", "Ks", "NB118", "NB980", "NB990"}
+SCUBA2_FILTERS = {"450GHz", "850GHz"}
 CIGALE_KNOWN_BANDS = (
     {
         "2mass.J", "generic.johnson.U", "generic.johnson.V",
@@ -81,10 +91,18 @@ CIGALE_KNOWN_BANDS = (
         "herschel.spire.PSW", "herschel.spire.PMW", "herschel.spire.PLW",
         "herschel.spire.PSW_ext", "herschel.spire.PMW_ext",
         "herschel.spire.PLW_ext",
+        # NOT in the stock 2025 DB — custom filter, register once per env:
+        #   pcigale-filters add ALMA_band6_cigale.dat   (repo root)
+        "alma.band6",
     }
     | {f"hst.wfc3.ir.{f}" for f in WFC3_IR_FILTERS}
     | {f"hst.wfc3.uvis1.{f}" for f in WFC3_UVIS_FILTERS}
     | {f"jwst.nircam.{f}" for f in NIRCAM_FILTERS}
+    | {f"jwst.miri.{f}" for f in MIRI_FILTERS}
+    | {f"subaru.hsc.{f}" for f in HSC_FILTERS}
+    | {f"cfht.megacam.{f}" for f in MEGACAM_FILTERS}
+    | {f"paranal.vircam.{f}" for f in VIRCAM_FILTERS}
+    | {f"jcmt.scuba2.{f}" for f in SCUBA2_FILTERS}
 )
 
 # local filter files used by the notebooks -> CIGALE names
@@ -92,6 +110,7 @@ CIGALE_OVERRIDES = {
     "2MASS.J.J": "2mass.J",
     "Johnson.V.V": "generic.johnson.V",
     "Johnson2.U.U": "generic.johnson.U",
+    "ALMA.ALMA.band6": "alma.band6",
 }
 
 
