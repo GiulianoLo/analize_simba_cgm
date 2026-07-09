@@ -69,7 +69,9 @@ simbanator/
 │   ├── sfh_caesar.py     # HDF5BuildHistory – property histories from Caesar catalogs
 │   ├── sfh_fsps.py       # compute_sfh, bin_sfh, save_sfh, load_sfh – FSPS SFHs
 │   ├── sfh_utils.py      # smooth_resample_sfh, recent_sfr – de-burst snapshot-cadence
-│   │                     #   SFR tracks (Gaussian kernel + uniform resample)
+│   │                     #   SFR tracks (Gaussian kernel + uniform resample);
+│   │                     #   sfr_delayed_bq, fit_delayed_bq – CIGALE sfhdelayedbq
+│   │                     #   form + bounded fit (shared by 7b′ and aperture truth)
 │   ├── profiles.py       # radial_profile – surface-density / mean radial profiles
 │   ├── quenching.py      # find_quenching_times, load_quenching_events
 │   ├── history.py        # deprecated shim → sfh_caesar

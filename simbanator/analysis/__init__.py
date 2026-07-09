@@ -11,7 +11,8 @@ from .mergers import (
     analyze_mergers,
 )
 from .sfh_fsps import *
-from .sfh_utils import smooth_resample_sfh, recent_sfr
+from .sfh_utils import (smooth_resample_sfh, recent_sfr,
+                        sfr_delayed_bq, fit_delayed_bq)
 
 __all__ = [
     "HDF5BuildHistory",
