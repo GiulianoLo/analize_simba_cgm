@@ -30,6 +30,7 @@ The config layout and the filter names are pinned to **CIGALE 2025.0**
 """
 
 import os
+import re
 import subprocess
 import textwrap
 import warnings
@@ -202,6 +203,127 @@ def write_cigale_input(flux_table, outpath, err_floor=0.0, verbose=True):
             print(f"[cigale]   dropped (not in the CIGALE 2025.0 DB): "
                   f"{sorted(set(dropped))}")
     return outpath
+
+
+def grid_options(module, param):
+    """Allowed values of a strict-grid CIGALE parameter, from the registry.
+
+    Parses the ``options=a & b & ...`` clause of the configobj type string in
+    :data:`MODULE_REGISTRY` (verbatim from the CIGALE sources), e.g.
+    ``grid_options('bc03', 'metallicity')`` ->
+    ``[0.0001, 0.0004, 0.004, 0.008, 0.02, 0.05]``. Raises for parameters
+    without a fixed option list.
+    """
+    typ = MODULE_REGISTRY[module][param][0]
+    m = re.search(r"options=([^)]*)", typ)
+    if not m:
+        raise ValueError(f"{module}.{param} has no fixed option list "
+                         f"(type: {typ})")
+    return [float(t) for t in m.group(1).split("&")]
+
+
+def nearest_option(values, options, log=True):
+    """Snap *values* to the nearest allowed grid *options* (NaN stays NaN).
+
+    With ``log=True`` (default) 'nearest' is measured in log space — the
+    right metric for metallicity-like grids that are geometrically spaced.
+    """
+    values = np.atleast_1d(np.asarray(values, float))
+    opts = np.sort(np.asarray(options, float))
+    space = np.log10(opts) if log else opts
+    out = np.full(values.shape, np.nan)
+    ok = np.isfinite(values) & ((values > 0) if log else True)
+    if ok.any():
+        v = np.log10(values[ok]) if log else values[ok]
+        out[ok] = opts[np.argmin(np.abs(v[:, None] - space[None, :]),
+                                 axis=1)]
+    return out
+
+
+def split_by_metallicity(data_file, zstar, zgas=None, outdir=None,
+                         verbose=True):
+    """Split a CIGALE data file into per-metallicity groups (strict priors).
+
+    CIGALE cannot pin a grid parameter per object, so a per-galaxy
+    metallicity prior needs one sub-catalog + run per metallicity group.
+    Each object's SIMBA stellar metallicity is snapped to the nearest
+    allowed bc03 ``metallicity`` (log-space nearest); objects sharing a node
+    form a group fitted with that **single** stellar Z. Groups are keyed by
+    the stellar node only — the nebular ``zgas`` grid is dense (26 nodes),
+    so keying on it too would fragment the sample into ~per-object runs,
+    each recomputing the full model grid (more total compute than no split).
+    Instead each group's ``zgas`` grid is restricted to the **set of snapped
+    zgas values of its members** — a tight range prior, marginalized within
+    the group.
+
+    Parameters
+    ----------
+    data_file : str
+        A :func:`write_cigale_input` catalog.
+    zstar : dict
+        ``{id: Z}`` — linear stellar metallicity (mass fraction) per object
+        id (``snapNNN_galID``). Objects missing from the dict (or with
+        non-finite Z) go to a ``Zsfree`` group fitted with the default
+        metallicity grid.
+    zgas : dict, optional
+        Same for the nebular gas metallicity. Omitted -> only bc03 is
+        constrained.
+    outdir : str, optional
+        Where the sub-catalogs are written. Default: ``<dirname>/zbinned/``
+        (a subdirectory, so the originals' glob does not re-match them).
+
+    Returns
+    -------
+    list of dict
+        One entry per group: ``{'tag', 'path', 'n', 'module_params'}`` —
+        *tag* like ``'Zs0p008'`` (or ``'Zsfree'``), *path* the sub-catalog,
+        *module_params* the override dict (``None`` for the free group) to
+        merge into :func:`prepare_run`'s ``module_params``.
+    """
+    t = Table.read(data_file)
+    ids = np.array([str(i) for i in t["id"]])
+    zs_grid = grid_options("bc03", "metallicity")
+    zg_grid = grid_options("nebular", "zgas")
+
+    zs = nearest_option([zstar.get(i, np.nan) for i in ids], zs_grid)
+    zg = (nearest_option([zgas.get(i, np.nan) for i in ids], zg_grid)
+          if zgas is not None else np.full(len(ids), np.nan))
+
+    def _fmt_z(v):
+        return f"{v:g}".replace(".", "p")
+
+    groups = {}
+    for k in range(len(ids)):
+        key = zs[k] if np.isfinite(zs[k]) else "free"
+        groups.setdefault(key, []).append(k)
+
+    if outdir is None:
+        outdir = os.path.join(os.path.dirname(os.path.abspath(data_file)),
+                              "zbinned")
+    os.makedirs(outdir, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(data_file))[0]
+
+    out = []
+    for kzs, rows in sorted(groups.items(), key=lambda kv: str(kv[0])):
+        if kzs == "free":
+            gtag, mp = "Zsfree", None
+        else:
+            gtag = f"Zs{_fmt_z(kzs)}"
+            mp = {"bc03": {"metallicity": [kzs]}}
+            zg_vals = sorted({v for v in zg[rows] if np.isfinite(v)})
+            if zg_vals:
+                mp["nebular"] = {"zgas": zg_vals}
+        path = os.path.join(outdir, f"{stem}_{gtag}.fits")
+        t[np.array(rows)].write(path, overwrite=True)
+        out.append({"tag": gtag, "path": path, "n": len(rows),
+                    "module_params": mp})
+    if verbose:
+        n_free = sum(g["n"] for g in out if g["module_params"] is None)
+        print(f"[cigale] {stem}: {len(t)} objects -> {len(out)} metallicity "
+              f"group(s) " + ", ".join(f"{g['tag']}({g['n']})" for g in out)
+              + (f" — {n_free} without a Z prior fit the default grid"
+                 if n_free else ""))
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════

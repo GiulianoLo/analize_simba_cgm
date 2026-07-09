@@ -94,7 +94,11 @@ simbanator/
 │   │                     #   plot_parameter_priors (per gridded param: fitted distribution
 │   │                     #   vs prior nodes + extend/refine/trim advice → param_priors.*),
 │   │                     #   write_slurm_array (one SLURM array task per prepared run dir;
-│   │                     #   in-task skip of finished runs → cheap resubmits).
+│   │                     #   default re-fits with CIGALE-native timestamped out/ backups,
+│   │                     #   skip_if_done=True for cheap resubmits),
+│   │                     #   grid_options/nearest_option/split_by_metallicity (per-galaxy
+│   │                     #   metallicity priors: snap SIMBA Z to the strict CIGALE grids
+│   │                     #   in log space, one sub-catalog+run per bc03 node).
 │   │                     #   No simbanator imports — loadable standalone in a CIGALE env.
 │   └── parameters_master.py / parameters_master-nodust.py
 │                         #   SED_APERTURE_NAP/MIN_KPC/MAX_KPC – multi-aperture SEDs
