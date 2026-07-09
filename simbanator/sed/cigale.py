@@ -241,7 +241,7 @@ def nearest_option(values, options, log=True):
 
 
 def split_by_metallicity(data_file, zstar, zgas=None, outdir=None,
-                         verbose=True):
+                         n_zgas_max=3, verbose=True):
     """Split a CIGALE data file into per-metallicity groups (strict priors).
 
     CIGALE cannot pin a grid parameter per object, so a per-galaxy
@@ -252,9 +252,13 @@ def split_by_metallicity(data_file, zstar, zgas=None, outdir=None,
     the stellar node only — the nebular ``zgas`` grid is dense (26 nodes),
     so keying on it too would fragment the sample into ~per-object runs,
     each recomputing the full model grid (more total compute than no split).
-    Instead each group's ``zgas`` grid is restricted to the **set of snapped
-    zgas values of its members** — a tight range prior, marginalized within
-    the group.
+    Instead each group's ``zgas`` grid is restricted to at most
+    *n_zgas_max* values picked at quantiles of the members' snapped zgas
+    distribution (re-snapped to the grid) — a range prior that cannot
+    balloon the model grid: the 26-node zgas grid is dense enough that a
+    large group can otherwise collect 10+ distinct values, multiplying the
+    grid by that factor (the 2026-07-09 SIGBUS: 14 zgas x 10^4 SFH x 120
+    dust x 5 z = 84M models in one block).
 
     Parameters
     ----------
@@ -268,6 +272,9 @@ def split_by_metallicity(data_file, zstar, zgas=None, outdir=None,
     zgas : dict, optional
         Same for the nebular gas metallicity. Omitted -> only bc03 is
         constrained.
+    n_zgas_max : int
+        Maximum number of zgas grid values per group (default 3:
+        min/median/max quantiles of the members' snapped distribution).
     outdir : str, optional
         Where the sub-catalogs are written. Default: ``<dirname>/zbinned/``
         (a subdirectory, so the originals' glob does not re-match them).
@@ -310,8 +317,14 @@ def split_by_metallicity(data_file, zstar, zgas=None, outdir=None,
         else:
             gtag = f"Zs{_fmt_z(kzs)}"
             mp = {"bc03": {"metallicity": [kzs]}}
-            zg_vals = sorted({v for v in zg[rows] if np.isfinite(v)})
-            if zg_vals:
+            zgm = zg[rows]
+            zgm = zgm[np.isfinite(zgm)]
+            if zgm.size:
+                zg_vals = sorted(set(zgm.tolist()))
+                if len(zg_vals) > n_zgas_max:
+                    picks = np.quantile(zgm, np.linspace(0, 1, n_zgas_max))
+                    zg_vals = sorted(set(
+                        nearest_option(picks, zg_grid).tolist()))
                 mp["nebular"] = {"zgas": zg_vals}
         path = os.path.join(outdir, f"{stem}_{gtag}.fits")
         t[np.array(rows)].write(path, overwrite=True)
@@ -646,7 +659,7 @@ def _grid_size(sed_modules, mp):
 
 def prepare_run(run_dir, data_file, sed_modules=None, module_params=None,
                 analysis_params=None, cores=None, additional_error=0.1,
-                properties=(), verbose=True):
+                properties=(), max_block_models=5_000_000, verbose=True):
     """Write a complete ``pcigale.ini`` + ``pcigale.ini.spec`` into *run_dir*.
 
     Equivalent to ``pcigale init`` + ``pcigale genconf`` + hand-editing, in
@@ -680,6 +693,14 @@ def prepare_run(run_dir, data_file, sed_modules=None, module_params=None,
         :func:`write_cigale_input` does not apply its own floor).
     properties : sequence of str
         Intensive/extensive properties to fit (rarely needed here).
+    max_block_models : int
+        Unless ``analysis_params`` sets ``blocks`` explicitly, the CIGALE
+        ``blocks`` count is chosen automatically as
+        ``ceil(n_z * n_models / max_block_models)``. CIGALE builds each
+        block's model fluxes in shared memory (``/dev/shm``, counted
+        against the SLURM job cgroup — overrunning it dies with SIGBUS,
+        not a clean OOM): ~93 bands x 8 B = ~750 B/model, so the default
+        5M-model blocks stay under ~4 GB.
 
     Returns
     -------
@@ -705,6 +726,14 @@ def prepare_run(run_dir, data_file, sed_modules=None, module_params=None,
         cores = os.cpu_count() or 1
 
     ap["bands"] = bands   # fluxes to predict; independent of the fit itself
+
+    # auto-chunk the model grid unless the caller pinned `blocks` explicitly
+    n_z = len(np.unique(np.round(np.asarray(obs["redshift"], float),
+                                 int(ap.get("redshift_decimals", 2)))))
+    n_models = _grid_size(sed_modules, mp)
+    if not (analysis_params and "blocks" in analysis_params):
+        ap["blocks"] = max(1, int(np.ceil(n_z * n_models
+                                          / float(max_block_models))))
 
     ini, spec = [], []
 
@@ -759,11 +788,9 @@ def prepare_run(run_dir, data_file, sed_modules=None, module_params=None,
         f.write("\n".join(spec) + "\n")
 
     if verbose:
-        nz = len(np.unique(np.round(np.asarray(obs["redshift"], float),
-                                    int(ap.get("redshift_decimals", 2)))))
-        nmod = _grid_size(sed_modules, mp)
         print(f"[cigale] {ini_path}: {len(obs)} objects, {len(bands)} bands, "
-              f"{nz} redshift(s) x {nmod} models = {nz * nmod} total")
+              f"{n_z} redshift(s) x {n_models} models = {n_z * n_models} "
+              f"total in {ap['blocks']} block(s)")
     return ini_path
 
 
