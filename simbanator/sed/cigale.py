@@ -796,7 +796,7 @@ def write_slurm_array(run_dirs, job_file, pcigale_cmd="pcigale",
                       partition=None, cores=8, mem_per_cpu_mb=3800,
                       time="0-08:00", array_throttle=None, plots=True,
                       plots_format="png", job_name="cigale_fits",
-                      verbose=True):
+                      skip_if_done=False, verbose=True):
     """Write a SLURM job array that runs ``pcigale run`` in every *run_dirs*.
 
     One array task per run directory — the right parallel unit: CIGALE builds
@@ -804,12 +804,16 @@ def write_slurm_array(run_dirs, job_file, pcigale_cmd="pcigale",
     file (row-splitting a catalog would recompute the same grid per chunk),
     while within a task pcigale itself fans out over ``cores`` processes.
 
-    Each task ``cd``s into its run dir, **skips if ``out/results.fits``
-    already exists** (resubmitting after a partial failure is cheap), rewrites
-    ``cores`` in ``pcigale.ini`` to the actual ``$SLURM_CPUS_PER_TASK``, sets
-    ``OMP_NUM_THREADS=1`` (pcigale multiprocessing + threaded BLAS would
-    oversubscribe), runs the fit, and optionally ``pcigale-plots sed``
-    (plot failures do not fail the task).
+    Each task ``cd``s into its run dir, rewrites ``cores`` in ``pcigale.ini``
+    to the actual ``$SLURM_CPUS_PER_TASK``, sets ``OMP_NUM_THREADS=1``
+    (pcigale multiprocessing + threaded BLAS would oversubscribe), runs the
+    fit, and optionally ``pcigale-plots sed`` (plot failures do not fail the
+    task). By default a run with existing results is **re-fit**: pcigale
+    itself renames the pre-existing ``out/`` to a timestamped
+    ``<YYYYMMDDHHMM>_out/`` backup before writing the new one (native CIGALE
+    behaviour). With ``skip_if_done=True`` such tasks exit immediately
+    instead — resubmitting the same job file after a partial failure then
+    only runs what is missing.
 
     Parameters
     ----------
@@ -836,6 +840,10 @@ def write_slurm_array(run_dirs, job_file, pcigale_cmd="pcigale",
         Max tasks running simultaneously (``--array=...%N``).
     plots : bool
         Append the ``pcigale-plots sed`` step to each task.
+    skip_if_done : bool
+        False (default): re-fit everything, pcigale timestamps-and-keeps any
+        previous ``out/``. True: tasks whose ``out/results.fits`` exists exit
+        immediately (cheap resubmits).
 
     Returns
     -------
@@ -883,10 +891,20 @@ def write_slurm_array(run_dirs, job_file, pcigale_cmd="pcigale",
         'RUN_DIR=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$DIRS_FILE")',
         'echo "[task ${SLURM_ARRAY_TASK_ID}] ${RUN_DIR}"',
         'cd "$RUN_DIR"',
-        'if [ -s out/results.fits ]; then',
-        '    echo "out/results.fits exists — skipping"',
-        '    exit 0',
-        'fi',
+    ]
+    if skip_if_done:
+        lines += [
+            'if [ -s out/results.fits ]; then',
+            '    echo "out/results.fits exists — skipping (skip_if_done)"',
+            '    exit 0',
+            'fi',
+        ]
+    else:
+        lines += [
+            '# a pre-existing out/ is renamed to <YYYYMMDDHHMM>_out/ by '
+            'pcigale itself (kept, not overwritten)',
+        ]
+    lines += [
         '# match the pcigale worker count to the actual allocation',
         'sed -i "s/^cores = .*/cores = ${SLURM_CPUS_PER_TASK}/" pcigale.ini',
         '# pcigale parallelizes over processes; keep BLAS single-threaded',
@@ -907,8 +925,10 @@ def write_slurm_array(run_dirs, job_file, pcigale_cmd="pcigale",
     if verbose:
         n_done = sum(os.path.exists(os.path.join(d, "out", "results.fits"))
                      for d in run_dirs)
+        _mode = ("skipped in-task" if skip_if_done
+                 else "re-fit; old out/ kept as <timestamp>_out/")
         print(f"[cigale] job array: {len(run_dirs)} tasks "
-              f"({n_done} already have results.fits -> skipped in-task)")
+              f"({n_done} already have results.fits -> {_mode})")
         print(f"[cigale]   run-dir list -> {dirs_file}")
         print(f"[cigale]   submit with:  sbatch"
               + ("" if partition else " -p <partition>") + f" {job_file}")
