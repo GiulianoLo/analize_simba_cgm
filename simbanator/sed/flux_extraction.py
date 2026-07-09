@@ -5,6 +5,7 @@ from hyperion.model import ModelOutput
 from astropy import units as u
 from astropy import constants
 from astropy.io import fits, ascii
+from astropy.table import Table
 from scipy.interpolate import interp1d
 import os
 from tqdm import trange
@@ -191,6 +192,105 @@ def convolveFilterWithSED(sedX, sedY, transX, transY, sedYerr=None):
         # are negative — the flux ratio self-corrects but the sqrt does not
         realYerr = np.sqrt(np.sum((w * ynew * sedYerr[ind]) ** 2)) / np.abs(norm)
     return xmean, realY, realYerr
+
+def annular_flux_table(inner, outer, verbose=True):
+    """Differential (annular) fluxes between two cumulative-aperture flux tables.
+
+    Hyperion SED apertures are cumulative — the flux within a projected
+    (image-plane) radius — so the flux in the annulus r_in < R <= r_out is
+    ``F(<r_out) - F(<r_in)``, band by band. Filter convolution is linear in
+    flux, so differencing the convolved photometry equals convolving the
+    differenced SED.
+
+    Parameters
+    ----------
+    inner, outer : str or :class:`~astropy.table.Table`
+        ``MakeSED.extract_flux_batch`` tables (or paths to the FITS) of the
+        SAME sources/run/inclination at two consecutive aperture indices
+        (*inner* = smaller radius). Sources are matched on
+        ``(snap, gal_id_at_snap)``; only sources present in both survive.
+
+    Returns
+    -------
+    :class:`~astropy.table.Table`
+        Same schema as the inputs (``gal_id_at_snap, snap, redshift,
+        '<band>', '<band>_err'``), directly consumable by
+        :func:`simbanator.sed.cigale.write_cigale_input`.
+
+    Notes
+    -----
+    * Non-positive or non-finite annular flux (Monte-Carlo noise / empty
+      annulus) -> **NaN flux AND error** (the missing-band convention
+      downstream, e.g. CIGALE ignores NaN bands).
+    * Errors: both photometries come from the same photon run and the photons
+      inside r_in are counted in both, so under photon independence
+      ``Var(F_out) = Var(F_in) + Var(F_ann)`` and
+      ``err_ann = sqrt(err_out^2 - err_in^2)``; where MC noise makes that
+      non-positive, the conservative quadrature sum
+      ``sqrt(err_out^2 + err_in^2)`` is used instead.
+    """
+    t_in = Table.read(inner) if isinstance(inner, str) else inner
+    t_out = Table.read(outer) if isinstance(outer, str) else outer
+
+    key_cols = ("gal_id_at_snap", "snap", "redshift")
+    idx_in = {(int(s), int(g)): i for i, (s, g)
+              in enumerate(zip(t_in["snap"], t_in["gal_id_at_snap"]))}
+    rows_out, rows_in = [], []
+    dropped = []
+    for j, (s, g) in enumerate(zip(t_out["snap"], t_out["gal_id_at_snap"])):
+        i = idx_in.get((int(s), int(g)))
+        if i is None:
+            dropped.append((int(s), int(g)))
+        else:
+            rows_out.append(j)
+            rows_in.append(i)
+    if not rows_out:
+        raise ValueError("no (snap, gal_id_at_snap) pair present in both tables")
+
+    bands = [c for c in t_out.colnames
+             if c not in key_cols and not c.endswith("_err")]
+    missing = [c for c in bands if c not in t_in.colnames]
+    bands = [c for c in bands if c in t_in.colnames]
+
+    ann = Table()
+    for c in key_cols:
+        ann[c] = np.asarray(t_out[c])[rows_out]
+
+    n_nonpos, n_fallback = 0, 0
+    for c in bands:
+        f_out = np.asarray(t_out[c], float)[rows_out]
+        f_in = np.asarray(t_in[c], float)[rows_in]
+        f_ann = f_out - f_in
+
+        ec = f"{c}_err"
+        e_out = (np.abs(np.asarray(t_out[ec], float))[rows_out]
+                 if ec in t_out.colnames else np.full(len(rows_out), np.nan))
+        e_in = (np.abs(np.asarray(t_in[ec], float))[rows_in]
+                if ec in t_in.colnames else np.full(len(rows_in), np.nan))
+        with np.errstate(invalid='ignore'):
+            var_ann = e_out ** 2 - e_in ** 2
+            fallback = np.isfinite(var_ann) & (var_ann <= 0)
+            e_ann = np.where(fallback, np.hypot(e_out, e_in), np.sqrt(var_ann))
+        n_fallback += int(fallback.sum())
+
+        bad = ~np.isfinite(f_ann) | (f_ann <= 0)
+        n_nonpos += int((np.isfinite(f_ann) & (f_ann <= 0)).sum())
+        f_ann[bad] = np.nan
+        e_ann[bad] = np.nan
+        ann[c] = f_ann
+        ann[ec] = e_ann
+
+    if verbose:
+        n_meas = len(ann) * len(bands)
+        print(f"[annular_flux_table] {len(ann)} sources x {len(bands)} bands; "
+              f"{n_nonpos}/{n_meas} non-positive annular fluxes -> NaN; "
+              f"{n_fallback} error(s) via quadrature-sum fallback")
+        if dropped:
+            print(f"[annular_flux_table]   dropped (missing in inner table): {dropped}")
+        if missing:
+            print(f"[annular_flux_table]   bands absent from inner table, skipped: {missing}")
+    return ann
+
 
 def flux_extraction(facility, instrument, wav, flux, filters=None, wave_unit='micron', filter_list=None,
                     flux_unc=None):
