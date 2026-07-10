@@ -88,7 +88,9 @@ simbanator/
 │   │                     #   attenuation_mag – A_λ = −2.5 log10(F_on/F_off), NaN-safe
 │   ├── cigale.py         # CIGALE 2025.0 end-to-end: write_cigale_input (flux table →
 │   │                     #   data_file, DB band names), prepare_run (pcigale.ini/.spec,
-│   │                     #   replaces init+genconf; genconf-style docs as ini comments),
+│   │                     #   replaces init+genconf; genconf-style docs as ini comments;
+│   │                     #   fit_bands= manual fitted-band list, '<band>'/'<band>_err'
+│   │                     #   mix ok — errors auto-paired, unselected bands predicted),
 │   │                     #   describe_run (module/param/variable reminder, full or compact),
 │   │                     #   check/run/read_results/plot_seds wrappers, compare_results
 │   │                     #   (truth vs bayes.*: per-galaxy print, offset/NMAD stats,

@@ -728,7 +728,8 @@ def _grid_size(sed_modules, mp):
 
 def prepare_run(run_dir, data_file, sed_modules=None, module_params=None,
                 analysis_params=None, cores=None, additional_error=0.1,
-                properties=(), max_block_models=5_000_000, verbose=True):
+                properties=(), max_block_models=5_000_000, fit_bands=None,
+                verbose=True):
     """Write a complete ``pcigale.ini`` + ``pcigale.ini.spec`` into *run_dir*.
 
     Equivalent to ``pcigale init`` + ``pcigale genconf`` + hand-editing, in
@@ -770,6 +771,17 @@ def prepare_run(run_dir, data_file, sed_modules=None, module_params=None,
         against the SLURM job cgroup — overrunning it dies with SIGBUS,
         not a clean OOM): ~93 bands x 8 B = ~750 B/model, so the default
         5M-model blocks stay under ~4 GB.
+    fit_bands : sequence of str, optional
+        Manual selection of the bands to FIT (default: every band column
+        in the data file). Entries may be flux names, ``<band>_err`` names
+        or a mix — ``_err`` suffixes are stripped and each selected band's
+        error column is auto-paired when the data file has one, so
+        ``["jwst.nircam.F200W", "subaru.hsc.g_err"]`` fits both bands with
+        their errors. Order is kept, duplicates dropped. Bands absent from
+        the data file are skipped with a warning (close-match suggestions
+        for likely typos); an empty selection raises. Unselected bands are
+        still PREDICTED (they stay in the analysis ``bands``), like the
+        unfitted IR bands of :func:`optical_only_run`.
 
     Returns
     -------
@@ -780,11 +792,39 @@ def prepare_run(run_dir, data_file, sed_modules=None, module_params=None,
 
     data_file = os.path.abspath(data_file)
     obs = Table.read(data_file)
-    bands = [c for c in obs.colnames
-             if c not in ("id", "redshift", "distance")
-             and not c.endswith("_err")]
-    if not bands:
+    all_bands = [c for c in obs.colnames
+                 if c not in ("id", "redshift", "distance")
+                 and not c.endswith("_err")]
+    if not all_bands:
         raise ValueError(f"no band columns found in {data_file}")
+
+    if fit_bands is None:
+        bands = all_bands
+    else:
+        # user selection: accept '<band>' and/or '<band>_err' entries,
+        # strip the suffix, dedupe (order kept), validate against the file
+        wanted, seen = [], set()
+        for b in fit_bands:
+            b = str(b).strip()
+            if b.endswith("_err"):
+                b = b[: -len("_err")]
+            if b and b not in seen:
+                seen.add(b)
+                wanted.append(b)
+        bands = [b for b in wanted if b in all_bands]
+        missing = [b for b in wanted if b not in all_bands]
+        if missing:
+            import difflib
+            hints = {m: difflib.get_close_matches(m, all_bands, n=1)
+                     for m in missing}
+            detail = ", ".join(m + (f" (did you mean {h[0]!r}?)" if h else "")
+                               for m, h in hints.items())
+            warnings.warn(f"fit_bands not in {os.path.basename(data_file)} "
+                          f"— skipped: {detail}")
+        if not bands:
+            raise ValueError(f"none of fit_bands={list(fit_bands)} is a band "
+                             f"column of {data_file}; available: {all_bands}")
+
     band_entries = []
     for b in bands:
         band_entries.append(b)
@@ -794,7 +834,9 @@ def prepare_run(run_dir, data_file, sed_modules=None, module_params=None,
     if cores is None:
         cores = os.cpu_count() or 1
 
-    ap["bands"] = bands   # fluxes to predict; independent of the fit itself
+    # fluxes to PREDICT (bayes.<band>): always every band in the file, so a
+    # fit_bands subset still gets model predictions for the unfitted bands
+    ap["bands"] = all_bands
 
     # auto-chunk the model grid unless the caller pinned `blocks` explicitly
     n_z = len(np.unique(np.round(np.asarray(obs["redshift"], float),
@@ -857,7 +899,9 @@ def prepare_run(run_dir, data_file, sed_modules=None, module_params=None,
         f.write("\n".join(spec) + "\n")
 
     if verbose:
-        print(f"[cigale] {ini_path}: {len(obs)} objects, {len(bands)} bands, "
+        nb = (f"{len(bands)}/{len(all_bands)} bands fitted"
+              if len(bands) != len(all_bands) else f"{len(bands)} bands")
+        print(f"[cigale] {ini_path}: {len(obs)} objects, {nb}, "
               f"{n_z} redshift(s) x {n_models} models = {n_z * n_models} "
               f"total in {ap['blocks']} block(s)")
     return ini_path
