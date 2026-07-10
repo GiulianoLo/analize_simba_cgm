@@ -79,11 +79,13 @@ simbanator/
 ├── sed/
 │   ├── makesed.py        # MakeSED – Powderday setup + flux extraction (needs hyperion)
 │   │                     #   extract_flux_* take aperture= (Hyperion SED aperture index) and
-│   │                     #   uncertainties= (MC errors → <filter>_err); list_sed_apertures QC
+│   │                     #   uncertainties= (MC errors → <filter>_err); list_sed_apertures QC;
+│   │                     #   read_selection_centers – Stage-1 selection h5 → RT-grid centres
 │   ├── flux_extraction.py# flux_extraction, get_svo_filters – SED → photometry
 │   │                     #   flux_unc= propagates an SED uncertainty → mJy_err / mag_err
 │   │                     #   annular_flux_table – F(<r_out)−F(<r_in) between two
 │   │                     #   cumulative-aperture flux tables (non-positive → NaN)
+│   │                     #   attenuation_mag – A_λ = −2.5 log10(F_on/F_off), NaN-safe
 │   ├── cigale.py         # CIGALE 2025.0 end-to-end: write_cigale_input (flux table →
 │   │                     #   data_file, DB band names), prepare_run (pcigale.ini/.spec,
 │   │                     #   replaces init+genconf; genconf-style docs as ini comments),
@@ -98,14 +100,26 @@ simbanator/
 │   │                     #   skip_if_done=True for cheap resubmits),
 │   │                     #   grid_options/nearest_option/split_by_metallicity (per-galaxy
 │   │                     #   metallicity priors: snap SIMBA Z to the strict CIGALE grids
-│   │                     #   in log space, one sub-catalog+run per bc03 node).
+│   │                     #   in log space, one sub-catalog+run per bc03 node),
+│   │                     #   optical_only_run (clone a prepared run dir into its decoupled
+│   │                     #   optical-only twin: no dl2014, IR bands unfitted but still
+│   │                     #   predicted — the L_abs side of the energy-balance test),
+│   │                     #   find_pcigale (executable from the dedicated conda env),
+│   │                     #   sanitize_input_errors (abs() legacy negative errors in place),
+│   │                     #   nmad (robust sigma).
 │   │                     #   No simbanator imports — loadable standalone in a CIGALE env.
+│   ├── dl2014_fit.py     # standalone Draine & Li (2014) fit of the IR residual (free
+│   │                     #   normalization, no energy balance): subtracts the optical-only
+│   │                     #   run's bayes.<band> stellar continuum, fits L_dust analytically
+│   │                     #   per (qpah, umin, gamma) → <run_dir>/out/dl2014_results.fits.
+│   │                     #   Run under the CIGALE env python (needs pcigale.data).
 │   └── parameters_master.py / parameters_master-nodust.py
 │                         #   SED_APERTURE_NAP/MIN_KPC/MAX_KPC – multi-aperture SEDs
 │                         #   (read by the powderday patch documented in
 │                         #    powderday_flux_quenched_m25.ipynb; stock powderday ignores them)
 ├── utils/
-│   ├── geometry.py       # shrink_center, principal_axes, rotate_to_frame
+│   ├── geometry.py       # shrink_center, principal_axes, rotate_to_frame,
+│   │                     #   sightline_unit_vectors, projected_radius (image-plane R)
 │   ├── svo_filters.py    # download_svo_filters – fetch filter curves from SVO
 │   ├── conversions.py    # Z_to_OH12, Dust_to_Metal
 │   ├── search.py         # findsatellites

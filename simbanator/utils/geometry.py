@@ -133,3 +133,40 @@ def rotate_to_frame(pos, center, evecs):
     else:
         posc = pos - center
     return posc @ evecs
+
+
+def sightline_unit_vectors(theta_deg, phi_deg):
+    """LOS unit vectors for (theta, phi) viewing angles [degrees].
+
+    Matches Hyperion's peeling-direction convention (theta from +z,
+    phi from +x): the same THETA/PHI lists as the powderday parameter
+    masters give the vectors along which the SEDs were peeled.
+
+    Returns ndarray of shape (n_angles, 3).
+    """
+    th, ph = np.deg2rad(theta_deg), np.deg2rad(phi_deg)
+    return np.column_stack([np.sin(th) * np.cos(ph),
+                            np.sin(th) * np.sin(ph),
+                            np.cos(th)])
+
+
+def projected_radius(pos, nhat):
+    """Distance of each position from the axis through the origin along *nhat*.
+
+    This is the image-plane (projected) radius of a particle as seen along
+    the line of sight *nhat* — the geometry of a Hyperion SED aperture
+    (a circle in the image plane, full depth along the LOS).
+
+    Parameters
+    ----------
+    pos : (N, 3) array — positions relative to the aperture centre.
+    nhat : (3,) unit vector — the line of sight.
+
+    Returns
+    -------
+    (N,) array of projected radii (same units as *pos*).
+    """
+    pos = np.asarray(pos, float)
+    para = pos @ np.asarray(nhat, float)
+    return np.sqrt(np.clip(np.einsum("ij,ij->i", pos, pos) - para ** 2,
+                           0.0, None))

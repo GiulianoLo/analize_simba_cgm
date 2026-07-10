@@ -85,6 +85,28 @@ def list_sed_apertures(rtout_path):
     return info
 
 
+def read_selection_centers(selection_h5):
+    """RT-grid centres from a Stage-1 selection HDF5 -> {(snap, gal_id): xyz}.
+
+    Reads the ``code_coods`` (code units) that ``MakeSED.selection_gals``
+    stored per snapshot group — the EXACT grid centres the RT jobs used, so
+    any projected-aperture measurement built on them matches the peeled SEDs.
+
+    Returns an empty dict if the file does not exist (caller decides the
+    fallback, e.g. caesar positions — identical values by construction).
+    """
+    centers = {}
+    if not os.path.exists(selection_h5):
+        return centers
+    with h5py.File(selection_h5, "r") as f:
+        for grp in f:
+            snap = int(grp[4:])                        # groups: 'snap<NNN>'
+            for g, pos in zip(f[grp]["galaxy_GroupID"][:],
+                              f[grp]["code_coods"][:]):
+                centers[(snap, int(g))] = np.asarray(pos, float)
+    return centers
+
+
 def flatten_results(results, snap, gal):
     rows = []
 

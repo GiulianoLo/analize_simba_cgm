@@ -193,6 +193,25 @@ def convolveFilterWithSED(sedX, sedY, transX, transY, sedYerr=None):
         realYerr = np.sqrt(np.sum((w * ynew * sedYerr[ind]) ** 2)) / np.abs(norm)
     return xmean, realY, realYerr
 
+def attenuation_mag(f_on, f_off):
+    """Band attenuation A_lambda = -2.5 log10(F_on / F_off) [mag].
+
+    Differential measurement from matched dust_on / dust_off fluxes of the
+    same sources (no SED fit involved). Any non-positive or non-finite flux
+    on either side -> NaN (e.g. annular fluxes gone negative from MC noise).
+    Works elementwise on arrays of any shape.
+    """
+    f_on = np.asarray(f_on, float)
+    f_off = np.asarray(f_off, float)
+    with np.errstate(all="ignore"):
+        a = -2.5 * np.log10(f_on / f_off)
+    bad = (f_on <= 0) | (f_off <= 0) | ~np.isfinite(f_on) | ~np.isfinite(f_off)
+    if a.ndim == 0:
+        return np.nan if bad else float(a)
+    a[bad] = np.nan
+    return a
+
+
 def annular_flux_table(inner, outer, verbose=True):
     """Differential (annular) fluxes between two cumulative-aperture flux tables.
 

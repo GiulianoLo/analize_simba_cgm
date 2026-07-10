@@ -1010,6 +1010,166 @@ def read_results(run_dir):
     return Table.read(os.path.join(run_dir, "out", "results.fits"))
 
 
+def find_pcigale(env_names=("cigale", "cigale-env"),
+                 conda_roots=("miniforge3", "miniconda3")):
+    """Absolute path of the ``pcigale`` executable from the dedicated env.
+
+    CIGALE lives in its own conda env (it pins numpy/astropy differently from
+    the powderday env), so the notebook kernel never activates it — every
+    caller just needs the executable's absolute path. Searches
+    ``~/{root}/envs/{env}/bin/pcigale`` for each (root, env) combination,
+    then falls back to ``PATH``.
+
+    Raises ``FileNotFoundError`` with setup instructions if not found.
+    """
+    import shutil
+    cands = [os.path.expanduser(f"~/{r}/envs/{e}/bin/pcigale")
+             for r in conda_roots for e in env_names]
+    cands.append(shutil.which("pcigale"))
+    found = next((p for p in cands if p and os.path.exists(p)), None)
+    if found is None:
+        raise FileNotFoundError(
+            f"pcigale not found ({cands[:-1]} + PATH) — create the dedicated "
+            "env first:\n  conda create -n cigale python=3.12 -y\n"
+            "  conda activate cigale && pip install <cigale-v2025 tarball>")
+    return found
+
+
+def sanitize_input_errors(data_file, verbose=True):
+    """Repair legacy all-negative error columns in a CIGALE input file.
+
+    Input files written before the ``convolveFilterWithSED`` sign fix
+    (2026-07-07) carry all-negative errors (descending-wavelength hyperion
+    SEDs made the trapezoid norms negative). CIGALE reads a negative error
+    as "upper limit" — every band an upper limit yields an all-NaN
+    ``results.fits``. This ``abs()``-es any negative error in place.
+
+    Returns the number of repaired values (0 = file untouched).
+    """
+    t = Table.read(data_file)
+    ecols = [c for c in t.colnames if c.endswith("_err")]
+    n_neg = int(sum((np.asarray(t[c], float) < 0).sum() for c in ecols))
+    if n_neg:
+        for c in ecols:
+            t[c] = np.abs(np.asarray(t[c], float))
+        t.write(data_file, overwrite=True)
+        if verbose:
+            print(f"[repair] {os.path.basename(data_file)}: {n_neg} negative "
+                  "error(s) -> abs(), file rewritten")
+    return n_neg
+
+
+# bands dominated by dust emission (or with none of the fit information the
+# optical side needs): dropped from the FITTED bands of an optical-only run
+IR_BAND_RE = re.compile(r"^(jwst\.miri\.|spitzer\.mips\.|herschel\.|"
+                        r"jcmt\.|alma\.)")
+
+
+def optical_only_run(src_run_dir, dst_run_dir, ir_bands=IR_BAND_RE,
+                     verbose=True):
+    """Clone a prepared run into its decoupled *optical-only* variant.
+
+    Copies ``pcigale.ini``/``.spec`` from *src_run_dir* (a
+    :func:`prepare_run` product) into *dst_run_dir* with three edits — and
+    nothing else, so data file, SFH/metallicity grids and analysis setup are
+    identical to the coupled run **by construction**:
+
+    - ``dl2014`` is removed from the module chain (and its parameter
+      section dropped): the absorbed luminosity is NOT re-emitted, i.e. the
+      energy-balance constraint is switched off. ``dust.luminosity`` (the
+      absorbed power, set by the attenuation module) is still estimated —
+      it is the L_abs side of the energy-balance test;
+    - bands matching *ir_bands* are removed from the top-level (fitted)
+      ``bands`` list. They stay in the ``[analysis_params]`` bands, so the
+      run still predicts ``bayes.<band>`` there — with no dust emission in
+      the model that prediction is the pure attenuated stellar continuum,
+      which :mod:`simbanator.sed.dl2014_fit` subtracts before fitting the
+      IR residual;
+    - ``dust.mass`` is dropped from the estimated variables (it is created
+      by the dl2014 module and would crash the analysis without it).
+
+    Parameters
+    ----------
+    src_run_dir : str
+        Prepared (coupled) run directory; must contain ``pcigale.ini``.
+    dst_run_dir : str
+        Destination run directory (created; existing ini overwritten,
+        any existing ``out/`` left untouched).
+    ir_bands : compiled regex
+        Fitted bands whose name (without ``_err``) matches are unfitted.
+
+    Returns
+    -------
+    str : path to the written ``pcigale.ini`` in *dst_run_dir*.
+    """
+    src_ini = os.path.join(src_run_dir, "pcigale.ini")
+    if not os.path.exists(src_ini):
+        raise FileNotFoundError(f"no pcigale.ini in {src_run_dir} — "
+                                "call prepare_run there first")
+
+    def _filter_items(value, drop):
+        items = [s.strip() for s in value.split(",") if s.strip()]
+        kept = [s for s in items if not drop(s)]
+        return kept, len(items) - len(kept)
+
+    n_dropped_bands = 0
+    found_dl2014 = False
+
+    def _transform(lines, is_spec):
+        nonlocal n_dropped_bands, found_dl2014
+        out, section, skipping = [], None, False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("["):        # any (sub)section header
+                skipping = False
+                if stripped == "[[dl2014]]":
+                    found_dl2014 = True
+                    skipping = True
+                    continue
+                if stripped in ("[sed_modules_params]", "[analysis_params]"):
+                    section = stripped
+            if skipping:
+                continue
+            if section is None and line.startswith("sed_modules = "):
+                if not is_spec:
+                    kept, _ = _filter_items(line[len("sed_modules = "):],
+                                            lambda s: s == "dl2014")
+                    line = "sed_modules = " + ", ".join(kept)
+            elif section is None and line.startswith("bands = "):
+                if not is_spec:
+                    kept, n = _filter_items(
+                        line[len("bands = "):],
+                        lambda s: bool(ir_bands.search(
+                            s[:-len("_err")] if s.endswith("_err") else s)))
+                    n_dropped_bands = n
+                    line = "bands = " + ", ".join(kept)
+            elif (section == "[analysis_params]"
+                  and line.startswith("  variables = ") and not is_spec):
+                kept, _ = _filter_items(line[len("  variables = "):],
+                                        lambda s: s == "dust.mass")
+                line = "  variables = " + ", ".join(kept)
+            out.append(line)
+        return out
+
+    os.makedirs(dst_run_dir, exist_ok=True)
+    for fname, is_spec in (("pcigale.ini", False), ("pcigale.ini.spec", True)):
+        src = os.path.join(src_run_dir, fname)
+        with open(src, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        with open(os.path.join(dst_run_dir, fname), "w",
+                  encoding="utf-8") as f:
+            f.write("\n".join(_transform(lines, is_spec)) + "\n")
+
+    if not found_dl2014:
+        warnings.warn(f"{src_ini} has no [[dl2014]] section — cloned an "
+                      "already dust-emission-free run")
+    if verbose:
+        print(f"[cigale] {dst_run_dir}: optical-only clone of "
+              f"{os.path.basename(src_run_dir)} "
+              f"({n_dropped_bands // 2} IR bands unfitted, dl2014 removed)")
+    return os.path.join(dst_run_dir, "pcigale.ini")
+
+
 def write_slurm_array(run_dirs, job_file, pcigale_cmd="pcigale",
                       partition=None, cores=8, mem_per_cpu_mb=3800,
                       time="0-08:00", array_throttle=None, plots=True,
@@ -1235,12 +1395,16 @@ _PROP_UNITS = {
 _GYR_RE = re.compile(r"age|tau")
 
 
-def _nmad(x):
+def nmad(x):
     """1.4826 x median absolute deviation from the median (robust sigma)."""
+    x = np.asarray(x, float)
     x = x[np.isfinite(x)]
     if len(x) == 0:
         return np.nan
     return 1.4826 * np.median(np.abs(x - np.median(x)))
+
+
+_nmad = nmad
 
 
 def compare_results(run_dir, truth, log_props=None, outdir=None,
@@ -1324,7 +1488,7 @@ def compare_results(run_dir, truth, log_props=None, outdir=None,
     for c in extras:
         comp[c] = truth[c][keep]
 
-    # highlighted subsample (e.g. the Part 7a' dusty flag): 1 / 0 / -1-unknown
+    # highlighted subsample (e.g. the notebook's Part 7a dusty flag): 1 / 0 / -1-unknown
     hmask = nmask = None
     if highlight_col and highlight_col in extras:
         _hv = np.asarray(comp[highlight_col], float)
