@@ -632,7 +632,7 @@ DEFAULT_ANALYSIS_PARAMS = {
                   "sfh.sfr", "sfh.sfr10Myrs", "sfh.sfr100Myrs",
                   "sfh.tau_main", "sfh.age_main", "sfh.age_bq", "sfh.r_sfr",
                   "stellar.age_m_star", "attenuation.Av_ISM",
-                  "dust.luminosity",
+                  "dust.luminosity", "dust.mass",
                   "param.Dn4000", "param.EW(HdeltaA)", "param.EW(Halpha)",
                   "param.restframe_Lnu(galex.FUV)",
                   "param.restframe_Lnu(generic.bessell.V)",
