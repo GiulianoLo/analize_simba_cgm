@@ -427,6 +427,21 @@ MODULE_REGISTRY = {
                   "2.5 & 2.6 & 2.7 & 2.8 & 2.9 & 3.0)", 2.0),
         "gamma": ("cigale_list(minvalue=0., maxvalue=1.)", 0.1),
     },
+    "restframe_parameters": {
+        # booleans/strings, NOT grid dimensions (no model-count growth).
+        # NOTE 2025.1 renamed/reworked these vs older CIGALEs: 'Dn4000' (was
+        # D4000), 'EW' (was EW_lines; label + blue/line/red sideband bounds),
+        # and filters use the dotted DB names (galex.FUV, not FUV).
+        "beta_calz94": ("boolean()", False),
+        "Dn4000": ("boolean()", False),
+        "IRX": ("boolean()", False),
+        "EW": ("string()",
+               "HdeltaA/404.160/407.975/408.350/412.225/412.850/416.100 & "
+               "Halpha/650.0/652.5/653.5/660.0/661.0/663.5"),
+        "luminosity_filters": ("string()", "galex.FUV & generic.bessell.V"),
+        "colours_filters": ("string()",
+                            "galex.FUV-galex.NUV & galex.NUV-sloan.sdss.r"),
+    },
     "redshifting": {
         # empty -> CIGALE fills the grid from the data-file redshifts at run
         "redshift": ("cigale_list(minvalue=0.)", ""),
@@ -480,6 +495,10 @@ MODULE_DOCS = {
     "dustatt_modified_CF00": "Charlot & Fall (2000) two-phase attenuation "
                              "(birth clouds + ISM) with free power-law slopes",
     "dl2014": "Draine & Li (2014) dust emission templates",
+    "restframe_parameters": "rest-frame quantities computed on each model "
+                            "right before redshifting: Dn4000, UV slopes, "
+                            "IRX, line EWs, rest-frame luminosities/colours "
+                            "(outputs: param.*)",
     "redshifting": "redshift the SED + IGM absorption (must be last)",
     "pdf_analysis": "Bayesian (bayes.* = posterior mean+std) and best-fit "
                     "(best.*) estimates for each property",
@@ -539,6 +558,21 @@ PARAM_DOCS = {
         "gamma": "dust-mass fraction illuminated from U_min to U_max (the "
                  "rest sits at U_min)",
     },
+    "restframe_parameters": {
+        "beta_calz94": "observed + intrinsic UV slopes beta/beta0 "
+                       "(Calzetti et al. 1994) -> param.beta_calz94/"
+                       "param.beta0_calz94",
+        "Dn4000": "Dn4000 break, Balogh et al. (1999) definition -> "
+                  "param.Dn4000",
+        "IRX": "log10(L_dust/L_FUV) -> param.IRX",
+        "EW": "line equivalent widths [nm]: label/blue_lo/blue_hi/line_lo/"
+              "line_hi/red_lo/red_hi per line, '&'-separated (absorption "
+              "positive, emission negative) -> param.EW(label)",
+        "luminosity_filters": "'&'-separated DB filter names -> "
+                              "param.restframe_Lnu(filter) [W/Hz]",
+        "colours_filters": "'&'-separated 'f1-f2' rest-frame colours -> "
+                           "param.restframe_f1-f2 [mag]",
+    },
     "redshifting": {
         "redshift": "redshift grid; leave empty to take the redshifts from "
                     "the data file",
@@ -567,7 +601,8 @@ PARAM_DOCS = {
 # episode (sfhdelayedbq), Chabrier IMF (SIMBA), two-phase CF00 attenuation,
 # DL2014 dust emission. ~126k models per redshift with these grids.
 DEFAULT_SED_MODULES = ("sfhdelayedbq", "bc03", "nebular",
-                       "dustatt_modified_CF00", "dl2014", "redshifting")
+                       "dustatt_modified_CF00", "dl2014",
+                       "restframe_parameters", "redshifting")
 
 DEFAULT_MODULE_PARAMS = {
     "sfhdelayedbq": {
@@ -582,6 +617,14 @@ DEFAULT_MODULE_PARAMS = {
     },
     "dl2014": {"qpah": [0.47, 2.5], "umin": [1.0, 5.0, 10.0],
                "gamma": [0.02, 0.1]},
+    # rest-frame quantities: Dn4000 + HdeltaA/Halpha EWs (quenched/PSB
+    # diagnostics), UVJ + FUV-NUV + NUV-r rest colours, L_FUV/L_V
+    "restframe_parameters": {
+        "Dn4000": True,
+        "colours_filters": ("generic.johnson.U-generic.johnson.V & "
+                            "generic.johnson.V-generic.johnson.J & "
+                            "galex.FUV-galex.NUV & galex.NUV-sloan.sdss.r"),
+    },
 }
 
 DEFAULT_ANALYSIS_PARAMS = {
@@ -589,7 +632,14 @@ DEFAULT_ANALYSIS_PARAMS = {
                   "sfh.sfr", "sfh.sfr10Myrs", "sfh.sfr100Myrs",
                   "sfh.tau_main", "sfh.age_main", "sfh.age_bq", "sfh.r_sfr",
                   "stellar.age_m_star", "attenuation.Av_ISM",
-                  "dust.luminosity"],
+                  "dust.luminosity",
+                  "param.Dn4000", "param.EW(HdeltaA)", "param.EW(Halpha)",
+                  "param.restframe_Lnu(galex.FUV)",
+                  "param.restframe_Lnu(generic.bessell.V)",
+                  "param.restframe_generic.johnson.U-generic.johnson.V",
+                  "param.restframe_generic.johnson.V-generic.johnson.J",
+                  "param.restframe_galex.FUV-galex.NUV",
+                  "param.restframe_galex.NUV-sloan.sdss.r"],
     "save_best_sed": True,
 }
 
