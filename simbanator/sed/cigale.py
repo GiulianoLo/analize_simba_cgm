@@ -1161,6 +1161,7 @@ _CB_COLORS = ("#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9",
               "#D55E00", "#F0E442", "#000000")
 
 # axis labels for the properties this package saves by default
+# (Myr-valued CIGALE outputs are DISPLAYED in Gyr — see _GYR_RE below)
 _PROP_UNITS = {
     "stellar.m_star": r"$M_\star$ [$M_\odot$]",
     "sfh.sfr": r"SFR [$M_\odot\,\mathrm{yr}^{-1}$]",
@@ -1168,13 +1169,20 @@ _PROP_UNITS = {
                      r"[$M_\odot\,\mathrm{yr}^{-1}$]",
     "sfh.sfr100Myrs": r"$\langle$SFR$\rangle_{100\,\mathrm{Myr}}$ "
                       r"[$M_\odot\,\mathrm{yr}^{-1}$]",
-    "sfh.age_bq": "age of the burst/quench episode [Myr]",
-    "sfh.tau_main": r"$\tau_\mathrm{main}$ [Myr]",
+    "sfh.age_bq": "burst/quench lookback [Gyr]",
+    "sfh.age_main": "SF onset age [Gyr]",
+    "sfh.tau_main": r"$\tau_\mathrm{main}$ [Gyr]",
+    "stellar.age_m_star": "mass-weighted stellar age [Gyr]",
     "sfh.r_sfr": r"$r_\mathrm{SFR}$ (after/before age$_\mathrm{bq}$)",
+    "attenuation.Av_ISM": r"$A_{V,\,\mathrm{ISM}}$ [mag]",
     "dust.luminosity": r"$L_\mathrm{dust}$ [W]",
     "dust.mass": r"$M_\mathrm{dust}$ [$M_\odot$]",
     "stellar.metallicity": "Z",
 }
+
+# CIGALE reports these in Myr; every display (panels, stats, printed table)
+# converts to Gyr. The saved comparison FITS keeps the original Myr values.
+_GYR_RE = re.compile(r"age|tau")
 
 
 def _nmad(x):
@@ -1255,7 +1263,10 @@ def compare_results(run_dir, truth, log_props=None, outdir=None,
     if log_props is None:
         log_props = [p for p in props if any(
             k in p for k in ("m_star", "mass", "sfr", "luminosity"))]
-        log_props = [p for p in log_props if p != "sfh.r_sfr"]
+        # ages/taus are never logged ('age_m_star' contains 'm_star'):
+        # they are linear in Gyr (see _GYR_RE)
+        log_props = [p for p in log_props
+                     if p != "sfh.r_sfr" and not _GYR_RE.search(p)]
 
     comp = Table()
     comp["id"] = [tid[i] for i in keep]
@@ -1279,6 +1290,10 @@ def compare_results(run_dir, truth, log_props=None, outdir=None,
         if bcol in res.colnames:
             comp[f"{p}_best"] = np.asarray(res[bcol], float)[ridx]
 
+    # Myr-valued (linear) properties are displayed in Gyr everywhere
+    gyr_props = {p for p in props
+                 if p not in log_props and _GYR_RE.search(p)}
+
     # ── per-galaxy print + offset/scatter stats ──
     if verbose:
         disp = Table()
@@ -1292,6 +1307,11 @@ def compare_results(run_dir, truth, log_props=None, outdir=None,
                         np.log10(comp[f"{p}_true"]), 2)
                     disp[f"log {p} cigale"] = np.round(
                         np.log10(comp[f"{p}_cigale"]), 2)
+            elif p in gyr_props:
+                disp[f"{p} true [Gyr]"] = np.round(
+                    np.asarray(comp[f"{p}_true"], float) / 1e3, 2)
+                disp[f"{p} cigale [Gyr]"] = np.round(
+                    np.asarray(comp[f"{p}_cigale"], float) / 1e3, 2)
             else:
                 disp[f"{p} true"] = np.round(comp[f"{p}_true"], 1)
                 disp[f"{p} cigale"] = np.round(comp[f"{p}_cigale"], 1)
@@ -1303,9 +1323,12 @@ def compare_results(run_dir, truth, log_props=None, outdir=None,
                 with np.errstate(all="ignore"):
                     d = np.log10(e) - np.log10(t)
                 unit = " dex"
+            elif p in gyr_props:
+                d = np.asarray(e - t, float) / 1e3
+                unit = " Gyr"
             else:
                 d = np.asarray(e - t, float)
-                unit = " Myr" if "age" in p or "tau" in p else ""
+                unit = ""
             ok = np.isfinite(d)
             if not ok.any():
                 print(f"  {p}: no valid (truth, estimate) pairs — check "
@@ -1332,17 +1355,20 @@ def compare_results(run_dir, truth, log_props=None, outdir=None,
     else:
         groups = [(None, np.ones(len(comp), bool))]
 
+    from matplotlib.ticker import MaxNLocator
+
     n = len(props)
     ncols = min(3, n)
     nrows = int(np.ceil(n / ncols))
     fig, axes = plt.subplots(nrows, ncols,
-                             figsize=(4.4 * ncols, 4.2 * nrows),
+                             figsize=(4.9 * ncols, 4.5 * nrows),
                              squeeze=False)
     for k, p in enumerate(props):
         ax = axes[k // ncols][k % ncols]
-        t = np.asarray(comp[f"{p}_true"], float)
-        e = np.asarray(comp[f"{p}_cigale"], float)
-        err = np.asarray(comp[f"{p}_cigale_err"], float)
+        scale = 1e-3 if p in gyr_props else 1.0     # Myr -> Gyr display
+        t = np.asarray(comp[f"{p}_true"], float) * scale
+        e = np.asarray(comp[f"{p}_cigale"], float) * scale
+        err = np.asarray(comp[f"{p}_cigale_err"], float) * scale
         logp = p in log_props
         tt, ee = t.copy(), e.copy()
         pinned = np.zeros(len(t), bool)
@@ -1398,20 +1424,29 @@ def compare_results(run_dir, truth, log_props=None, outdir=None,
         if logp:
             ax.set_xscale("log"), ax.set_yscale("log")
             if pinned.any():
-                ax.text(0.03, 0.97, f"open: {pinned.sum()} pinned at floor "
-                        "(zero / underflow)", transform=ax.transAxes,
-                        fontsize=8, va="top", color="0.35")
+                ax.text(0.97, 0.03, f"open: {int(pinned.sum())} at floor",
+                        transform=ax.transAxes, fontsize=7,
+                        ha="right", va="bottom", color="0.35")
+        else:
+            ax.xaxis.set_major_locator(MaxNLocator(5))
+            ax.yaxis.set_major_locator(MaxNLocator(5))
+        ax.tick_params(labelsize=9)
         ax.set_xlim(lim), ax.set_ylim(lim)
         unit = _PROP_UNITS.get(p, p)
-        ax.set_xlabel(f"SIMBA {unit}")
-        ax.set_ylabel(f"CIGALE {unit}")
+        ax.set_xlabel(f"SIMBA {unit}", fontsize=10)
+        ax.set_ylabel(f"CIGALE {unit}", fontsize=10)
         ax.set_title(p, fontsize=11)
-        if k == 0 and (groups[0][0] is not None or hmask is not None):
-            ax.legend(fontsize=8, frameon=False)
     for k in range(n, nrows * ncols):
         axes[k // ncols][k % ncols].set_axis_off()
-    fig.suptitle(os.path.basename(os.path.normpath(run_dir)), y=1.0)
-    fig.tight_layout()
+    # one figure-level legend (z colors + highlight ring) instead of
+    # cramming it into the first panel
+    _hnd, _lbl = axes[0][0].get_legend_handles_labels()
+    fig.suptitle(os.path.basename(os.path.normpath(run_dir)), y=0.995,
+                 fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    if _hnd:
+        fig.legend(_hnd, _lbl, loc="upper center", ncol=min(len(_hnd), 7),
+                   frameon=False, fontsize=9, bbox_to_anchor=(0.5, 0.975))
 
     # ── save into this run's out/ ──
     outdir = outdir or os.path.join(run_dir, "out")
