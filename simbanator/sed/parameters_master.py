@@ -153,7 +153,7 @@ TRANSMISSION_FILTER_REDSHIFT = 3.1
 # so these sample the per-galaxy orientation spread. get_sed/extract_flux_batch
 # picks one with the inclination index findx = 0..3.
 MANUAL_ORIENTATION = True
-THETA = [0, 45, 90, 135]
+THETA = [0, 45, 90, 135]   # 4 quasi-orthogonal sightlines (deg)
 PHI = [0, 90, 180, 270]
 
 # ===============================================
