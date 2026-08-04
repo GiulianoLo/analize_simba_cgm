@@ -115,10 +115,20 @@ simbanator/
 │   │                     #   run's bayes.<band> stellar continuum, fits L_dust analytically
 │   │                     #   per (qpah, umin, gamma) → <run_dir>/out/dl2014_results.fits.
 │   │                     #   Run under the CIGALE env python (needs pcigale.data).
-│   └── parameters_master.py / parameters_master-nodust.py
+│   └── parameters_master.py / parameters_master-nodust.py / parameters_master-agn.py / parameters_master-agn-nenkova.py
+│       parameters_master-nenkova-i90.py / -i60.py / -i30.py
 │                         #   SED_APERTURE_NAP/MIN_KPC/MAX_KPC – multi-aperture SEDs
 │                         #   (read by the powderday patch documented in
 │                         #    powderday_flux_quenched_m25.ipynb; stock powderday ignores them)
+│                         #   -agn: dust_on + BH_SED=True (Hopkins+2007, BH_var=False;
+│                         #    needs PartType5 in the Stage-0 cutouts)
+│                         #   -agn-nenkova: as -agn but CLUMPY i=90 torus, 4 sightlines
+│                         #    (provenance of the CEERS dusty_simdust_chab_agn_nenkova tree)
+│                         #   -nenkova-i{90,60,30}: almac11 torus-inclination arms — CLUMPY
+│                         #    i=90/60/30, SINGLE sightline THETA=[0] (findx=0 only); staged
+│                         #    by analogues_specphot_almac11_rt.ipynb into
+│                         #    output/cis100/sed_almac11/{dust_on,dust_off,nenkova_i90,i60,i30}
+│                         #    (selection tables/maps in output/cis100/almac11_specphot/)
 ├── utils/
 │   ├── geometry.py       # shrink_center, principal_axes, rotate_to_frame,
 │   │                     #   sightline_unit_vectors, projected_radius (image-plane R)

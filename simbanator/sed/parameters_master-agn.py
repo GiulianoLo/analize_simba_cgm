@@ -27,13 +27,41 @@ n_MPI_processes = 12
 # ===============================================
 # RT INFORMATION
 # ===============================================
-# 1e7 -> 1e6 on 2026-08-03 (uniform with the other two m25 masters; see
-# parameters_master-agn.py for the cost benchmark). raytracing_dust stays at 1
-# (dust RT effectively off in this run).
+# Photon budget cut 1e7 -> 1e6 on 2026-07-31 (= the stock powderday default,
+# ~/powderday/parameters_master.py:28-31). Frozen 1e7 copy for the validation
+# run: snap_091/parameters_master_ref1e7.py
+# 2026-08-03: 1e6 adopted for the WHOLE m25 quenched campaign (all three masters:
+# dust_on / -nodust / -agn), so the three runs share one MC noise floor.
+#
+# WHY: with BH_SED=True these galaxies cost ~8x the AGN-off run, and 95% of that
+# is the two raytracing passes. Measured on snap 091 / gal 1747, same galaxy both
+# ways, cpu-hours:
+#
+#                        AGN-off    AGN-on
+#     7 x Lucy             0.24       1.85
+#     final iteration      0.10       0.81
+#     raytracing sources   4.17      39.28   <-- dominant
+#     raytracing dust      4.49      ~30     <-- dominant
+#     TOTAL                9.0       ~73     (~7 h wall)
+#
+# The AGN is a central point source carrying L_AGN ~ 3e44 erg/s with the Hopkins
+# template peaking in the far-UV (its nu grid runs down to 0.095 um), where dust
+# opacity and albedo are highest -> many more scatterings per photon. That
+# per-photon cost is intrinsic to having an AGN; the only levers are the photon
+# count and the number of peel-off directions (see THETA/PHI below).
+#
+# Raytracing cost scales as n_photons x n_viewing_angles x n_freq_bins. Reaching
+# half the photons cost ~33% of the pass time in all six raytracing/final blocks
+# measured across both logs, so this cut buys at least its nominal 10x.
+#
+# CAVEAT: these photons set the SED shot noise, and the science product is the
+# AGN-on minus AGN-off residual. set_uncertainties(True) is on in
+# front_end_tools.py, so the noise is measurable in the .rtout.sed -- check it
+# before trusting a faint-end residual.
 n_photons_initial = 1.e6
 n_photons_imaging = 1.e6
 n_photons_raytracing_sources = 1.e6
-n_photons_raytracing_dust = 1   # 1 photon only -> dust RT effectively off
+n_photons_raytracing_dust = 1.e6   # full dust radiative transfer
 n_photons_DIG = 1e6
 
 FORCE_RANDOM_SEED = False
@@ -46,8 +74,8 @@ dustdir = os.path.join(root, 'hyperion-dust', 'dust_files') + '/'
 dustfile = 'kmh94_3.1_hg.hdf5'
 PAH = True
 
-dust_grid_type = 'dtm'       # 'dtm', 'rr', or 'manual'
-dusttometals_ratio = 1e-12   # dust-to-gas ~ 0 -> dust blocked
+dust_grid_type = 'manual'    # 'manual' -> use SIMBA live dust masses from the snapshot
+dusttometals_ratio = 0.4   # unused under 'manual' (kept at the simulation/reference value)
 enforce_energy_range = False
 
 SUBLIMATION = False
@@ -106,11 +134,22 @@ N_STELLAR_AGE_BINS = 25
 # ===============================================
 # BLACK HOLE STUFF
 # ===============================================
-BH_SED = False
+# AGN run: identical to parameters_master.py (dust_on) except BH_SED=True.
+# Requires PartType5 (BH_Mass/BH_Mdot/Coordinates) in the Stage-0 cutouts.
+# L_bol = BH_eta * BH_Mdot * c^2 per BH, spectrum from the chosen template,
+# injected as point sources and attenuated by the same SIMBA live-dust grid.
+BH_SED = True
 BH_eta = 0.1
-BH_model = "Nenkova"
+# 'Hopkins' = intrinsic Hopkins+2007 quasar template (self-contained; galaxy-scale
+# dust attenuation still applies). 'Nenkova' adds a sub-resolution CLUMPY torus but
+# needs ~/powderday/agn_models/clumpy_models_201410_tvavg.hdf5 (~2.4 GB,
+# https://www.clumpy.org/downloads/ — NOT installed on the cluster).
+BH_model = "Hopkins"
 BH_modelfile = os.path.join(root, 'powderday', 'agn_models', 'clumpy_models_201410_tvavg.hdf5')
-BH_var = True
+# BH_var=False: use the SIMBA BH_Mdot as-is, so L_AGN stays consistent with the
+# f_Edd-based weak/strong AGN split; True would rescale each BH by a random
+# Hickox+2014 duty-cycle draw (and FORCE_RANDOM_SEED=False makes that irreproducible).
+BH_var = False
 nenkova_params = [5, 30, 0, 1.5, 30, 40]
 
 # ===============================================
@@ -148,12 +187,22 @@ TRANSMISSION_FILTER_REDSHIFT = 3.1
 # ===============================================
 # GRID INFORMATION
 # ===============================================
-# 4 quasi-orthogonal sightlines (deg); galaxies are randomly oriented in the box,
-# so these sample the per-galaxy orientation spread. get_sed/extract_flux_batch
-# picks one with the inclination index findx = 0..3.
+# 4 sightlines RESTORED on 2026-08-03 for the m25 quenched campaign: the m25
+# pipeline has the inclination axis baked in (per-incl catalogs i{θ}p{φ},
+# get_sed/extract_flux_batch findx = 0..3, Part 4b projected-annulus geometry),
+# so all three runs (dust_on / dust_off / agn_on) use the same 4 angles.
+#
+# Cost note (from the 2026-07-31 snap 091 / gal 1747 benchmark): raytracing --
+# 95% of an AGN-on run -- is linear in the number of viewing angles
+# (front_end_tools.py:83 -> sed.set_viewing_angles(); hyperion peels off to every
+# angle at every interaction). The 1-angle option below is a ~4x cut kept for
+# single-sightline validation runs (used by the cis100 analogues AGN test, where
+# the 4 sightlines agreed to <0.5%, part6g_single_galaxy.py:172-174).
 MANUAL_ORIENTATION = True
-THETA = [0, 45, 90, 135]
+THETA = [0, 45, 90, 135]   # 4 quasi-orthogonal sightlines (deg)
 PHI = [0, 90, 180, 270]
+# THETA = [0]   # single-sightline option -- ~4x cheaper, findx = 0 only
+# PHI   = [0]
 
 # ===============================================
 # OTHER INFORMATION

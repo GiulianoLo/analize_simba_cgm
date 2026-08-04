@@ -27,11 +27,15 @@ n_MPI_processes = 12
 # ===============================================
 # RT INFORMATION
 # ===============================================
-n_photons_initial = 1.e7
-n_photons_imaging = 1.e7
-n_photons_raytracing_sources = 1.e7
-n_photons_raytracing_dust = 1.e7   # full dust radiative transfer
-n_photons_DIG = 1e7
+# 1e7 -> 1e6 on 2026-08-03 (uniform with parameters_master-agn.py, whose comments
+# hold the cost benchmark): all three m25 runs share one MC noise floor. The MC
+# error is propagated into the <filter>_err catalog columns -- check it in the
+# Part 6 QC before trusting faint-band differentials.
+n_photons_initial = 1.e6
+n_photons_imaging = 1.e6
+n_photons_raytracing_sources = 1.e6
+n_photons_raytracing_dust = 1.e6   # full dust radiative transfer
+n_photons_DIG = 1e6
 
 FORCE_RANDOM_SEED = False
 seed = -12345
