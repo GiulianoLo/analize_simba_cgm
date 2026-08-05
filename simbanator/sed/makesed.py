@@ -441,7 +441,9 @@ class MakeSED:
                         f.write(f'TCMB = {tcmb}\n')
 
                 if where == 'cluster':
-                    qsubfile = os.path.join(model_dir, f'master.snap{snap:03}.job')
+                    # the cluster template names the job file with the UNPADDED snap
+                    # number (master.snap78.job, not master.snap078.job)
+                    qsubfile = os.path.join(model_dir, f'master.snap{int(snap)}.job')
                     if os.path.exists(qsubfile):
                         cluster_job_files.append(qsubfile)
                 else:
