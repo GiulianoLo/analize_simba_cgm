@@ -87,7 +87,9 @@ simbanator/
 │   │                     #   cumulative-aperture flux tables (non-positive → NaN)
 │   │                     #   attenuation_mag – A_λ = −2.5 log10(F_on/F_off), NaN-safe
 │   ├── cigale.py         # CIGALE 2025.0 end-to-end: write_cigale_input (flux table →
-│   │                     #   data_file, DB band names), prepare_run (pcigale.ini/.spec,
+│   │                     #   data_file, DB band names incl. Subaru Suprime-Cam — SVO
+│   │                     #   broad g/r/i/z map to CIGALE g+/r+/i+/z+), prepare_run
+│   │                     #   (pcigale.ini/.spec,
 │   │                     #   replaces init+genconf; genconf-style docs as ini comments;
 │   │                     #   fit_bands= manual fitted-band list, '<band>'/'<band>_err'
 │   │                     #   mix ok — errors auto-paired, unselected bands predicted),

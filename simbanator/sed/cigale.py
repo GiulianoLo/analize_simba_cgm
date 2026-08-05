@@ -80,6 +80,14 @@ MEGACAM_FILTERS = {"u", "u_1", "g", "g_1", "r", "r_1", "i", "i_1", "i_2",
                    "z", "z_1"}
 # SVO lists VISTA under Paranal/VIRCAM; CIGALE names them paranal.vircam.*
 VIRCAM_FILTERS = {"Z", "Y", "J", "H", "Ks", "NB118", "NB980", "NB990"}
+# Subaru Suprime-Cam (COSMOS bands) — set verified against the installed
+# 2025.1 DB; CIGALE suffixes the broad g/r/i/z with '+' while SVO does not
+# (see CIGALE_OVERRIDES below). B and V carry the same name on both sides.
+SUPRIME_FILTERS = {
+    "B", "V", "g+", "r+", "i+", "z+", "z++",
+    "IB427", "IB464", "IB484", "IB505", "IB527", "IB574", "IB624", "IB679",
+    "IB709", "IB738", "IB767", "IB827", "NB711", "NB816",
+}
 SCUBA2_FILTERS = {"450GHz", "850GHz"}
 CIGALE_KNOWN_BANDS = (
     {
@@ -100,6 +108,7 @@ CIGALE_KNOWN_BANDS = (
     | {f"jwst.nircam.{f}" for f in NIRCAM_FILTERS}
     | {f"jwst.miri.{f}" for f in MIRI_FILTERS}
     | {f"subaru.hsc.{f}" for f in HSC_FILTERS}
+    | {f"subaru.suprime.{f}" for f in SUPRIME_FILTERS}
     | {f"cfht.megacam.{f}" for f in MEGACAM_FILTERS}
     | {f"paranal.vircam.{f}" for f in VIRCAM_FILTERS}
     | {f"jcmt.scuba2.{f}" for f in SCUBA2_FILTERS}
@@ -111,6 +120,11 @@ CIGALE_OVERRIDES = {
     "Johnson.V.V": "generic.johnson.V",
     "Johnson2.U.U": "generic.johnson.U",
     "ALMA.ALMA.band6": "alma.band6",
+    # SVO names the broad Suprime-Cam bands g/r/i/z; CIGALE appends '+'
+    "Subaru.Suprime.g": "subaru.suprime.g+",
+    "Subaru.Suprime.r": "subaru.suprime.r+",
+    "Subaru.Suprime.i": "subaru.suprime.i+",
+    "Subaru.Suprime.z": "subaru.suprime.z+",
 }
 
 
