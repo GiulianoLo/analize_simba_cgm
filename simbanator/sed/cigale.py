@@ -397,6 +397,12 @@ MODULE_REGISTRY = {
         "sfr_A": ("cigale_list(minvalue=0.)", 1.0),
         "normalise": ("boolean()", True),
     },
+    "sfhfromfile": {
+        "filename": ("string()", ""),
+        "sfr_column": ("cigale_list(dtype=int)", 1),
+        "age": ("cigale_list(dtype=int, minvalue=0.)", 1000),
+        "normalise": ("boolean()", True),
+    },
     "bc03": {
         "imf": ("cigale_list(dtype=int, options=0. & 1.)", 0),
         "metallicity": ("cigale_list(options=0.0001 & 0.0004 & 0.004 & "
@@ -503,6 +509,9 @@ MODULE_DOCS = {
                     "constant",
     "sfhdelayed": "delayed SFH ~ t*exp(-t/tau), optionally with a late "
                   "exponential burst",
+    "sfhfromfile": "tabulated SFH(s) read from a FITS/VO-Table file: col 0 = "
+                   "time [Myr] from 0 in 1 Myr steps, other cols = SFR "
+                   "[Msun/yr]; each sfr_column is one grid point",
     "bc03": "Bruzual & Charlot (2003) single stellar populations",
     "nebular": "nebular emission (lines + continuum) from the absorbed "
                "Lyman-continuum photons",
@@ -536,6 +545,17 @@ PARAM_DOCS = {
         "f_burst": "mass fraction of the late burst population (0 = none)",
         "sfr_A": "multiplicative SFR factor, used only if normalise is False",
         "normalise": "normalise the SFH to produce one solar mass",
+    },
+    "sfhfromfile": {
+        "filename": "SFH table (FITS/VO-Table): col 0 = time [Myr] starting "
+                    "at 0 with a strict 1 Myr step, other cols = SFR "
+                    "[Msun/yr] (CIGALE raises otherwise)",
+        "sfr_column": "column indices of the SFHs to use (first SFR column "
+                      "= 1); a list makes the SFH shape a grid dimension",
+        "age": "age [Myr] at which each SFH is cut off (must not exceed the "
+               "file's time coverage)",
+        "normalise": "normalise each SFH to produce one solar mass (only the "
+                     "shape matters; mass comes from the fit scaling)",
     },
     "bc03": {
         "imf": "initial mass function: 0 = Salpeter, 1 = Chabrier",
@@ -1442,6 +1462,7 @@ _PROP_UNITS = {
     "sfh.tau_main": r"$\tau_\mathrm{main}$ [Gyr]",
     "stellar.age_m_star": "mass-weighted stellar age [Gyr]",
     "sfh.r_sfr": r"$r_\mathrm{SFR}$ (after/before age$_\mathrm{bq}$)",
+    "sfh.index": "SFH column index (sfhfromfile)",
     "attenuation.Av_ISM": r"$A_{V,\,\mathrm{ISM}}$ [mag]",
     "dust.luminosity": r"$L_\mathrm{dust}$ [W]",
     "dust.mass": r"$M_\mathrm{dust}$ [$M_\odot$]",
