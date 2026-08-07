@@ -93,6 +93,11 @@ simbanator/
 │   │                     #   replaces init+genconf; genconf-style docs as ini comments;
 │   │                     #   fit_bands= manual fitted-band list, '<band>'/'<band>_err'
 │   │                     #   mix ok — errors auto-paired, unselected bands predicted),
+│   │                     #   MODULE_REGISTRY (configobj types per module: sfhdelayed(bq),
+│   │                     #   sfhfromfile, bc03, nebular, dustatt_modified_CF00, dl2014,
+│   │                     #   skirtor2016 — AGN torus, goes after the dust-emission module;
+│   │                     #   free fracAGN incl. 0 for a no-AGN null test — restframe_
+│   │                     #   parameters, redshifting),
 │   │                     #   describe_run (module/param/variable reminder, full or compact),
 │   │                     #   check/run/read_results/plot_seds wrappers, compare_results
 │   │                     #   (truth vs bayes.*: per-galaxy print, offset/NMAD stats,

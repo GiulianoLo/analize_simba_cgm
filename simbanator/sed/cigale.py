@@ -447,6 +447,31 @@ MODULE_REGISTRY = {
                   "2.5 & 2.6 & 2.7 & 2.8 & 2.9 & 3.0)", 2.0),
         "gamma": ("cigale_list(minvalue=0., maxvalue=1.)", 0.1),
     },
+    # SKIRTOR (Stalevski et al. 2016) clumpy two-phase AGN torus + polar dust.
+    # Chain position: AFTER the dust-emission module, BEFORE restframe/
+    # redshifting. Types verbatim from CIGALE 2025.1 sed_modules/skirtor2016.py.
+    # Only the parameters typed 'cigale_list' are grid dimensions — pass the
+    # torus geometry as scalars and free 'fracAGN' alone to keep the grid flat
+    # (fracAGN = 0 must stay in the grid for the no-AGN null test).
+    "skirtor2016": {
+        "t": ("cigale_list(options=3 & 5 & 7 & 9 & 11)", 7),
+        "pl": ("cigale_list(options=0. & .5 & 1. & 1.5)", 1.0),
+        "q": ("cigale_list(options=0. & .5 & 1. & 1.5)", 1.0),
+        "oa": ("cigale_list(options=10 & 20 & 30 & 40 & 50 & 60 & 70 & 80)",
+               40),
+        "R": ("cigale_list(options=10 & 20 & 30)", 20),
+        "Mcl": ("cigale_list(options=0.97)", 0.97),
+        "i": ("cigale_list(options=0 & 10 & 20 & 30 & 40 & 50 & 60 & 70 & "
+              "80 & 90)", 30),
+        "disk_type": ("integer(min=0, max=2)", 1),
+        "delta": ("cigale_list()", 0),
+        "fracAGN": ("cigale_list(minvalue=0., maxvalue=1.)", 0.1),
+        "lambda_fracAGN": ("string()", "0/0"),
+        "law": ("cigale_list(dtype=int, options=0 & 1 & 2)", 0),
+        "EBV": ("cigale_list(minvalue=0.)", 0.03),
+        "temperature": ("cigale_list(minvalue=0.)", 100.0),
+        "emissivity": ("cigale_list(minvalue=0.)", 1.6),
+    },
     "restframe_parameters": {
         # booleans/strings, NOT grid dimensions (no model-count growth).
         # NOTE 2025.1 renamed/reworked these vs older CIGALEs: 'Dn4000' (was
@@ -518,6 +543,10 @@ MODULE_DOCS = {
     "dustatt_modified_CF00": "Charlot & Fall (2000) two-phase attenuation "
                              "(birth clouds + ISM) with free power-law slopes",
     "dl2014": "Draine & Li (2014) dust emission templates",
+    "skirtor2016": "SKIRTOR (Stalevski et al. 2016) clumpy two-phase AGN "
+                   "torus + polar dust; goes after the dust-emission module. "
+                   "fracAGN = 0 in the grid makes 'no AGN' a reachable "
+                   "solution (null test for AGN-free photometry)",
     "restframe_parameters": "rest-frame quantities computed on each model "
                             "right before redshifting: Dn4000, UV slopes, "
                             "IRX, line EWs, rest-frame luminosities/colours "
@@ -591,6 +620,32 @@ PARAM_DOCS = {
                  "distribution",
         "gamma": "dust-mass fraction illuminated from U_min to U_max (the "
                  "rest sits at U_min)",
+    },
+    "skirtor2016": {
+        "t": "average edge-on optical depth at 9.7 micron (3/5/7/9/11)",
+        "pl": "power-law exponent of the radial dust-density gradient",
+        "q": "index of the dust-density gradient with polar angle",
+        "oa": "angle between the equatorial plane and the torus edge [deg]; "
+              "the dust-free cone half-opening is 90-oa",
+        "R": "ratio of outer to inner torus radius (10/20/30)",
+        "Mcl": "fraction of the total dust mass inside clumps (0.97)",
+        "i": "viewing angle w.r.t. the AGN axis [deg]; i < 90-oa = type 1 "
+             "(face-on, unobscured), i >= 90-oa = type 2",
+        "disk_type": "disk spectrum: 0 SKIRTOR, 1 Schartmann (2005), "
+                     "2 ADAF-to-disk (Lopez et al. 2024)",
+        "delta": "power-law index modifying the disk optical slope "
+                 "(disk_type 0/1), or the ADAF-to-thin-disk knob "
+                 "(disk_type 2)",
+        "fracAGN": "AGN fraction of the total luminosity over "
+                   "lambda_fracAGN; keep 0.0 in the grid so an AGN-free "
+                   "solution stays reachable",
+        "lambda_fracAGN": "wavelength range [micron] over which fracAGN is "
+                          "computed ('0/0' = total dust luminosity)",
+        "law": "polar-dust extinction law: 0 SMC, 1 Calzetti (2000), "
+               "2 Gaskell et al. (2004)",
+        "EBV": "E(B-V) of the polar-direction extinction [mag]",
+        "temperature": "polar-dust temperature [K]",
+        "emissivity": "polar-dust emissivity index",
     },
     "restframe_parameters": {
         "beta_calz94": "observed + intrinsic UV slopes beta/beta0 "
