@@ -44,7 +44,8 @@ from astropy.table import Table, vstack
 from astropy.cosmology import Planck13
 
 __all__ = [
-    "cigale_band", "write_cigale_input", "prepare_run", "describe_run",
+    "cigale_band", "write_cigale_input", "stack_cigale_inputs",
+    "parse_stacked_id", "prepare_run", "describe_run",
     "check", "run", "read_results", "collect_results", "validate_sfh_file",
     "write_slurm_array", "plot_seds", "compare_results",
     "plot_parameter_priors",
@@ -241,6 +242,110 @@ def write_cigale_input(flux_table, outpath, err_floor=0.0, verbose=True):
             print(f"[cigale]   dropped (not in the CIGALE 2025.0 DB): "
                   f"{sorted(set(dropped))}")
     return outpath
+
+
+def stack_cigale_inputs(items, outpath=None, sep="__", verbose=True):
+    """vstack several :func:`write_cigale_input` catalogs into ONE data file.
+
+    pcigale builds its model grid **once per run** and fits every source in the
+    catalog against that same shared grid
+    (``pdf_analysis.PdfAnalysis._compute_models`` fills one ``ModelsManager``,
+    ``_compute_bayes`` then maps the workers over the *observations*). Sources
+    are therefore nearly free while runs are not, so every SED that legitimately
+    shares a pinned grid — same injected SFH, same metallicity nodes, same
+    redshift, same module chain — belongs in one run as an extra row rather than
+    in a run of its own.
+
+    Row ``id``s must stay unique inside a run, so each input contributes
+    ``<id><sep><tag>`` where *tag* is built from that input's identifying
+    fields. :func:`parse_stacked_id` reverses it.
+
+    Parameters
+    ----------
+    items : sequence of (table, tag)
+        *table* is a :class:`~astropy.table.Table` or a path to one; *tag* is a
+        string, or a sequence/dict of fields joined with ``'_'`` (e.g.
+        ``('dust_on', 'ap10kpc', 'i0p0')`` -> ``'dust_on_ap10kpc_i0p0'``).
+    outpath : str, optional
+        Written here when given (parent dirs created).
+    sep : str
+        Separator between the original id and the tag. Must not occur in either.
+    verbose : bool
+        Print a one-line summary.
+
+    Returns
+    -------
+    :class:`~astropy.table.Table`
+        All rows stacked with ``join_type='outer'``, so inputs from different
+        filter sets can be mixed. Bands an input lacks are filled with **NaN**,
+        CIGALE's missing-data convention — ``vstack`` leaves them masked, and a
+        masked FITS column writes out as its fill value (0.0 for floats), which
+        CIGALE would read as a real zero-flux measurement.
+
+    Raises
+    ------
+    ValueError
+        On an empty *items*, a *sep* that occurs in an id or a tag, or duplicate
+        ids in the result (which pcigale would silently fit twice).
+    """
+    rows = []
+    for tab, tag in items:
+        t = Table.read(tab) if isinstance(tab, str) else Table(tab)
+        if len(t) == 0:
+            continue
+        if isinstance(tag, dict):
+            tag = "_".join(str(v) for v in tag.values())
+        elif not isinstance(tag, str):
+            tag = "_".join(str(v) for v in tag)
+        if sep in tag:
+            raise ValueError(f"tag {tag!r} contains the separator {sep!r}")
+        ids = np.asarray(t["id"], str)
+        bad = [i for i in ids if sep in i]
+        if bad:
+            raise ValueError(f"id {bad[0]!r} contains the separator {sep!r}")
+        t["id"] = np.array([f"{i}{sep}{tag}" for i in ids])
+        rows.append(t)
+
+    if not rows:
+        raise ValueError("stack_cigale_inputs: nothing to stack "
+                         "(no items, or every table was empty)")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")             # MergeConflictWarning
+        out = vstack(rows, join_type="outer", metadata_conflicts="silent")
+    # a band missing from one input is missing DATA, not zero flux: fill the
+    # mask with NaN here, because writing a masked float column to FITS would
+    # silently substitute its 0.0 fill value.
+    for c in out.colnames:
+        col = out[c]
+        if hasattr(col, "mask") and col.dtype.kind == "f" and col.mask.any():
+            out[c] = np.asarray(col.filled(np.nan), float)
+    ids = np.asarray(out["id"], str)
+    if len(set(ids.tolist())) != len(ids):
+        u, c = np.unique(ids, return_counts=True)
+        raise ValueError(f"duplicate id(s) after stacking: {u[c > 1][:4].tolist()}"
+                         " — the tags do not separate the inputs")
+
+    if outpath:
+        os.makedirs(os.path.dirname(os.path.abspath(outpath)), exist_ok=True)
+        out.write(outpath, overwrite=True)
+    if verbose:
+        nband = sum(1 for c in out.colnames
+                    if c not in ("id", "redshift", "distance")
+                    and not c.endswith("_err"))
+        print(f"[cigale] stacked {len(rows)} catalog(s) -> {len(out)} rows, "
+              f"{nband} bands" + (f" -> {outpath}" if outpath else ""))
+    return out
+
+
+def parse_stacked_id(row_id, sep="__"):
+    """``'snap105_gal7__dust_on_ap10kpc_i0p0'`` -> ``('snap105_gal7', 'dust_on_ap10kpc_i0p0')``.
+
+    The inverse of :func:`stack_cigale_inputs`' re-keying. Returns
+    ``(row_id, '')`` when the separator is absent, so it is safe to map over a
+    results table that mixes stacked and unstacked runs.
+    """
+    base, _, tag = str(row_id).partition(sep)
+    return base, tag
 
 
 def grid_options(module, param):
@@ -1159,10 +1264,13 @@ def read_results(run_dir):
 def collect_results(run_dirs, id_map=None, run_col="run", verbose=True):
     """vstack every ``<run_dir>/out/results.fits`` into one table.
 
-    The companion of :func:`write_slurm_array` once the fits are run one
-    object per directory: each ``results.fits`` is then a single row, and the
-    identity of the run (arm, aperture, sightline, ...) lives only in its
-    directory name.
+    The companion of :func:`write_slurm_array`. Whatever part of a fit's
+    identity is constant over a run (the pinned SFH, the metallicity nodes, the
+    module chain) lives in the directory name and comes back through *id_map*;
+    whatever varies row to row — the arm/aperture/sightline of a catalog built
+    with :func:`stack_cigale_inputs` — stays in the ``id`` column and is
+    recovered with :func:`parse_stacked_id`. Both cases work: *id_map* values
+    are broadcast over however many rows a ``results.fits`` holds.
 
     Parameters
     ----------

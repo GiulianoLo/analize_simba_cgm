@@ -88,7 +88,13 @@ simbanator/
 │   │                     #   attenuation_mag – A_λ = −2.5 log10(F_on/F_off), NaN-safe
 │   ├── cigale.py         # CIGALE 2025.0 end-to-end: write_cigale_input (flux table →
 │   │                     #   data_file, DB band names incl. Subaru Suprime-Cam — SVO
-│   │                     #   broad g/r/i/z map to CIGALE g+/r+/i+/z+), prepare_run
+│   │                     #   broad g/r/i/z map to CIGALE g+/r+/i+/z+),
+│   │                     #   stack_cigale_inputs/parse_stacked_id (many catalogs → ONE
+│   │                     #   data_file, ids re-keyed '<id>__<tag>': pcigale builds its
+│   │                     #   model grid once per RUN and shares it across sources, so
+│   │                     #   every SED sharing a pinned grid is a row, not a run;
+│   │                     #   absent bands filled NaN, not the 0.0 FITS mask fill),
+│   │                     #   prepare_run
 │   │                     #   (pcigale.ini/.spec,
 │   │                     #   replaces init+genconf; genconf-style docs as ini comments;
 │   │                     #   fit_bands= manual fitted-band list, '<band>'/'<band>_err'
@@ -111,8 +117,9 @@ simbanator/
 │   │                     #   default re-fits with CIGALE-native timestamped out/ backups,
 │   │                     #   skip_if_done=True for cheap resubmits),
 │   │                     #   collect_results (vstack every <run_dir>/out/results.fits into
-│   │                     #   one table + id_map= extra columns from the run name; missing/
-│   │                     #   empty/truncated runs counted in .meta, never raised),
+│   │                     #   one table + id_map= extra columns from the run name, broadcast
+│   │                     #   over however many rows a run holds; missing/empty/truncated
+│   │                     #   runs counted in .meta, never raised),
 │   │                     #   validate_sfh_file (sfhfromfile contract: time from 0 in strict
 │   │                     #   1 Myr steps, and the all-zero column that normalise=True turns
 │   │                     #   into an all-NaN results.fits; called from prepare_run),
