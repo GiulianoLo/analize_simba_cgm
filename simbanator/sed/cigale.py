@@ -10,7 +10,11 @@ fit without ever touching ``pcigale init / genconf`` by hand:
    data file; module grids from :data:`DEFAULT_MODULE_PARAMS` unless
    overridden).
 3. :func:`run` / :func:`check` — thin wrappers around the ``pcigale``
-   executable (results land in ``<run_dir>/out/``).
+   executable (results land in ``<run_dir>/out/``); :func:`write_slurm_array`
+   fans a list of run directories out over a SLURM job array (several runs per
+   task via ``runs_per_task`` when there are more runs than ``MaxArraySize``),
+   and :func:`collect_results` stacks their ``out/results.fits`` back into one
+   table.
 4. :func:`describe_run` — print the genconf-style reminder of every module,
    parameter and analysis variable (the same comments a hand-made
    ``pcigale.ini`` carries; :func:`prepare_run` also writes them into the ini).
@@ -36,12 +40,13 @@ import textwrap
 import warnings
 
 import numpy as np
-from astropy.table import Table
+from astropy.table import Table, vstack
 from astropy.cosmology import Planck13
 
 __all__ = [
     "cigale_band", "write_cigale_input", "prepare_run", "describe_run",
-    "check", "run", "read_results", "plot_seds", "compare_results",
+    "check", "run", "read_results", "collect_results", "validate_sfh_file",
+    "write_slurm_array", "plot_seds", "compare_results",
     "plot_parameter_priors",
     "DEFAULT_SED_MODULES", "DEFAULT_MODULE_PARAMS",
     "DEFAULT_ANALYSIS_PARAMS", "CIGALE_KNOWN_BANDS",
@@ -879,6 +884,14 @@ def prepare_run(run_dir, data_file, sed_modules=None, module_params=None,
     sed_modules, mp, ap = _merged_params(sed_modules, module_params,
                                          analysis_params)
 
+    # an injected SFH is only checked by pcigale itself, hours later inside a
+    # SLURM task — and its worst failure (an all-zero column) is not checked at
+    # all, it just divides by zero into an all-NaN results.fits
+    if "sfhfromfile" in sed_modules:
+        validate_sfh_file(mp.get("sfhfromfile", {}).get("filename", ""),
+                          mp.get("sfhfromfile", {}).get("sfr_column", 1),
+                          mp.get("sfhfromfile", {}).get("age"))
+
     data_file = os.path.abspath(data_file)
     obs = Table.read(data_file)
     all_bands = [c for c in obs.colnames
@@ -1143,6 +1156,151 @@ def read_results(run_dir):
     return Table.read(os.path.join(run_dir, "out", "results.fits"))
 
 
+def collect_results(run_dirs, id_map=None, run_col="run", verbose=True):
+    """vstack every ``<run_dir>/out/results.fits`` into one table.
+
+    The companion of :func:`write_slurm_array` once the fits are run one
+    object per directory: each ``results.fits`` is then a single row, and the
+    identity of the run (arm, aperture, sightline, ...) lives only in its
+    directory name.
+
+    Parameters
+    ----------
+    run_dirs : sequence of str, or str
+        Run directories, or a glob pattern expanded (and sorted) here.
+    id_map : callable or dict, optional
+        Extra identifying columns per run, called with / keyed by the run's
+        basename: ``lambda name: {'arm': ..., 'aperture': ...}`` or
+        ``{name: {...}}``. Returning ``None`` drops that run (and reports it),
+        so the caller's naming convention stays the single source of truth for
+        what a run name means and this function stays layout-agnostic.
+    run_col : str
+        Column holding each row's run basename (``None`` disables it).
+
+    Returns
+    -------
+    :class:`~astropy.table.Table`
+        All rows stacked with ``join_type='outer'``, so runs built from
+        different module chains (e.g. with and without ``skirtor2016``) can be
+        mixed — the result is then MASKED in the columns only some runs have,
+        so read those with ``np.ma.filled(np.asarray(t[c], float), np.nan)``.
+        ``.meta`` carries ``n_runs``/``n_collected``/``n_missing``/``n_empty``/
+        ``n_broken``/``n_unmapped`` — the "did the job array drain?" check.
+
+    Missing, empty and unreadable (truncated, half-written) results are
+    counted and reported, never raised: a 4000-run campaign always has a few.
+    """
+    if isinstance(run_dirs, str):
+        import glob as _glob
+        run_dirs = sorted(_glob.glob(run_dirs))
+    run_dirs = [os.path.abspath(d) for d in run_dirs]
+
+    tabs, missing, empty, broken, unmapped = [], [], [], [], []
+    for d in run_dirs:
+        name = os.path.basename(os.path.normpath(d))
+        f = os.path.join(d, "out", "results.fits")
+        if not os.path.exists(f) or os.path.getsize(f) == 0:
+            missing.append(name)
+            continue
+        try:
+            t = Table.read(f)
+        except Exception as exc:                    # truncated / half-written
+            broken.append((name, f"{type(exc).__name__}: {exc}"))
+            continue
+        if len(t) == 0:
+            empty.append(name)
+            continue
+        extra = None
+        if id_map is not None:
+            extra = id_map(name) if callable(id_map) else id_map.get(name)
+            if extra is None:
+                unmapped.append(name)
+                continue
+        if run_col:
+            t[run_col] = np.array([name] * len(t))
+        for k, v in (extra or {}).items():
+            t[k] = np.array([v] * len(t))
+        t.meta.clear()          # per-run ini paths would collide on vstack
+        tabs.append(t)
+
+    if not tabs:
+        raise RuntimeError(
+            f"no readable out/results.fits among {len(run_dirs)} run dir(s) "
+            f"({len(missing)} missing, {len(broken)} unreadable) — has the "
+            "job array drained?")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")             # MergeConflictWarning
+        out = vstack(tabs, join_type="outer", metadata_conflicts="silent")
+    out.meta.update(n_runs=len(run_dirs), n_collected=len(tabs),
+                    n_missing=len(missing), n_empty=len(empty),
+                    n_broken=len(broken), n_unmapped=len(unmapped))
+    if verbose:
+        print(f"[cigale] collected {len(out)} row(s) from {len(tabs)}/"
+              f"{len(run_dirs)} run(s)")
+        for lab, lst in (("no results.fits", missing), ("empty", empty),
+                         ("unreadable", [b[0] for b in broken]),
+                         ("unmapped", unmapped)):
+            if lst:
+                print(f"[cigale]   {len(lst)} {lab}: {lst[:4]}"
+                      f"{' ...' if len(lst) > 4 else ''}")
+        if broken:
+            print(f"[cigale]   first error: {broken[0][1]}")
+    return out
+
+
+def validate_sfh_file(filename, sfr_column=1, age=None, verbose=False):
+    """Check a ``sfhfromfile`` table against the CIGALE 2025.1 contract.
+
+    ``pcigale/sed_modules/sfhfromfile.py`` requires column 0 to be the time in
+    Myr starting at 0 in **strict 1 Myr steps**, and the remaining columns to
+    be SFRs indexed from 1. It then truncates with ``sfr[time <= age]`` (the
+    RECENT end is what is cut) and, with ``normalise=True``, divides by the
+    integral — **with no zero guard**, so an all-zero column silently yields
+    NaN spectra and an all-NaN ``results.fits`` that looks like a converged
+    run. Failing here instead costs a second; failing there costs a SLURM
+    task and is invisible until the analysis.
+
+    Returns ``(n_time_steps, [sfr column names])``.
+    """
+    if not filename or not os.path.exists(filename):
+        raise FileNotFoundError(
+            f"sfhfromfile.filename does not exist: {filename!r}")
+    t = Table.read(filename)
+    if len(t.colnames) < 2:
+        raise ValueError(f"{filename}: needs >= 2 columns (time + >= 1 SFR)")
+    tg = np.asarray(t.columns[0], np.int64)
+    if tg.size == 0 or tg[0] != 0:
+        raise ValueError(f"{filename}: column 0 (time [Myr]) must start at 0")
+    if not np.all(np.diff(tg) == 1):
+        raise ValueError(f"{filename}: column 0 must step by exactly 1 Myr")
+    cols = np.atleast_1d(sfr_column).astype(int)
+    bad = [int(c) for c in cols if not 1 <= c < len(t.colnames)]
+    if bad:
+        raise IndexError(f"{filename}: sfr_column {bad} outside "
+                         f"1..{len(t.colnames) - 1} (0 is the time column)")
+    amax = int(np.max(np.atleast_1d(age))) if age is not None else int(tg[-1])
+    if amax > tg[-1]:
+        raise ValueError(f"{filename}: sfh.age={amax} Myr exceeds the last "
+                         f"tabulated time {tg[-1]} Myr")
+    names = []
+    for c in cols:
+        s = np.asarray(t.columns[int(c)], float)
+        if not np.isfinite(s).all():
+            raise ValueError(f"{filename}: column {c} has non-finite SFR")
+        if (s < 0).any():
+            raise ValueError(f"{filename}: column {c} has negative SFR")
+        if s[tg <= amax].sum() <= 0:
+            raise ValueError(
+                f"{filename}: column {c} is all-zero within age={amax} Myr — "
+                "normalise=True would divide by 0 and yield an all-NaN "
+                "results.fits")
+        names.append(t.colnames[int(c)])
+    if verbose:
+        print(f"[cigale] {os.path.basename(filename)}: {tg[-1] + 1} Myr "
+              f"steps, {len(names)} SFR column(s) {names}")
+    return int(tg.size), names
+
+
 def find_pcigale(env_names=("cigale", "cigale-env"),
                  conda_roots=("miniforge3", "miniconda3")):
     """Absolute path of the ``pcigale`` executable from the dedicated env.
@@ -1307,13 +1465,23 @@ def write_slurm_array(run_dirs, job_file, pcigale_cmd="pcigale",
                       partition=None, cores=8, mem_per_cpu_mb=3800,
                       time="0-08:00", array_throttle=None, plots=True,
                       plots_format="png", job_name="cigale_fits",
-                      skip_if_done=False, verbose=True):
+                      skip_if_done=False, runs_per_task=1,
+                      max_array_tasks=None, verbose=True):
     """Write a SLURM job array that runs ``pcigale run`` in every *run_dirs*.
 
-    One array task per run directory — the right parallel unit: CIGALE builds
-    its model grid once per run and shares it across all objects in the data
-    file (row-splitting a catalog would recompute the same grid per chunk),
-    while within a task pcigale itself fans out over ``cores`` processes.
+    One array task per run directory by default — the right parallel unit when
+    a run holds many objects: CIGALE builds its model grid once per run and
+    shares it across every object in the data file (row-splitting a catalog
+    would recompute the same grid per chunk), while within a task pcigale
+    itself fans out over ``cores`` processes.
+
+    That inverts once the runs are small — one object per run dir, as a
+    per-object pinned SFH forces. Then there are thousands of short runs, more
+    than a site's ``MaxArraySize`` allows as tasks, and the per-task SLURM
+    overhead stops being negligible. ``runs_per_task`` bundles a contiguous
+    slice of the list into each task, which pcigale then works through
+    sequentially; ``max_array_tasks`` raises that divisor automatically so the
+    array never exceeds a stated ceiling.
 
     Each task ``cd``s into its run dir, rewrites ``cores`` in ``pcigale.ini``
     to the actual ``$SLURM_CPUS_PER_TASK``, sets ``OMP_NUM_THREADS=1``
@@ -1353,8 +1521,19 @@ def write_slurm_array(run_dirs, job_file, pcigale_cmd="pcigale",
         Append the ``pcigale-plots sed`` step to each task.
     skip_if_done : bool
         False (default): re-fit everything, pcigale timestamps-and-keeps any
-        previous ``out/``. True: tasks whose ``out/results.fits`` exists exit
-        immediately (cheap resubmits).
+        previous ``out/``. True: runs whose ``out/results.fits`` exists are
+        skipped immediately (cheap resubmits).
+    runs_per_task : int
+        Run directories per array task (default 1 = one task per run). Each
+        run executes in its own subshell, so one failure does not abort the
+        rest of the slice; the task still exits non-zero at the end, so
+        ``sacct --state=FAILED`` still lists it.
+    max_array_tasks : int, optional
+        Ceiling on the number of array tasks (typically the site's
+        ``MaxArraySize``, ``scontrol show config | grep -i MaxArraySize``).
+        ``runs_per_task`` is raised as needed to stay under it, so the caller
+        states the policy once instead of recomputing a divisor whenever the
+        run count changes.
 
     Returns
     -------
@@ -1377,7 +1556,19 @@ def write_slurm_array(run_dirs, job_file, pcigale_cmd="pcigale",
     with open(dirs_file, "w", encoding="utf-8") as f:
         f.write("\n".join(run_dirs) + "\n")
 
-    array = f"0-{len(run_dirs) - 1}"
+    n_dirs = len(run_dirs)
+    runs_per_task = max(1, int(runs_per_task))
+    if max_array_tasks and int(np.ceil(n_dirs / runs_per_task)) > int(max_array_tasks):
+        _was = runs_per_task
+        runs_per_task = int(np.ceil(n_dirs / float(max_array_tasks)))
+        if verbose:
+            print(f"[cigale] {n_dirs} runs / {_was} per task = "
+                  f"{int(np.ceil(n_dirs / _was))} tasks > "
+                  f"max_array_tasks={max_array_tasks} — runs_per_task raised "
+                  f"to {runs_per_task}")
+    n_tasks = int(np.ceil(n_dirs / runs_per_task))
+
+    array = f"0-{n_tasks - 1}"
     if array_throttle:
         array += f"%{int(array_throttle)}"
 
@@ -1396,38 +1587,72 @@ def write_slurm_array(run_dirs, job_file, pcigale_cmd="pcigale",
         f"#SBATCH --mem-per-cpu={int(mem_per_cpu_mb)}",
         f"#SBATCH --array={array}",
         "",
-        "set -euo pipefail",
+        "# no task-level `set -e`: one failing run must not abort the rest of",
+        "# the slice — strictness is applied inside the per-run subshell",
+        "set -uo pipefail",
         f'PCIGALE="{pcigale_cmd}"',
         f'DIRS_FILE="{dirs_file}"',
-        'RUN_DIR=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$DIRS_FILE")',
-        'echo "[task ${SLURM_ARRAY_TASK_ID}] ${RUN_DIR}"',
-        'cd "$RUN_DIR"',
+        f"RUNS_PER_TASK={runs_per_task}",
+        f"NDIRS={n_dirs}",
+        "FIRST=$(( SLURM_ARRAY_TASK_ID * RUNS_PER_TASK + 1 ))",
+        "LAST=$(( FIRST + RUNS_PER_TASK - 1 ))",
+        'if [ "$LAST" -gt "$NDIRS" ]; then LAST=$NDIRS; fi',
+        'echo "[task ${SLURM_ARRAY_TASK_ID}] run dirs ${FIRST}..${LAST} '
+        'of ${NDIRS}"',
+        "# pcigale parallelizes over processes; keep BLAS single-threaded",
+        "export OMP_NUM_THREADS=1",
+        "NFAIL=0",
+        'for (( LINE=FIRST; LINE<=LAST; LINE++ )); do',
+        '    RUN_DIR=$(sed -n "${LINE}p" "$DIRS_FILE")',
+        '    [ -n "$RUN_DIR" ] || continue',
+        '    echo "[task ${SLURM_ARRAY_TASK_ID}] (${LINE}/${NDIRS}) '
+        '${RUN_DIR}"',
+        "    (",
+        "        set -e",
+        '        cd "$RUN_DIR"',
     ]
     if skip_if_done:
         lines += [
-            'if [ -s out/results.fits ]; then',
-            '    echo "out/results.fits exists — skipping (skip_if_done)"',
-            '    exit 0',
-            'fi',
+            '        if [ -s out/results.fits ]; then',
+            '            echo "  out/results.fits exists — skipping '
+            '(skip_if_done)"',
+            "            exit 0",
+            "        fi",
         ]
     else:
         lines += [
-            '# a pre-existing out/ is renamed to <YYYYMMDDHHMM>_out/ by '
-            'pcigale itself (kept, not overwritten)',
+            '        # a pre-existing out/ is renamed to <YYYYMMDDHHMM>_out/',
+            "        # by pcigale itself (kept, not overwritten)",
         ]
     lines += [
-        '# match the pcigale worker count to the actual allocation',
-        'sed -i "s/^cores = .*/cores = ${SLURM_CPUS_PER_TASK}/" pcigale.ini',
-        '# pcigale parallelizes over processes; keep BLAS single-threaded',
-        'export OMP_NUM_THREADS=1',
-        '"$PCIGALE" run',
+        "        # match the pcigale worker count to the actual allocation",
+        '        sed -i "s/^cores = .*/cores = ${SLURM_CPUS_PER_TASK}/" '
+        "pcigale.ini",
+        '        "$PCIGALE" run',
     ]
     if plots:
         lines += [
-            f'"${{PCIGALE}}-plots" sed --format {plots_format} --nologo '
-            '|| echo "[warn] pcigale-plots failed (fit results unaffected)"',
+            f'        "${{PCIGALE}}-plots" sed --format {plots_format} '
+            "--nologo \\",
+            '            || echo "  [warn] pcigale-plots failed (fit results '
+            'unaffected)"',
         ]
-    lines.append('echo "[task ${SLURM_ARRAY_TASK_ID}] done"')
+    lines += [
+        "    )",
+        "    # NB: the subshell must be its own command, NOT the left side of",
+        "    # a `||` — bash disables the inner `set -e` for anything in a",
+        "    # `&&`/`||` list, so `( set -e; ... ) || ...` would keep going",
+        "    # after a failed step inside the run.",
+        "    RC=$?",
+        '    if [ "$RC" -ne 0 ]; then',
+        "        NFAIL=$(( NFAIL + 1 ))",
+        '        echo "[warn] FAILED (exit ${RC}): ${RUN_DIR}"',
+        "    fi",
+        "done",
+        'echo "[task ${SLURM_ARRAY_TASK_ID}] done, ${NFAIL} failure(s) in '
+        'this slice"',
+        '[ "$NFAIL" -eq 0 ] || exit 1',
+    ]
 
     with open(job_file, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
@@ -1438,7 +1663,8 @@ def write_slurm_array(run_dirs, job_file, pcigale_cmd="pcigale",
                      for d in run_dirs)
         _mode = ("skipped in-task" if skip_if_done
                  else "re-fit; old out/ kept as <timestamp>_out/")
-        print(f"[cigale] job array: {len(run_dirs)} tasks "
+        print(f"[cigale] job array: {n_tasks} tasks x {runs_per_task} run(s) "
+              f"= {n_dirs} run dir(s) "
               f"({n_done} already have results.fits -> {_mode})")
         print(f"[cigale]   run-dir list -> {dirs_file}")
         print(f"[cigale]   submit with:  sbatch"

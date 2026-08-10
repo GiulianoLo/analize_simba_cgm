@@ -104,9 +104,18 @@ simbanator/
 │   │                     #   one-to-one panels → <run_dir>/out/simba_vs_cigale.fits+.png),
 │   │                     #   plot_parameter_priors (per gridded param: fitted distribution
 │   │                     #   vs prior nodes + extend/refine/trim advice → param_priors.*),
-│   │                     #   write_slurm_array (one SLURM array task per prepared run dir;
+│   │                     #   write_slurm_array (SLURM array over prepared run dirs; one task
+│   │                     #   per dir by default, runs_per_task=N/max_array_tasks=M bundle a
+│   │                     #   slice per task for thousands of small per-object runs — each run
+│   │                     #   in its own subshell so one failure does not abort the slice;
 │   │                     #   default re-fits with CIGALE-native timestamped out/ backups,
 │   │                     #   skip_if_done=True for cheap resubmits),
+│   │                     #   collect_results (vstack every <run_dir>/out/results.fits into
+│   │                     #   one table + id_map= extra columns from the run name; missing/
+│   │                     #   empty/truncated runs counted in .meta, never raised),
+│   │                     #   validate_sfh_file (sfhfromfile contract: time from 0 in strict
+│   │                     #   1 Myr steps, and the all-zero column that normalise=True turns
+│   │                     #   into an all-NaN results.fits; called from prepare_run),
 │   │                     #   grid_options/nearest_option/split_by_metallicity (per-galaxy
 │   │                     #   metallicity priors: snap SIMBA Z to the strict CIGALE grids
 │   │                     #   in log space, one sub-catalog+run per bc03 node),
