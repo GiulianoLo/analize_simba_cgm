@@ -12,12 +12,16 @@ from .mergers import (
 )
 from .sfh_fsps import *
 from .sfh_utils import (smooth_resample_sfh, recent_sfr,
-                        sfr_delayed_bq, fit_delayed_bq)
+                        sfr_delayed_bq, fit_delayed_bq,
+                        build_mfrac_lookup, mfrac_of,
+                        archaeological_sfh, projected_region_sfh)
 
 __all__ = [
     "HDF5BuildHistory",
     "find_property_threshold_crossings_from_hdf5",
     "smooth_resample_sfh", "recent_sfr",
+    "build_mfrac_lookup", "mfrac_of",
+    "archaeological_sfh", "projected_region_sfh",
     "extract_particles",
     "radial_profile",
     "caesar_read_progen", "read_progen",

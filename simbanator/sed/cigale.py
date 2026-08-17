@@ -47,6 +47,7 @@ __all__ = [
     "cigale_band", "write_cigale_input", "stack_cigale_inputs",
     "parse_stacked_id", "prepare_run", "describe_run",
     "check", "run", "read_results", "collect_results", "validate_sfh_file",
+    "write_sfhfromfile", "pin_umin",
     "write_slurm_array", "plot_seds", "compare_results",
     "plot_parameter_priors",
     "DEFAULT_SED_MODULES", "DEFAULT_MODULE_PARAMS",
@@ -1407,6 +1408,101 @@ def validate_sfh_file(filename, sfr_column=1, age=None, verbose=False):
         print(f"[cigale] {os.path.basename(filename)}: {tg[-1] + 1} Myr "
               f"steps, {len(names)} SFR column(s) {names}")
     return int(tg.size), names
+
+
+def write_sfhfromfile(run_dir, name, t_gyr, sfr, age_myr, shift_myr=0,
+                      filename="sfh.fits"):
+    """Write ``run_dir/filename`` as a CIGALE ``sfhfromfile`` table.
+
+    Column 0 = time [Myr], ``0..age_myr`` in the STRICT 1 Myr steps CIGALE
+    requires; the single SFR column (named *name*, so ``sfr_column=[1]``) is
+    interpolated from the smoothed archive samples ``(t_gyr, sfr)`` — SFR = 0
+    before the first sample (``np.interp left=0``), edge-held after the last
+    (the recent edge drives the UV/nebular fluxes). ``shift_myr > 0`` maps
+    table time t to cosmic time ``t + shift_myr``, i.e. drops the OLDEST
+    ``shift_myr`` so that ``t = age_myr`` still lands on the snapshot epoch —
+    sfhfromfile truncates at the RECENT end (``sfr[time_grid <= age]``), so
+    shrinking ``age`` alone would cut the newest star formation.
+
+    Returns ``(path, hold_frac)`` on success — *hold_frac* is the fraction of
+    the tabulated time past the archive's last sample, i.e. edge-held — or
+    ``(None, reason)`` for a non-finite SFH or one that is all-zero within the
+    age cap (``normalise=True`` would divide by the zero integral and yield an
+    all-NaN ``results.fits``). Output satisfies :func:`validate_sfh_file` by
+    construction.
+    """
+    t_gyr = np.asarray(t_gyr, float)
+    sfr = np.asarray(sfr, float)
+    t1 = np.arange(int(age_myr) + 1, dtype=np.int64)
+    tc = t1 + int(shift_myr)                               # cosmic time [Myr]
+    col = np.clip(np.interp(tc, t_gyr * 1e3, sfr, left=0.0), 0.0, None)
+    if not np.isfinite(col).all():
+        return None, "non-finite SFH"
+    if col.sum() <= 0:
+        return None, "all-zero SFH within the age cap"
+    os.makedirs(run_dir, exist_ok=True)
+    tab = Table()
+    tab["time"] = t1
+    tab[str(name)] = col.astype(float)
+    path = os.path.join(run_dir, filename)
+    tab.write(path, overwrite=True)
+    return path, float((tc > t_gyr[-1] * 1e3).mean())
+
+
+def pin_umin(l_dust_w, m_dust_kg, emissivity_table, qpah, gamma,
+             umin_options=None):
+    """Pin the dl2014 ``umin`` node that anchors ``dust.mass`` to a known mass.
+
+    CIGALE's dl2014 module scales a template of fixed emissivity — the dust
+    luminosity per kg of dust at ``(qpah, umin, gamma)`` — so the fitted
+    ``dust.mass`` is just ``L_dust / emissivity``. Given a region's radiative-
+    transfer dust luminosity and its true (simulation) dust mass, the target
+    emissivity is ``L/M``; this selects the *emissivity_table* rows at
+    ``(qpah, gamma)``, interpolates ``log10(emissivity)`` vs ``log10(umin)``
+    (monotonically increasing), and snaps the implied umin to the nearest
+    allowed node (``grid_options('dl2014', 'umin')`` unless *umin_options* is
+    given), clamping at the table ends.
+
+    Parameters
+    ----------
+    l_dust_w, m_dust_kg : float
+        Region dust luminosity [W] and true dust mass [kg].
+    emissivity_table : astropy Table
+        Columns ``qpah, umin, gamma, emissivity`` [W/kg] — the export of
+        ``simbanator.sed.dl2014_fit.emissivity_table`` (CIGALE env).
+    qpah, gamma : float
+        The template family to pin within (the fit grids for these stay free).
+
+    Returns
+    -------
+    umin_node, emis_target, offset_dex : float, float, float
+        The pinned node, the target emissivity [W/kg], and
+        ``log10(emissivity(node) / target)`` — the dex by which the pinned
+        ``dust.mass`` will sit off the true value (clamping shows up here).
+        All-NaN when L or M is non-positive/non-finite or the table has no
+        rows at ``(qpah, gamma)``.
+    """
+    L = float(l_dust_w) if np.isfinite(l_dust_w) else np.nan
+    M = float(m_dust_kg) if np.isfinite(m_dust_kg) else np.nan
+    if not (np.isfinite(L) and np.isfinite(M)) or L <= 0 or M <= 0:
+        return np.nan, np.nan, np.nan
+    q = np.asarray(emissivity_table["qpah"], float)
+    u = np.asarray(emissivity_table["umin"], float)
+    g = np.asarray(emissivity_table["gamma"], float)
+    e = np.asarray(emissivity_table["emissivity"], float)
+    sel = np.isclose(q, float(qpah)) & np.isclose(g, float(gamma))
+    if not sel.any():
+        return np.nan, np.nan, np.nan
+    o = np.argsort(u[sel])
+    lu, le = np.log10(u[sel][o]), np.log10(e[sel][o])
+    target = L / M
+    lt = np.clip(np.log10(target), le[0], le[-1])          # clamp at the ends
+    umin_impl = 10.0 ** np.interp(lt, le, lu)
+    opts = (list(umin_options) if umin_options is not None
+            else grid_options("dl2014", "umin"))
+    node = float(nearest_option([umin_impl], opts, log=True)[0])
+    emis_node = 10.0 ** np.interp(np.log10(node), lu, le)
+    return node, float(target), float(np.log10(emis_node / target))
 
 
 def find_pcigale(env_names=("cigale", "cigale-env"),

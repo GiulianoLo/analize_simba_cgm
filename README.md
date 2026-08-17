@@ -67,11 +67,17 @@ simbanator/
 │   │                     #   Units: positions Mpc/h, r_half kpc/h, masses M☉
 │   ├── particles.py      # extract_particles – per-galaxy/halo/aperture HDF5 subsets
 │   ├── sfh_caesar.py     # HDF5BuildHistory – property histories from Caesar catalogs
-│   ├── sfh_fsps.py       # compute_sfh, bin_sfh, save_sfh, load_sfh – FSPS SFHs
+│   ├── sfh_fsps.py       # compute_sfh, bin_sfh, load_sfh_file – FSPS SFHs
 │   ├── sfh_utils.py      # smooth_resample_sfh, recent_sfr – de-burst snapshot-cadence
 │   │                     #   SFR tracks (Gaussian kernel + uniform resample);
 │   │                     #   sfr_delayed_bq, fit_delayed_bq – CIGALE sfhdelayedbq
-│   │                     #   form + bounded fit (shared by 7b′ and aperture truth)
+│   │                     #   form + bounded fit (shared by 7b′ and aperture truth);
+│   │                     #   build_mfrac_lookup/mfrac_of – powderday-consistent FSPS
+│   │                     #   surviving-mass fraction (linear-Z snap, cached .npz);
+│   │                     #   archaeological_sfh – formed-mass SFH on a fixed 0→t_obs
+│   │                     #   grid (linear in weights: disjoint subsets sum exactly);
+│   │                     #   projected_region_sfh – SFH of r_in<R≤r_out along a
+│   │                     #   sightline (Hyperion aperture geometry, nstar_min skip)
 │   ├── profiles.py       # radial_profile – surface-density / mean radial profiles
 │   ├── quenching.py      # find_quenching_times, load_quenching_events
 │   ├── history.py        # deprecated shim → sfh_caesar
@@ -86,6 +92,8 @@ simbanator/
 │   │                     #   annular_flux_table – F(<r_out)−F(<r_in) between two
 │   │                     #   cumulative-aperture flux tables (non-positive → NaN)
 │   │                     #   attenuation_mag – A_λ = −2.5 log10(F_on/F_off), NaN-safe
+│   │                     #   dust_luminosity – L_dust [W] of a raw powderday SED
+│   │                     #   (∫νLν dlnν beyond 3 µm; optional dust_on−dust_off)
 │   ├── cigale.py         # CIGALE 2025.0 end-to-end: write_cigale_input (flux table →
 │   │                     #   data_file, DB band names incl. Subaru Suprime-Cam — SVO
 │   │                     #   broad g/r/i/z map to CIGALE g+/r+/i+/z+),
@@ -123,6 +131,12 @@ simbanator/
 │   │                     #   validate_sfh_file (sfhfromfile contract: time from 0 in strict
 │   │                     #   1 Myr steps, and the all-zero column that normalise=True turns
 │   │                     #   into an all-NaN results.fits; called from prepare_run),
+│   │                     #   write_sfhfromfile (smoothed SFH → run_dir/sfh.fits on the
+│   │                     #   strict 1 Myr grid; shift_myr drops the OLDEST Myr so the
+│   │                     #   recent end survives the age cap; refuses all-zero columns),
+│   │                     #   pin_umin (dl2014 umin node whose emissivity matches a known
+│   │                     #   L_dust/M_dust — anchors the fitted dust.mass to a truth
+│   │                     #   value; returns node, target ε, offset_dex),
 │   │                     #   grid_options/nearest_option/split_by_metallicity (per-galaxy
 │   │                     #   metallicity priors: snap SIMBA Z to the strict CIGALE grids
 │   │                     #   in log space, one sub-catalog+run per bc03 node),
@@ -137,6 +151,8 @@ simbanator/
 │   │                     #   normalization, no energy balance): subtracts the optical-only
 │   │                     #   run's bayes.<band> stellar continuum, fits L_dust analytically
 │   │                     #   per (qpah, umin, gamma) → <run_dir>/out/dl2014_results.fits.
+│   │                     #   emissivity_table + --emissivity-out CLI export the DL2014
+│   │                     #   ε(qpah, umin, gamma) [W/kg] table cigale.pin_umin consumes.
 │   │                     #   Run under the CIGALE env python (needs pcigale.data).
 │   └── parameters_master.py / parameters_master-nodust.py / parameters_master-agn.py / parameters_master-agn-nenkova.py
 │       parameters_master-nenkova-i90.py / -i60.py / -i30.py

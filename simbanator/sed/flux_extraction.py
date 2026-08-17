@@ -212,6 +212,51 @@ def attenuation_mag(f_on, f_off):
     return a
 
 
+def dust_luminosity(wav_um, nulnu_erg_s, nulnu_off_erg_s=None, lam_min_um=3.0):
+    """Dust luminosity [W] of a powderday SED (raw ``_read_sed`` arrays).
+
+    Integrates ``L_nu dnu = (nu L_nu) dln(nu)`` over rest wavelengths
+    ``lam >= lam_min_um`` — beyond ~3 um the SED is dust-emission dominated.
+    When the matched ``dust_off`` SED is given, the integrand is
+    ``(on - off)`` clipped at 0, removing the stellar IR tail (the dust_off
+    arm renders the same stars with no dust).
+
+    Parameters
+    ----------
+    wav_um : (n_wav,) array
+        Rest-frame wavelengths [micron] as stored by Hyperion (any order).
+    nulnu_erg_s : (n_wav,) or (n_incl, n_wav) array
+        ``nu L_nu`` [erg/s] — the raw units of ``makesed._read_sed``.
+    nulnu_off_erg_s : array, optional
+        Same shape, from the matched dust-free RT arm.
+    lam_min_um : float
+        Only ``lam >= lam_min_um`` contributes.
+
+    Returns
+    -------
+    float or (n_incl,) ndarray — dust luminosity in W (SI, the CIGALE
+    ``dust.luminosity`` convention); NaN when fewer than 2 wavelength points
+    survive the cut.
+    """
+    wav = np.asarray(wav_um, float)
+    f_on = np.atleast_2d(np.asarray(nulnu_erg_s, float))
+    integ = f_on
+    if nulnu_off_erg_s is not None:
+        integ = np.clip(f_on - np.atleast_2d(np.asarray(nulnu_off_erg_s,
+                                                        float)), 0.0, None)
+    sel = np.isfinite(wav) & (wav >= float(lam_min_um))
+    if int(sel.sum()) < 2:
+        out = np.full(integ.shape[0], np.nan)
+        return out if np.asarray(nulnu_erg_s).ndim == 2 else float(out[0])
+    # integrate nuLnu dln(nu); dln(nu) = -dln(lam), so sort by ln(nu)
+    lnnu = -np.log(wav[sel])
+    o = np.argsort(lnnu)
+    tr = getattr(np, "trapezoid", None) or np.trapz
+    out = np.array([tr(np.nan_to_num(row[sel][o], nan=0.0), x=lnnu[o])
+                    for row in integ]) * 1e-7          # erg/s -> W
+    return out if np.asarray(nulnu_erg_s).ndim == 2 else float(out[0])
+
+
 def annular_flux_table(inner, outer, verbose=True):
     """Differential (annular) fluxes between two cumulative-aperture flux tables.
 

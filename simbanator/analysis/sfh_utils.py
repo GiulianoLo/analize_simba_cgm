@@ -5,12 +5,21 @@ snapshot cadence (~100-300 Myr), so the tracks carry burst-to-burst scatter
 that smooth parametric SFH forms (and SED-derived SFR estimates) cannot and
 should not follow. These helpers turn such a track into a smooth, uniformly
 sampled SFH suitable for fitting and for truth comparisons.
+
+The module also holds the particle-archaeology builders promoted from the
+powderday mock-observation notebooks: an FSPS surviving-mass-fraction lookup
+(powderday-consistent formed-mass correction) and fixed-grid archaeological
+SFHs of projected radial regions, per sightline.
 """
 
 import numpy as np
 
+from ..utils.geometry import projected_radius
+
 __all__ = ["smooth_resample_sfh", "recent_sfr",
-           "sfr_delayed_bq", "fit_delayed_bq"]
+           "sfr_delayed_bq", "fit_delayed_bq",
+           "build_mfrac_lookup", "mfrac_of",
+           "archaeological_sfh", "projected_region_sfh"]
 
 
 def smooth_resample_sfh(t_gyr, sfr, dt_myr=25.0, kernel_myr=None):
@@ -70,6 +79,142 @@ def recent_sfr(t_gyr, sfr, avg_myr=100.0, t_obs_gyr=None, **kwargs):
     t1 = float(t_obs_gyr) if t_obs_gyr is not None else t_grid[-1]
     m = (t_grid >= t1 - avg_myr / 1e3) & (t_grid <= t1)
     return float(sm[m].mean()) if m.any() else float(sm[-1])
+
+
+def build_mfrac_lookup(cache_path, overwrite=False, imf_type=1, pagb=1,
+                       add_agb_dust_model=True):
+    """FSPS surviving-mass-fraction lookup, powderday-consistent.
+
+    ``get_spectrum(tage=0)`` returns the whole SSP age grid, so
+    ``sp.stellar_mass`` comes back as an ``(nage,)`` array: one FSPS call per
+    metallicity node instead of one per particle. The result is cached to
+    ``cache_path`` (``.npz``); fsps is only imported on a cache miss.
+
+    The defaults match powderday's active parameters_master (imf_type=1
+    Chabrier, pagb=1, add_agb_dust_model=True); ``add_stellar_remnants`` is
+    left at the FSPS default (1), so the fraction INCLUDES remnants — exactly
+    the ``mass/mfrac`` scaling powderday applies in source_creation.py.
+
+    Parameters
+    ----------
+    cache_path : str
+        ``.npz`` cache file (keys ``zlegend, log_age_yr, mfrac, source``).
+    overwrite : bool
+        Rebuild even if the cache exists.
+
+    Returns
+    -------
+    zlegend, log_age_yr, mfrac, source : ndarray, ndarray, ndarray, str
+        Metallicity nodes, log10(age/yr) grid, ``(nz, nage)`` surviving
+        fractions, and a provenance string (fsps version, libraries, flags).
+    """
+    import os
+    if os.path.exists(cache_path) and not overwrite:
+        d = np.load(cache_path)
+        return (d["zlegend"], d["log_age_yr"], d["mfrac"], str(d["source"]))
+    import fsps
+    sp = fsps.StellarPopulation(imf_type=imf_type, pagb=pagb, sfh=0,
+                                add_agb_dust_model=add_agb_dust_model,
+                                add_neb_emission=False)  # no effect on m_star
+    zleg, rows, log_age = np.asarray(sp.zlegend, float), [], None
+    for iz in range(1, len(zleg) + 1):            # FSPS zmet is 1-based
+        sp.params["zmet"] = iz
+        sp.get_spectrum(tage=0)
+        log_age = np.asarray(sp.log_age, float)          # log10(yr)
+        rows.append(np.asarray(sp.stellar_mass, float))  # (nage,)
+    mfrac = np.vstack(rows)
+    src = (f"fsps {fsps.__version__} libs={sp.libraries} "
+           f"imf_type={imf_type} pagb={pagb} agb_dust={add_agb_dust_model} "
+           f"remnants={sp.params['add_stellar_remnants']}")
+    np.savez(cache_path, zlegend=zleg, log_age_yr=log_age, mfrac=mfrac,
+             source=src)
+    return zleg, log_age, mfrac, src
+
+
+def mfrac_of(age_gyr, zstar, lookup, clip=(0.05, 1.0)):
+    """Surviving-mass fraction powderday used for these particles.
+
+    Nearest metallicity node in LINEAR space — powderday's find_nearest_zmet
+    (SED_gen.py) is ``argmin(|zlegend - Z|)``, not a log-space snap — then
+    linear interpolation in log10(age/yr) clipped to the tabulated range.
+
+    Parameters
+    ----------
+    age_gyr, zstar : arrays
+        Stellar ages [Gyr] and total metallicities (mass fractions).
+    lookup : tuple
+        ``(zlegend, log_age_yr, mfrac[, source])`` from
+        :func:`build_mfrac_lookup`.
+    clip : (float, float)
+        Bounds on the returned fraction.
+    """
+    zleg, log_age_yr, mfrac = lookup[0], lookup[1], lookup[2]
+    iz = np.argmin(np.abs(np.asarray(zstar, float)[:, None] - zleg[None, :]),
+                   axis=1)
+    la = np.log10(np.clip(np.asarray(age_gyr, float), 1e-4, None) * 1e9)
+    la = np.clip(la, log_age_yr[0], log_age_yr[-1])
+    out = np.empty(la.shape, float)
+    for k in np.unique(iz):
+        m = iz == k
+        out[m] = np.interp(la[m], log_age_yr, mfrac[k])
+    return np.clip(out, clip[0], clip[1])
+
+
+def archaeological_sfh(tform_gyr, mass_msun, t_obs_gyr, bin_myr=100.0,
+                       dt_myr=25.0, kernel_myr=150.0):
+    """Smoothed archaeological SFH from star-particle formation times.
+
+    Histograms ``mass_msun`` (formed mass — divide current masses by
+    :func:`mfrac_of` first) on a uniform ``bin_myr`` grid spanning
+    ``[0, t_obs_gyr]`` in cosmic time, converts to SFR [Msun/yr], and smooths
+    with :func:`smooth_resample_sfh`. The fixed 0-based edges make SFHs of
+    different subsets of the same snapshot directly comparable, and the whole
+    pipeline is linear in the weights: SFHs of disjoint particle sets sum to
+    the SFH of their union.
+
+    Returns
+    -------
+    t_grid_gyr, sfr : ndarray, ndarray
+        Uniform cosmic-time grid (``dt_myr`` step) and smoothed SFR [Msun/yr].
+    """
+    edges = np.arange(0.0, float(t_obs_gyr) + bin_myr / 1e3, bin_myr / 1e3)
+    centres = 0.5 * (edges[:-1] + edges[1:])
+    h, _ = np.histogram(np.asarray(tform_gyr, float), bins=edges,
+                        weights=np.asarray(mass_msun, float))
+    return smooth_resample_sfh(centres, h / (bin_myr * 1e6),
+                               dt_myr=dt_myr, kernel_myr=kernel_myr)
+
+
+def projected_region_sfh(tform_gyr, mass_msun, pos_kpc, nhat, r_in_kpc,
+                         r_out_kpc, t_obs_gyr, nstar_min=20, bin_myr=100.0,
+                         dt_myr=25.0, kernel_myr=150.0):
+    """Archaeological SFH of the stars in a projected radial region.
+
+    Selects ``r_in < R <= r_out`` with ``R`` the image-plane radius along the
+    sightline ``nhat`` (:func:`~simbanator.utils.geometry.projected_radius`) —
+    the geometry of a Hyperion SED aperture; ``r_in_kpc <= 0`` degrades to the
+    cumulative disc ``R <= r_out``. Positions must already be relative to the
+    aperture centre, in the same (proper) units as the radii.
+
+    Returns
+    -------
+    t_grid_gyr, sfr, nstar : ndarray, ndarray, int
+        The smoothed SFH from :func:`archaeological_sfh` and the number of
+        selected star particles — or ``(None, None, nstar)`` when
+        ``nstar < nstar_min`` (shot-noise, not an SFH; the caller records the
+        skip).
+    """
+    rp = projected_radius(pos_kpc, nhat)
+    msk = (rp <= float(r_out_kpc)) if float(r_in_kpc) <= 0.0 else \
+          ((rp > float(r_in_kpc)) & (rp <= float(r_out_kpc)))
+    nstar = int(msk.sum())
+    if nstar < int(nstar_min):
+        return None, None, nstar
+    t, s = archaeological_sfh(np.asarray(tform_gyr, float)[msk],
+                              np.asarray(mass_msun, float)[msk],
+                              t_obs_gyr, bin_myr=bin_myr, dt_myr=dt_myr,
+                              kernel_myr=kernel_myr)
+    return t, s, nstar
 
 
 def sfr_delayed_bq(t, A, tau, age_main, age_bq, r_sfr, t_obs):

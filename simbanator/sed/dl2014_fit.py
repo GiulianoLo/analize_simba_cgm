@@ -104,6 +104,29 @@ def load_templates(qpah=DEFAULT_QPAH, umin=DEFAULT_UMIN, gamma=DEFAULT_GAMMA,
     return wl, models
 
 
+def emissivity_table(qpah=DEFAULT_QPAH, umin=None,
+                     gamma=(0.0, 0.01, 0.02, 0.05, 0.1), alpha=DEFAULT_ALPHA):
+    """Table of DL2014 emissivities: ``(qpah, umin, gamma, emissivity)``.
+
+    *emissivity* is the dust luminosity per kg of dust [W/kg] of the combined
+    template — the constant CIGALE's dl2014 module divides by to report
+    ``dust.mass`` (``M_dust = L_dust / emissivity``). ``umin=None`` uses every
+    umin node of the CIGALE DL2014 database, giving the finest grid for
+    interpolation (``simbanator.sed.cigale.pin_umin`` consumes this table).
+
+    MUST run under the CIGALE conda env (needs ``pcigale.data``); notebooks in
+    other envs subprocess ``python -m simbanator.sed.dl2014_fit
+    --emissivity-out table.fits`` and read the FITS.
+    """
+    if umin is None:
+        from pcigale.data import SimpleDatabase
+        with SimpleDatabase("dl2014") as db:
+            umin = tuple(sorted(db.parameters["umin"]))
+    _, models = load_templates(qpah=qpah, umin=umin, gamma=gamma, alpha=alpha)
+    return Table(rows=[(q, u, g, e) for q, u, g, _s, e in models],
+                 names=("qpah", "umin", "gamma", "emissivity"))
+
+
 def load_filters(names):
     """``{band: (wl_nm, transmission)}`` from the CIGALE filter database.
 
@@ -357,15 +380,38 @@ def main(argv=None):
     p.add_argument("--ir-bands", default=IR_BAND_RE,
                    help="regex of the bands to fit [%(default)s]")
     p.add_argument("--qpah", default=",".join(map(str, DEFAULT_QPAH)))
-    p.add_argument("--umin", default=",".join(map(str, DEFAULT_UMIN)))
-    p.add_argument("--gamma", default=",".join(map(str, DEFAULT_GAMMA)))
+    p.add_argument("--umin", default=None,
+                   help="comma list of umin nodes; default: DL2014 fit grid, "
+                        "or EVERY database node with --emissivity-out")
+    p.add_argument("--gamma", default=None,
+                   help="comma list of gamma values; default: DL2014 fit "
+                        "grid, or 0,0.01,0.02,0.05,0.1 with --emissivity-out")
     p.add_argument("--alpha", type=float, default=DEFAULT_ALPHA)
     p.add_argument("--min-bands", type=int, default=2)
     p.add_argument("--additionalerror", type=float, default=None,
                    help="override the per-run pcigale.ini value")
     p.add_argument("--outname", default="dl2014_results.fits")
+    p.add_argument("--emissivity-out", metavar="PATH.fits",
+                   help="write the (qpah, umin, gamma, emissivity) table "
+                        "instead of fitting run dirs, then exit")
     args = p.parse_args(argv)
 
+    if args.emissivity_out:
+        tab = emissivity_table(
+            qpah=tuple(float(x) for x in args.qpah.split(",")),
+            umin=(tuple(float(x) for x in args.umin.split(","))
+                  if args.umin else None),
+            gamma=(tuple(float(x) for x in args.gamma.split(","))
+                   if args.gamma else (0.0, 0.01, 0.02, 0.05, 0.1)),
+            alpha=args.alpha)
+        tab.write(args.emissivity_out, overwrite=True)
+        print(f"[dl2014] {len(tab)} emissivities "
+              f"({len(set(tab['qpah']))} qpah x {len(set(tab['umin']))} umin "
+              f"x {len(set(tab['gamma']))} gamma) -> {args.emissivity_out}")
+        return 0
+
+    args.umin = args.umin or ",".join(map(str, DEFAULT_UMIN))
+    args.gamma = args.gamma or ",".join(map(str, DEFAULT_GAMMA))
     run_dirs = list(args.run_dirs)
     if args.run_base:
         run_dirs += sorted(glob.glob(os.path.join(args.run_base,
