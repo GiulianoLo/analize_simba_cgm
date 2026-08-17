@@ -479,7 +479,14 @@ class MakeSED:
                 f.write('    local job_dir=$(dirname "$job_file")\n')
                 f.write('    local job_name=$(basename "$job_file")\n')
                 f.write('    echo "Submitting $job_name from $job_dir"\n')
-                f.write(f'    local job_id=$(cd "$job_dir" && sbatch -p {partition} "$job_name" | sed -n "s/^Submitted batch job //p")\n')
+                f.write('    local job_id=""\n')
+                f.write('    while [ -z "$job_id" ]; do\n')
+                f.write(f'        job_id=$(cd "$job_dir" && sbatch -p {partition} "$job_name" | sed -n "s/^Submitted batch job //p") || true\n')
+                f.write('        if [ -z "$job_id" ]; then\n')
+                f.write('            echo "  sbatch rejected $job_name (queue/QOS submit limit?); retrying in 60s..."\n')
+                f.write('            sleep 60\n')
+                f.write('        fi\n')
+                f.write('    done\n')
                 f.write('    echo "  Job ID: $job_id"\n')
                 f.write('}\n\n')
                 
@@ -501,13 +508,19 @@ class MakeSED:
                     else:
                         f.write(f'# Submit with max {max_parallel_snaps} concurrent snapshot jobs\n')
                         f.write(f'MAX_PARALLEL={max_parallel_snaps}\n\n')
+                        # squeue --name matches exact names only (no globs), so count
+                        # in-flight snapshot arrays by prefix on the job-name column;
+                        # %F collapses array tasks to one master id per snapshot.
+                        f.write('count_in_flight() {\n')
+                        f.write('    squeue -u "$USER" --states=R,PD -h -o "%F %j" 2>/dev/null | awk -v p="$JOB_NAME_PREFIX" \'index($2, p) == 1 {print $1}\' | sort -u | wc -l\n')
+                        f.write('}\n\n')
                         f.write('wait_for_slot() {\n')
                         f.write('    local running_count\n')
-                        f.write('    running_count=$(squeue -u "$USER" --states=R,PD -h -n "${JOB_NAME_PREFIX}*" 2>/dev/null | wc -l)\n')
+                        f.write('    running_count=$(count_in_flight)\n')
                         f.write('    while [ "$running_count" -ge "$MAX_PARALLEL" ]; do\n')
                         f.write('        echo "Queue full for this run ($running_count >= $MAX_PARALLEL). Waiting ${POLL_SECONDS}s..."\n')
                         f.write('        sleep "$POLL_SECONDS"\n')
-                        f.write('        running_count=$(squeue -u "$USER" --states=R,PD -h -n "${JOB_NAME_PREFIX}*" 2>/dev/null | wc -l)\n')
+                        f.write('        running_count=$(count_in_flight)\n')
                         f.write('    done\n')
                         f.write('}\n\n')
 

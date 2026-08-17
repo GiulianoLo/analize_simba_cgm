@@ -187,7 +187,16 @@ if [ "$job_flag" -eq 1 ]; then
     echo -e "\n">>$qsubfile
 
     echo "id=\$(head -n \$((\$SLURM_ARRAY_TASK_ID+1)) ids.txt | tail -n 1)">>$qsubfile
-    
+
+    # skip-if-done (2026-08-14): a galaxy whose SED already exists is never re-run,
+    # so re-staging an expanded selection only computes the gaps
+    echo "snap3=\$(printf '%03d' ${snap})">>$qsubfile
+    echo "gal6=\$(printf '%06d' \$id)">>$qsubfile
+    echo "if [ -s \"gal_\${id}/snap\${snap3}.galaxy\${gal6}.rtout.sed\" ]; then">>$qsubfile
+    echo "  echo \"already complete: gal_\${id}/snap\${snap3}.galaxy\${gal6}.rtout.sed -- skipping\"">>$qsubfile
+    echo "  exit 0">>$qsubfile
+    echo "fi">>$qsubfile
+
     echo "python \$PD_FRONT_END . parameters_master snap${snap}_\$id > gal_\$id/snap${snap}_\$id.LOG">>$qsubfile
     echo -e "\n">>$qsubfile
     
