@@ -197,7 +197,9 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   exports the unit/field recipes reused by the reduced job
 │                                   #   (header_units, _to_kpc, _to_msun, _detect, _components,
 │                                   #    _temperature, _halo_of)
-├── build_reduced_particles_job.py  # SLURM worker: lean 100 kpc reduced particle files (ISM+CGM)
+├── build_reduced_particles_job.py  # SLURM worker: lean 100 kpc reduced particle files (ISM+CGM);
+│                                   #   star fields m_star/member/tform (tform = formation scale
+│                                   #   factor, added 2026-08-27; older files are backfilled)
 │                                   #   Batched snapshot I/O: _catalog_pass (per-galaxy candidate
 │                                   #   lists, halo-cached), _gather (slab-streamed reads at the
 │                                   #   sorted union of indices; skips unneeded slabs), _Ctx (lazy
@@ -222,12 +224,28 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   pseudo-stages), _med_band_floor (floored log-median bands),
 │                                   #   load_reduced(keys=) selective reads, and the parallel
 │                                   #   profile cache build (CACHE_WORKERS fork pool)
-└── powderday_flux_quenched_m25.ipynb # Powderday flux catalogs for quenched (0.2/τ, logM*>10,
-                                    #   ngas>20) cis25 galaxies at z≈0.3/0.6/0.7/1/2, split by
-                                    #   weak/strong AGN coupling over [SFT,QT]; per-anchor gated
-                                    #   history+BH builds → sample stats → dust_on/off RT over
-                                    #   5 log-spaced apertures (10–160 kpc, powderday patch) →
-                                    #   per-aperture flux catalogs with MC errors
+├── powderday_flux_quenched_m25.ipynb # Powderday flux catalogs for quenched (0.2/τ, logM*>10,
+│                                   #   ngas>20) cis25 galaxies at z≈0.3/0.6/0.7/1/2, split by
+│                                   #   weak/strong AGN coupling over [SFT,QT]; per-anchor gated
+│                                   #   history+BH builds → sample stats → dust_on/off RT over
+│                                   #   5 log-spaced apertures (10–160 kpc, powderday patch) →
+│                                   #   per-aperture flux catalogs with MC errors
+├── ks_tracks_lib.py                # pure numpy/h5py helpers for the KS-track notebook (no
+│                                   #   simbanator import -> unit-testable off the cluster:
+│                                   #   tests/test_ks_tracks.py): face_on_R (pos @ evecs, columns =
+│                                   #   axes), half_mass_radius, sfr_window (archaeological SFR from
+│                                   #   the reduced `tform`), measure_ks (fixed + R50 apertures,
+│                                   #   member-only), ks_columns (He x1.36, 0.5 M/pi R50^2
+│                                   #   convention, SFR=0 upper limits), build_stage_records
+│                                   #   (critical epochs; H2 trough after QT), RELATIONS (K98/B08/RK19)
+├── ks_tracks_quenched_m25.ipynb    # Kennicutt-Schmidt EVOLUTION TRACKS of the m25 quenched sample:
+│                                   #   critical epochs (sSFR peak/SFT/QT/post-quench/H2 trough/anchor)
+│                                   #   via the per-anchor histories + progen links -> plan for
+│                                   #   build_reduced_particles_job.py (prof_kstracks) -> Sigma_H2 /
+│                                   #   Sigma_SFR from the CAESAR member particles per epoch ->
+│                                   #   tracks vs the observed ALMA-C11 QGs (obs_data/almac11/)
+└── obs_data/almac11/               # observed tables the cluster notebooks read (ks_table.csv +
+                                    #   README: conventions/provenance; committed, unlike output/)
 ```
 
 ---

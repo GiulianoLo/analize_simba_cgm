@@ -23,7 +23,8 @@ build_profiles_job.py) it writes ONE lean HDF5 per galaxy:
             center_kpc(3), evecs(3,3)              # stellar principal frame, for face-on projection
     gas/  : idx(n) [GLOBAL snapshot index], pos(n,3) [kpc, RELATIVE to centre],
             m_gas, m_dust, m_HI, m_H2, sfr, temp [Msun, Msun/yr, K], member(bool)
-    star/ : idx(m), pos(m,3) [kpc, relative], m_star [Msun], member(bool)
+    star/ : idx(m), pos(m,3) [kpc, relative], m_star [Msun], member(bool),
+            tform [scale factor a_form = PartType4/StellarFormationTime; NaN if absent]
 
 The `member` boolean marks each particle as belonging to the CAESAR galaxy member list
 (``gal.glist`` / ``gal.slist``). Member particles are ALWAYS kept (even if just outside the aperture),
@@ -89,7 +90,7 @@ OVERWRITE = int(os.environ.get("REDUCED_OVERWRITE", 0)) == 1
 GEOM_DS = ("idx", "pos")
 # Per-particle fields produced from `idx` (order here = write order in a fresh file):
 GAS_FIELDS = ("m_gas", "m_dust", "m_HI", "m_H2", "sfr", "temp", "member")
-STAR_FIELDS = ("m_star", "member")
+STAR_FIELDS = ("m_star", "member", "tform")
 _DEP_SNAP, _DEP_CAT = "snapshot", "catalog"       # what a producer needs to run
 
 
@@ -158,6 +159,10 @@ class _Ctx:
     def has(self, part):
         return self._src[part] is not None
 
+    def has_field(self, part, name):
+        src = self._src[part]
+        return src is not None and name in src
+
     def take(self, part, name, idx):
         key = (part, name)
         if key not in self._cache:
@@ -214,6 +219,15 @@ def _star_member(ctx, idx):
     return {"member": np.isin(idx, gsl)}
 
 
+def _star_tform(ctx, idx):
+    """Formation epoch a_form = PartType4/StellarFormationTime (scale factor in cosmological
+    GIZMO/SIMBA runs; the consumer converts it to cosmic time). NaN if the snapshot lacks it.
+    Added 2026-08-27 for the KS-track notebook (archaeological SFR windows from slist members)."""
+    if not ctx.has_field("star", "StellarFormationTime"):
+        return {"tform": np.full(len(idx), np.nan, np.float32)}
+    return {"tform": np.asarray(ctx.take("star", "StellarFormationTime", idx), np.float32)}
+
+
 GAS_PRODUCERS = [
     (("m_gas", "m_dust", "m_HI", "m_H2"), _DEP_SNAP, _gas_components),
     (("sfr",),    _DEP_SNAP, _gas_sfr),
@@ -223,6 +237,7 @@ GAS_PRODUCERS = [
 STAR_PRODUCERS = [
     (("m_star",), _DEP_SNAP, _star_mass),
     (("member",), _DEP_CAT,  _star_member),
+    (("tform",),  _DEP_SNAP, _star_tform),
 ]
 _PRODUCERS = {"gas": GAS_PRODUCERS, "star": STAR_PRODUCERS}
 
