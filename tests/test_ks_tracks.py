@@ -63,6 +63,7 @@ def write_reduced(path, evecs, gas_pos_frame, star_pos_frame, m_h2, sfr_gas, m_s
         o.attrs["a"] = a
         o.attrs["hub"] = 0.68
         o.attrs["rmax_kpc"] = 100.0
+        o.attrs["h2_recipe"] = "caesar-v1"                # current HI/H2 split (build_profiles_job.H2_RECIPE)
         o.attrs["center_kpc"] = np.zeros(3)
         o.attrs["evecs"] = evecs
         g = o.create_group("gas")
@@ -326,8 +327,9 @@ def _import_job(monkeypatch):
     sys.modules["simbanator.utils.geometry"].principal_axes = lambda *a, **k: None
     bpj = sys.modules["build_profiles_job"]
     for fn in ("header_units", "_to_kpc", "_to_msun", "_detect", "_components", "_halo_of",
-               "_temperature", "_XH"):
+               "_temperature", "_XH", "_nH"):
         setattr(bpj, fn, lambda *a, **k: None)
+    bpj.H2_RECIPE = "caesar-v1"
     monkeypatch.setenv("DUST_PLAN", "/dev/null")
     spec = importlib.util.spec_from_file_location("brpj_test", os.path.join(ROOT, "build_reduced_particles_job.py"))
     mod = importlib.util.module_from_spec(spec)
@@ -348,6 +350,10 @@ def test_job_tform_producer_and_backfill_detection(tmp_path, monkeypatch, disc_f
     assert miss == {"gas": set(), "star": {"tform"}}
     assert job._needs_snapshot(miss)
     assert job._missing_fields(disc_file["path"]) == {"gas": set(), "star": set()}
+    # a file built with the pre-2026-08-27 HI/H2 split (no / other h2_recipe stamp) gets both refreshed
+    with h5py.File(p, "a") as f:
+        f.attrs["h2_recipe"] = "devis-nh"
+    assert job._missing_fields(p) == {"gas": {"m_HI", "m_H2"}, "star": {"tform"}}
 
     # fake ctx: 'take' serves a StellarFormationTime column; producer returns float32
     class Ctx:

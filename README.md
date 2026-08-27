@@ -196,8 +196,12 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 ├── build_profiles_job.py           # SLURM worker: fixed-binning Σ profiles from a shared plan;
 │                                   #   exports the unit/field recipes reused by the reduced job
 │                                   #   (header_units, _to_kpc, _to_msun, _detect, _components,
-│                                   #    _temperature, _halo_of)
+│                                   #    _nH, _temperature, _halo_of); _components = caesar HI/H2
+│                                   #   split (H2 = 0.76·m·fH2 with n_H ≥ 0.13 cut, HI = 0.76·m·
+│                                   #   min(nh, 1−fH2)), stamped H2_RECIPE — fixed 2026-08-27
 ├── build_reduced_particles_job.py  # SLURM worker: lean 100 kpc reduced particle files (ISM+CGM);
+│                                   #   files carry attr h2_recipe; a stale/absent stamp gets
+│                                   #   m_HI/m_H2 recomputed on the next run (backfill path)
 │                                   #   star fields m_star/member/tform (tform = formation scale
 │                                   #   factor, added 2026-08-27; older files are backfilled)
 │                                   #   Batched snapshot I/O: _catalog_pass (per-galaxy candidate
@@ -208,7 +212,8 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   stored idx without redoing geometry; datasets are lzf.
 │                                   #   Env: DUST_PLAN, REDUCED_RMAX_KPC, REDUCED_PREFIX,
 │                                   #        REDUCED_OVERWRITE, REDUCED_GATHER_MB
-├── submit_reduced_particles.sh     # sbatch wrapper (array over snapshots; DUST_PLAN per anchor)
+├── submit_reduced_particles.sh     # sbatch wrapper (array over snapshots; plan = 1st script arg
+│                                   #   or DUST_PLAN env, per anchor)
 ├── submit_find_progen_m25.sh       # sbatch wrapper (4-task array over disjoint sidecar ranges)
 ├── find_progen_m25_job.py          # one-time cluster job: merger-tree links for the SIMBA_25
 │                                   #   catalogs (they ship WITHOUT tree_data, unlike cis50/100).
@@ -243,7 +248,9 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   via the per-anchor histories + progen links -> plan for
 │                                   #   build_reduced_particles_job.py (prof_kstracks) -> Sigma_H2 /
 │                                   #   Sigma_SFR from the CAESAR member particles per epoch ->
-│                                   #   tracks vs the observed ALMA-C11 QGs (obs_data/almac11/)
+│                                   #   binned AVERAGE tracks (terciles of anchor SFR / M* / M_dust/M* /
+│                                   #   Sigma_dust, AGN class; 3 z panels x 3 apertures) vs the observed
+│                                   #   ALMA-C11 QGs (obs_data/almac11/); ks_binned_tracks.csv
 └── obs_data/almac11/               # observed tables the cluster notebooks read (ks_table.csv +
                                     #   README: conventions/provenance; committed, unlike output/)
 ```

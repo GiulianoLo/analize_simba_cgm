@@ -48,6 +48,11 @@ To add a field later: add a producer to the registry (with its dependency tag) a
 ``GAS_FIELDS`` / ``STAR_FIELDS``; re-run the job. Files missing it get *only that dataset* appended
 (catalog-only fields don't even open the snapshot). Files missing ``idx``/``pos`` (or absent/corrupt)
 fall back to a full geometry rebuild. ``REDUCED_OVERWRITE=1`` forces a full rebuild of everything.
+Files are stamped with the HI/H2 split they were built with (attr ``h2_recipe`` = build_profiles_job
+``H2_RECIPE``); files carrying an older/absent stamp get ``m_HI``/``m_H2`` recomputed at the stored
+``idx`` on the next run (same backfill path, no geometry redo) — so re-running the same sbatch command
+after a recipe change refreshes every file (2026-08-27: the old m_H*nh*fH2 split lost up to 97% of the
+H2 in SIMBA's star-forming gas; now the caesar split, see build_profiles_job._components).
 
 Files are keyed globally by (snapshot, galaxy id), so running this per anchor is naturally
 idempotent: a galaxy already complete for one anchor is skipped (before any load) when it recurs in
@@ -77,7 +82,7 @@ from simbanator.io.simba import Simulation
 from simbanator.utils.geometry import shrink_center, principal_axes
 # reuse the EXACT unit/field recipes the profile job is validated against
 from build_profiles_job import (header_units, _to_kpc, _to_msun, _detect, _components, _halo_of,
-                                _temperature, _XH)
+                                _temperature, _XH, _nH, H2_RECIPE)
 
 PLAN_PATH = os.environ.get("DUST_PLAN")                     # REQUIRED — the plan carries the sim
 RMAX = float(os.environ.get("REDUCED_RMAX_KPC", 100.0))     # aperture [physical kpc]
@@ -171,15 +176,17 @@ class _Ctx:
 
 
 def _gas_components(ctx, idx):
-    """m_gas + the dust/HI/H2 split (De Vis-style neutral·molecular fractions), all from one read."""
+    """m_gas + the dust/HI/H2 split (caesar recipe, build_profiles_job._components: H2 = 0.76*m*fH2 with
+    the n_H >= 0.13 cut, HI = 0.76*m*min(nh, 1-fH2)), all from one read."""
     fld, hub = ctx.fld, ctx.hub
     mgas = _to_msun(ctx.take("gas", "Masses", idx), hub)
     m_dust, m_HI, m_H2 = _components(
         mgas,
         _to_msun(ctx.take("gas", fld["dust"], idx), hub) if fld["dust"] else None,
-        ctx.take("gas", fld["Z"], idx) if fld["Z"] else None,
+        None,                                                 # Z unused by the caesar split (skip the 11-col stream)
         ctx.take("gas", fld["fneut"], idx) if fld["fneut"] else None,
-        ctx.take("gas", fld["fmol"], idx) if fld["fmol"] else None)
+        ctx.take("gas", fld["fmol"], idx) if fld["fmol"] else None,
+        _nH(ctx.take("gas", fld["rho"], idx), ctx.a, hub) if fld.get("rho") else None)
     return {"m_gas": mgas.astype(np.float32), "m_dust": np.asarray(m_dust, np.float32),
             "m_HI": np.asarray(m_HI, np.float32), "m_H2": np.asarray(m_H2, np.float32)}
 
@@ -340,10 +347,17 @@ def _outname(snap, gx):
     return f"{PREFIX}_snap{int(snap):03d}_gal{int(gx):06d}.h5"
 
 
+def _h2_recipe_of(f):
+    v = f.attrs.get("h2_recipe", "")
+    return v.decode() if isinstance(v, bytes) else str(v)
+
+
 def _missing_fields(path):
     """For an existing file, {'gas': set_missing, 'star': set_missing} of current-schema fields that
     can be BACKFILLED (idx/pos present). Returns None if the file needs a full geometry rebuild
-    (absent, corrupt, or missing idx/pos). An empty group (no particles) contributes an empty set."""
+    (absent, corrupt, or missing idx/pos). An empty group (no particles) contributes an empty set.
+    A non-empty gas group whose ``h2_recipe`` stamp is not the current H2_RECIPE has m_HI/m_H2 marked
+    missing so they are recomputed (stale split)."""
     if not os.path.exists(path):
         return None
     try:
@@ -359,6 +373,8 @@ def _missing_fields(path):
                 if not set(GEOM_DS).issubset(keys):               # no idx/pos -> cannot backfill
                     return None
                 res[grp] = set(fields) - keys
+                if grp == "gas" and _h2_recipe_of(f) != H2_RECIPE:
+                    res[grp] |= {"m_HI", "m_H2"} & set(fields)
             return res
     except OSError:
         return None
@@ -375,6 +391,7 @@ def _write_full(rec, snap, out_dir):
         o.attrs["a"] = rec["a"]
         o.attrs["hub"] = rec["hub"]
         o.attrs["rmax_kpc"] = RMAX
+        o.attrs["h2_recipe"] = H2_RECIPE
         o.attrs["center_kpc"] = rec["center"]
         o.attrs["evecs"] = rec["evecs"]
         for grp in ("gas", "star"):
@@ -391,8 +408,10 @@ def _append_fields(path, add):
         for grp in ("gas", "star"):
             for k, v in add.get(grp, {}).items():
                 if k in o[grp]:
-                    del o[grp][k]                                 # replace a stray/partial one
+                    del o[grp][k]                                 # replace a stray/partial/stale one
                 o[grp].create_dataset(k, data=v, compression="lzf")
+        if {"m_HI", "m_H2"} <= set(add.get("gas", {})):
+            o.attrs["h2_recipe"] = H2_RECIPE                     # HI/H2 now on the current split
 
 
 def _stored_idx(path, miss):
@@ -498,7 +517,7 @@ def main():
     n_task = int(os.environ.get("SLURM_ARRAY_TASK_COUNT", 1))
 
     if not PLAN_PATH:
-        raise SystemExit("DUST_PLAN is not set — point it at "
+        raise SystemExit("DUST_PLAN is not set — run  sbatch submit_reduced_particles.sh "
                          "output/<sim>/caesar_sfh/prof_<tag>/dust_profile_plan_<tag>.hdf5")
     with h5py.File(PLAN_PATH, "r") as f:
         sim_name = str(f.attrs["sim_name"])

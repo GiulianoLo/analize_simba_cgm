@@ -36,6 +36,18 @@ CGM_RMAX = float(os.environ.get("CGM_RMAX_KPC", 300.0))   # CGM extent [physical
 CGM_NBINS = int(os.environ.get("CGM_NBINS_R", 30))
 
 GAMMA, KB, MP = 5.0 / 3.0, 1.380649e-16, 1.672622e-24
+MSUN_G, KPC_CM = 1.989e33, 3.085678e21
+# HI/H2 split — caesar convention (caesar/hydrogen_mass_calc.pyx: get_HIH2_masses), so that particle
+# sums reproduce the catalogue masses.H2 / masses.HI:
+#   H2 = XH_CAESAR * m_gas * FractionH2      (zeroed where n_H < NH_H2_MIN: wind particles carry stale fH2)
+#   HI = XH_CAESAR * m_gas * min(NeutralHydrogenAbundance, 1 - FractionH2)
+# NOT m_H * nh * fH2: in SIMBA `NeutralHydrogenAbundance` is Grackle's equilibrium HI fraction at the
+# effective-EOS temperature (~0.003 in the star-forming gas of massive galaxies, where fH2 ~ 0.9), so the
+# extra nh factor deleted up to 97% of the H2 exactly where it lives (found 2026-08-27; H2_RECIPE stamps
+# product files built with the corrected split).
+XH_CAESAR = 0.76          # caesar simulation.XH (constant; per-particle 1-Z-He is ~0.60 in enriched ISM)
+NH_H2_MIN = 0.13          # caesar rho_thresh [H atoms / cm^3]
+H2_RECIPE = "caesar-v1"
 T_HOT, T_COLD = 1.0e5, 1.0e4
 
 
@@ -60,6 +72,7 @@ def _detect(f):
         fmol=next((k for k in ("FractionH2", "fH2", "GrackleH2", "f_H2") if k in have), None),
         Z="Metallicity" if "Metallicity" in have else None,
         fneut="NeutralHydrogenAbundance" if "NeutralHydrogenAbundance" in have else None,
+        rho="Density" if "Density" in have else None,
         sfr=next((k for k in ("StarFormationRate", "Sfr", "SFR") if k in have), None),
         Tdir="Temperature" if "Temperature" in have else None,
         u=next((k for k in ("InternalEnergy", "internal_energy") if k in have), None),
@@ -73,17 +86,30 @@ def _XH(Zarr, n):
     return np.full(n, 0.76)
 
 
-def _components(mgas, dust_msun, Zarr, fneutarr, fmolarr):
-    """mgas already in Msun; dust already in Msun (or None). Returns (m_dust, m_HI, m_H2)."""
+def _nH(rho_code, a, hub):
+    """Hydrogen number density [cm^-3] from the code density (1e10 Msun/h per (ckpc/h)^3), caesar recipe
+    (physical rho_cgs * XH_CAESAR / m_p)."""
+    rho_cgs = np.asarray(rho_code, np.float64) * 1e10 * MSUN_G * hub ** 2 / (KPC_CM * a) ** 3
+    return rho_cgs * XH_CAESAR / MP
+
+
+def _components(mgas, dust_msun, Zarr, fneutarr, fmolarr, nH=None):
+    """mgas already in Msun; dust already in Msun (or None). Returns (m_dust, m_HI, m_H2) with the
+    caesar split (see XH_CAESAR / NH_H2_MIN above): H2 = XH*m*fH2 (0 where nH < NH_H2_MIN when `nH`
+    [cm^-3] is given), HI = XH*m*min(fneut, 1-fH2). `Zarr` is accepted for signature compatibility
+    (the hydrogen fraction is caesar's constant, so sums match the catalogue)."""
     m_dust = dust_msun if dust_msun is not None else np.full_like(mgas, np.nan)
-    XH = _XH(Zarr, len(mgas))
-    m_H = mgas * XH
-    fneut = fneutarr if fneutarr is not None else np.full_like(mgas, np.nan)
+    m_H = np.asarray(mgas, np.float64) * XH_CAESAR
+    fneut = (np.asarray(fneutarr, np.float64) if fneutarr is not None
+             else np.full_like(m_H, np.nan))
     if fmolarr is not None:
-        m_H2 = m_H * fneut * fmolarr
-        m_HI = m_H * fneut * (1.0 - fmolarr)
+        fmol = np.asarray(fmolarr, np.float64)
+        if nH is not None:
+            fmol = np.where(np.asarray(nH, np.float64) >= NH_H2_MIN, fmol, 0.0)
+        m_H2 = m_H * fmol
+        m_HI = m_H * np.minimum(fneut, 1.0 - fmol)
     else:
-        m_H2 = np.full_like(mgas, np.nan)
+        m_H2 = np.full_like(m_H, np.nan)
         m_HI = m_H * fneut
     return m_dust, m_HI, m_H2
 
@@ -184,7 +210,8 @@ def process_snapshot(sim, snap, entries, ism_bins, cgm_bins):
                     _to_msun(g[fld["dust"]][gl], hub) if fld["dust"] else None,
                     g[fld["Z"]][gl] if fld["Z"] else None,
                     g[fld["fneut"]][gl] if fld["fneut"] else None,
-                    g[fld["fmol"]][gl] if fld["fmol"] else None)
+                    g[fld["fmol"]][gl] if fld["fmol"] else None,
+                    _nH(g[fld["rho"]][gl], a, hub) if fld["rho"] else None)
                 comps = {"dust": (R, m_dust), "HI": (R, m_HI), "H2": (R, m_H2), "star": (Rs, smass)}
                 for c, (Ra, m) in comps.items():
                     rec[f"R20_{c}"] = _renc(Ra, m, 0.2)
@@ -210,7 +237,8 @@ def process_snapshot(sim, snap, entries, ism_bins, cgm_bins):
                             _to_msun(g[fld["dust"]][idx], hub) if fld["dust"] else None,
                             Zc,
                             g[fld["fneut"]][idx] if fld["fneut"] else None,
-                            g[fld["fmol"]][idx] if fld["fmol"] else None)
+                            g[fld["fmol"]][idx] if fld["fmol"] else None,
+                            _nH(g[fld["rho"]][idx], a, hub) if fld["rho"] else None)
                         rec["cgm_sigma_gas"] = _sig(Rc, mgas, cedges, carea, cnb)
                         rec["cgm_sigma_dust"] = _sig(Rc, m_dc, cedges, carea, cnb)
                         rec["cgm_sigma_HI"] = _sig(Rc, m_HIc, cedges, carea, cnb)
