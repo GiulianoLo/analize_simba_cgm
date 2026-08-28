@@ -317,6 +317,36 @@ def test_build_stage_records_synthetic_history():
     assert np.isfinite(r2["t_sf_peak"]) and r2["row_anchor"] == 0
 
 
+def test_end_stage_anchor_or_last_h2_snapshot():
+    fq = _load_quenching()
+    t_gyr = np.linspace(1.0, 9.0, 81)[::-1]          # row 0 = anchor
+    t_yr = t_gyr * 1e9
+    z = 1.0 / (t_gyr / 9.0) ** (2 / 3) - 1.0
+    ssfr = np.where(t_gyr < 5.0, 3.0 / t_yr, np.maximum(3.0 / t_yr * np.exp(-(t_gyr - 5.0) / 0.4), 1e-14))
+    mstar = np.full_like(t_gyr, 1e10)
+    gas = np.full_like(t_gyr, 1e9)
+    # H2: 1e8 (fraction 1e-2) until 7 Gyr, then 1e5 (fraction 1e-5 < 1e-4): the anchor has no measurable H2
+    h2 = np.where(t_gyr <= 7.0, 1e8, 1e5)
+    P = {"masses.stellar": mstar[:, None], "sfr": (ssfr * mstar)[:, None], "masses.gas": gas[:, None],
+         "masses.H2": h2[:, None]}
+    r = kl.build_stage_records(P, t_yr, z, np.array([5]), [0], fq)[0]
+    assert r["end_is_anchor"] is False and np.isclose(r["fh2_anchor"], 1e-5)
+    assert r["row_end"] >= 0 and t_gyr[r["row_end"]] <= 7.0 and np.isclose(r["t_end"], t_yr[r["row_end"]])
+    assert t_gyr[r["row_end"] - 1] > 7.0                        # the LAST qualifying snapshot, not an earlier one
+    assert kl.stage_time_order(r, stages=["sft", "qt", "end", "anchor"]) == ["sft", "qt", "end", "anchor"]
+    # anchor with H2 -> end == anchor
+    P["masses.H2"] = np.full_like(t_gyr, 1e8)[:, None]
+    r = kl.build_stage_records(P, t_yr, z, np.array([5]), [0], fq)[0]
+    assert r["end_is_anchor"] is True and r["row_end"] == 0 and np.isclose(r["t_end"], t_yr[0])
+    # a custom threshold; never any H2 above it -> no end row
+    r = kl.build_stage_records(P, t_yr, z, np.array([5]), [0], fq, fh2_min=0.5)[0]
+    assert r["row_end"] == -1 and np.isnan(r["t_end"]) and "end" not in kl.stage_time_order(r, stages=["end"])
+    # no H2 column in the history -> end is the anchor
+    del P["masses.H2"]
+    r = kl.build_stage_records(P, t_yr, z, np.array([5]), [0], fq)[0]
+    assert r["end_is_anchor"] is True and r["row_end"] == 0
+
+
 # ── the job's tform producer (module imported with stubbed cluster-only deps) ─────────────────────
 def _import_job(monkeypatch):
     for name in ("simbanator", "simbanator.io", "simbanator.io.simba", "simbanator.utils",
@@ -384,3 +414,27 @@ def test_relations_and_tdep_ms():
     y = kl.relation_y("B08", 1.0)
     assert np.isclose(y, -2.06)                                       # B08 normalisation at 10 Msun/pc^2
     assert set(kl.RELATIONS) == {"K98", "B08", "RK19"}
+
+
+# ── histories on the quench clock (Part 5) ─────────────────────────────────────────────────────────
+def test_interp_track_no_extrapolation_and_nan_gaps():
+    grid = np.array([-1.0, 0.0, 0.5, 1.0, 2.0])
+    t = np.array([2.0, 0.0, 1.0, 0.5])            # unsorted, covers [0, 2]
+    y = np.array([4.0, 0.0, np.nan, 1.0])         # the t = 1 sample is missing -> interpolated across the gap
+    out = kl.interp_track(t, y, grid)
+    assert np.isnan(out[0])                        # before the first sample: no extrapolation
+    assert out[1] == 0.0 and out[2] == 1.0 and out[4] == 4.0
+    assert np.isclose(out[3], 1.0 + 3.0 * (0.5 / 1.5))   # between t=0.5 (y=1) and t=2 (y=4) at t=1 -> 2.0
+    assert np.isnan(kl.interp_track([1.0], [2.0], grid)).all()          # a single sample: undefined
+    assert np.isnan(kl.interp_track([1.0, 1.0], [2.0, 3.0], grid)).all()  # duplicates collapse to one
+
+
+def test_grid_stats_counts_and_nmin():
+    tr = np.array([[1.0, np.nan, 3.0], [2.0, 5.0, np.nan], [3.0, 6.0, np.nan]])
+    st = kl.grid_stats(tr, nmin=2)
+    assert list(st["n"]) == [3, 2, 1]
+    assert st["med"][0] == 2.0 and st["med"][1] == 5.5 and np.isnan(st["med"][2])
+    assert np.isclose(st["p16"][0], np.percentile([1.0, 2.0, 3.0], 16))
+    v, F = kl.ecdf([3.0, np.nan, 1.0, 2.0])
+    assert list(v) == [1.0, 2.0, 3.0] and np.isclose(F[-1], 1.0) and np.isclose(F[0], 1 / 3)
+    assert kl.ecdf([np.nan]).__getitem__(0).size == 0

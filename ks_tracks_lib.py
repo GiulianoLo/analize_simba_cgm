@@ -3,7 +3,8 @@
 Kennicutt–Schmidt (KS) evolution tracks of the cis25 quenched sample: surface densities of
 molecular gas and star formation measured from the CAESAR member particles (glist/slist) stored in
 the reduced particle files written by ``build_reduced_particles_job.py``, at each galaxy's critical
-epochs (sf_peak → sft → qt → post_quench → gas_min → anchor).
+epochs (sf_peak → sft → qt → post_quench → gas_min → anchor, plus ``end`` = the anchor or, when the
+anchor holds no measurable H2, the last snapshot with M_H2/M_star > ``fh2_min``).
 
 The module deliberately imports NOTHING from ``simbanator`` (its ``analysis`` package pulls in yt
 through sfh_fsps and is not importable off the cluster), so every measurement here can be unit-tested
@@ -35,15 +36,17 @@ import numpy as np
 import h5py
 
 __all__ = [
-    "STAGES_KS", "STAGES_PLOT", "FIXED_AP_KPC", "FIXED_AP_LABELS", "ADAPTIVE_AP", "AP_LABELS",
+    "STAGES_KS", "STAGES_PLOT", "FH2_MIN_END", "FIXED_AP_KPC", "FIXED_AP_LABELS", "ADAPTIVE_AP", "AP_LABELS",
     "HE_FACTOR", "RELATIONS", "tdep_ms_gyr", "relation_y",
     "reduced_path", "load_reduced", "face_on_R", "half_mass_radius", "make_a_to_t", "sfr_window",
     "measure_ks", "MEASURE_COLUMNS", "ks_columns", "build_stage_records", "stage_time_order",
+    "interp_track", "grid_stats", "ecdf",
 ]
 
 # ── stages / apertures ────────────────────────────────────────────────────────────────────────────
-STAGES_KS = ["sf_peak", "ssfr_min", "sft", "qt", "post_quench", "gas_min", "anchor"]
-STAGES_PLOT = ["sf_peak", "sft", "qt", "post_quench", "gas_min", "anchor"]   # drawn in this order
+STAGES_KS = ["sf_peak", "ssfr_min", "sft", "qt", "post_quench", "gas_min", "anchor", "end"]
+STAGES_PLOT = ["sf_peak", "sft", "qt", "post_quench", "gas_min", "anchor"]   # time order (summary / t_dep clock)
+FH2_MIN_END = 1e-4        # `end` stage: the anchor when M_H2/M_star (history) > this, else the last snapshot above it
 FIXED_AP_KPC = (1.0, 3.162, 10.0)                 # the m25 ladder rungs (ap3kpc is really 3.16 kpc)
 FIXED_AP_LABELS = ("ap1kpc", "ap3kpc", "ap10kpc")
 ADAPTIVE_AP = ("R50_H2", "R50_star", "R50_SFR")   # face-on member half-mass radii
@@ -393,7 +396,8 @@ def _trough_before_floor(q, valid, t, floor_frac=1e-6):
 
 
 def build_stage_records(P, t_cosmic_yr, redshift, galaxy_ids, cols, find_quenching_times,
-                        age_of_z_gyr=None, stages=STAGES_KS, min_valid=5, gas_key="masses.H2"):
+                        age_of_z_gyr=None, stages=STAGES_KS, min_valid=5, gas_key="masses.H2",
+                        fh2_min=FH2_MIN_END):
     """Critical epochs of every selected history column (quench_mode_vs_sigma_gas §3, KS stages).
 
     P : {property: (n_snap, n_gal) array} with row 0 = anchor; t_cosmic_yr / redshift per row;
@@ -410,6 +414,10 @@ def build_stage_records(P, t_cosmic_yr, redshift, galaxy_ids, cols, find_quenchi
     * a stage whose time lies beyond the anchor (``post_quench`` = QT + persistence often does)
       keeps its t_<stage> but gets row_<stage> = -1: it is not observable inside the history and
       must not alias onto the anchor row.
+    * ``end`` (the drawn track endpoint) is the anchor row when the anchor's catalogue molecular
+      fraction ``masses.H2 / masses.stellar`` exceeds ``fh2_min``; otherwise the LATEST history row
+      whose fraction does (``end_is_anchor`` False, ``t_end`` / ``row_end`` of that snapshot; -1 when no
+      row qualifies). Without an H2 column in ``P`` the end is always the anchor.
     """
     t_cosmic_yr = np.asarray(t_cosmic_yr, float)
     redshift = np.asarray(redshift, float)
@@ -473,11 +481,26 @@ def build_stage_records(P, t_cosmic_yr, redshift, galaxy_ids, cols, find_quenchi
             "anchor": float(t_cosmic_yr[0]),
         }
         t_anchor = float(t_cosmic_yr[0])
+        # end = anchor, or the last snapshot with a measurable H2 fraction (history level)
+        with np.errstate(all="ignore"):
+            fh2 = np.where(mstar > 0, np.asarray(P[gas_key][:, col], float) / mstar, np.nan) \
+                if gas_key in P else np.full(len(mstar), np.nan)
+        rec["fh2_anchor"] = float(fh2[0]) if np.isfinite(fh2[0]) else np.nan
+        if gas_key not in P or (np.isfinite(fh2[0]) and fh2[0] > fh2_min):
+            row_end, end_is_anchor = 0, True
+        else:
+            ok_h2 = np.isfinite(fh2) & (fh2 > fh2_min) & np.isfinite(t_cosmic_yr)
+            row_end = int(np.where(ok_h2)[0][np.argmax(t_cosmic_yr[ok_h2])]) if ok_h2.any() else -1
+            end_is_anchor = False
+        rec["end_is_anchor"] = bool(end_is_anchor)
+        t_times["end"] = float(t_cosmic_yr[row_end]) if row_end >= 0 else np.nan
         for st in stages:
             tt = t_times.get(st, np.nan)
             rec["t_%s" % st] = float(tt) if np.isfinite(tt) else np.nan
             if st == "anchor":
                 rec["row_%s" % st] = 0
+            elif st == "end":
+                rec["row_%s" % st] = int(row_end)
             elif np.isfinite(tt) and tt > t_anchor + 1.0:      # beyond the history (1 yr tolerance)
                 rec["row_%s" % st] = -1
             else:
@@ -491,3 +514,41 @@ def stage_time_order(rec, stages=STAGES_PLOT):
     have = [(rec["t_%s" % st], st) for st in stages
             if np.isfinite(rec.get("t_%s" % st, np.nan)) and rec.get("row_%s" % st, -1) >= 0]
     return [st for _, st in sorted(have, key=lambda x: x[0])]
+
+
+# ── histories on a common clock (notebook Part 5: evolutionary properties of the KS regions) ─────
+def interp_track(t, y, grid):
+    """One galaxy's y(t) linearly interpolated onto `grid`; NaN outside the coverage of its finite samples
+    (no extrapolation), non-finite samples dropped, duplicate times collapsed; all-NaN with < 2 samples."""
+    t, y, grid = np.asarray(t, float), np.asarray(y, float), np.asarray(grid, float)
+    out = np.full(len(grid), np.nan)
+    ok = np.isfinite(t) & np.isfinite(y)
+    if ok.sum() < 2:
+        return out
+    tt, ui = np.unique(t[ok], return_index=True)
+    yy = y[ok][ui]
+    if len(tt) < 2:
+        return out
+    inside = (grid >= tt[0]) & (grid <= tt[-1])
+    out[inside] = np.interp(grid[inside], tt, yy)
+    return out
+
+
+def grid_stats(tracks, nmin=5):
+    """tracks: (n_gal, n_grid) array, NaN = no coverage -> dict(n, med, p16, p84) per grid point; the statistics
+    are NaN wherever fewer than `nmin` galaxies contribute (n is always the true count)."""
+    tr = np.atleast_2d(np.asarray(tracks, float))
+    fin = np.isfinite(tr)
+    n = fin.sum(axis=0)
+    med, p16, p84 = (np.full(tr.shape[1], np.nan) for _ in range(3))
+    for j in range(tr.shape[1]):
+        if n[j] >= nmin:
+            v = tr[fin[:, j], j]
+            med[j], p16[j], p84[j] = np.median(v), np.percentile(v, 16), np.percentile(v, 84)
+    return dict(n=n, med=med, p16=p16, p84=p84)
+
+
+def ecdf(x):
+    """(sorted finite values, empirical CDF 1/n ... 1); empty arrays when nothing is finite."""
+    v = np.sort(np.asarray(x, float)[np.isfinite(np.asarray(x, float))])
+    return v, (np.arange(1, len(v) + 1) / len(v) if len(v) else np.zeros(0))
