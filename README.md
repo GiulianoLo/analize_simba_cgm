@@ -232,7 +232,22 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 ├── powderday_flux_quenched_m25.ipynb # Powderday flux catalogs for quenched (0.2/τ, logM*>10,
 │                                   #   ngas>20) cis25 galaxies at z≈0.3/0.6/0.7/1/2, split by
 │                                   #   weak/strong AGN coupling over [SFT,QT]; per-anchor gated
-│                                   #   history+BH builds → sample stats → dust_on/off RT over
+│                                   #   history+BH builds → sample stats (Part 2b: the class rule
+│                                   #   vs plain terciles / quench_mode post-t_AGN terciles / the
+│                                   #   8p6a epoch class along (M_BH, f_Edd, f_gas) ->
+│                                   #   agn_classifier_axes.png, agn_classifiers_compare.fits;
+│                                   #   Part 2c: candidate default AGN_CLASSIFIER="pre_jet" =
+│                                   #   terciles of the UNGATED jet weight over [SFT-1 Gyr, SFT]
+│                                   #   (coupling_pre_jet) + coupling onset lead/concurrent/late,
+│                                   #   validity ledger + agn_classifier_prejet_{axes,clock}.png;
+│                                   #   both labels + w_pre/agn_onset stored in the selection FITS;
+│                                   #   Part 2d: the feedback-event sequence (ignition, M_BH
+│                                   #   threshold, jet onset, SFT, gate, QT) + coupling AT those
+│                                   #   points per class, and the pre-SFT vs [SFT,QT] selection
+│                                   #   scorecard (terciles / thresholds / jet lead) ->
+│                                   #   agn_feedback_evolution.png, agn_selection_{windows,
+│                                   #   scorecard}.png, agn_classifier_windows.fits)
+│                                   #   → dust_on/off RT over
 │                                   #   5 log-spaced apertures (10–160 kpc, powderday patch) →
 │                                   #   per-aperture flux catalogs with MC errors
 ├── ks_tracks_lib.py                # pure numpy/h5py helpers for the KS-track notebook (no
@@ -242,15 +257,21 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   the reduced `tform`), measure_ks (fixed + R50 apertures,
 │                                   #   member-only), ks_columns (He x1.36, 0.5 M/pi R50^2
 │                                   #   convention, SFR=0 upper limits), build_stage_records
-│                                   #   (critical epochs; H2 trough after QT), RELATIONS (K98/B08/RK19)
+│                                   #   (critical epochs; H2 trough after QT), RELATIONS (K98/B08/RK19),
+│                                   #   interp_track / grid_stats / ecdf (histories on the t - t_QT clock)
 ├── ks_tracks_quenched_m25.ipynb    # Kennicutt-Schmidt EVOLUTION TRACKS of the m25 quenched sample:
 │                                   #   critical epochs (sSFR peak/SFT/QT/post-quench/H2 trough/anchor)
 │                                   #   via the per-anchor histories + progen links -> plan for
 │                                   #   build_reduced_particles_job.py (prof_kstracks) -> Sigma_H2 /
 │                                   #   Sigma_SFR from the CAESAR member particles per epoch ->
 │                                   #   binned AVERAGE tracks (terciles of anchor SFR / M* / M_dust/M* /
-│                                   #   Sigma_dust, AGN class; 3 z panels x 3 apertures) vs the observed
-│                                   #   ALMA-C11 QGs (obs_data/almac11/); ks_binned_tracks.csv
+│                                   #   Sigma_dust, own Sigma_H2, M_H2/M*, KS region, AGN class; 3 z
+│                                   #   panels + all-z, R50(H2) only) vs the observed ALMA-C11 QGs
+│                                   #   (obs_data/almac11/); ks_binned_tracks.csv; Part 5 = the KS
+│                                   #   regions (below/on/above B08 at the track end) followed on the
+│                                   #   t - t_QT clock: ks_track_histories.fits (history + BH history +
+│                                   #   caesar rotation via progen), quench timing, AGN, fdust-age plane,
+│                                   #   kappa_rot, H2 extent -> ks_regions_*.png, ks_region_properties.csv
 └── obs_data/almac11/               # observed tables the cluster notebooks read (ks_table.csv +
                                     #   README: conventions/provenance; committed, unlike output/)
 ```
