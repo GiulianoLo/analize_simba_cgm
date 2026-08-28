@@ -281,7 +281,12 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   regions (below/on/above B08 at the track end) followed on the
 │                                   #   t - t_QT clock: ks_track_histories.fits (history + BH history +
 │                                   #   caesar rotation via progen), quench timing, AGN, fdust-age plane,
-│                                   #   kappa_rot, H2 extent -> ks_regions_*.png, ks_region_properties.csv
+│                                   #   kappa_rot, H2 extent -> ks_regions_*.png, ks_region_properties.csv.
+│                                   #   AGN class = KS_AGN_CLASSIFIER (pre_threshold since 2026-08-28):
+│                                   #   agn_class_<tag> of the selection table, applied to the cached
+│                                   #   epochs on load (refresh_agn_classes; no rebuild); strength
+│                                   #   variable COUP_VAR (w_pre | xstr_quench); non-legacy rules write
+│                                   #   to ks_tracks_<tag>/ + plots/ks_tracks_<tag>/ (caches stay put)
 └── obs_data/almac11/               # observed tables the cluster notebooks read (ks_table.csv +
                                     #   README: conventions/provenance; committed, unlike output/)
 ```
