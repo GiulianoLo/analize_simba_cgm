@@ -231,7 +231,12 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   profile cache build (CACHE_WORKERS fork pool)
 ├── powderday_flux_quenched_m25.ipynb # Powderday flux catalogs for quenched (0.2/τ, logM*>10,
 │                                   #   ngas>20) cis25 galaxies at z≈0.3/0.6/0.7/1/2, split by
-│                                   #   weak/strong AGN coupling over [SFT,QT]; per-anchor gated
+│                                   #   weak/strong AGN coupling (AGN_CLASSIFIER: pre_threshold =
+│                                   #   ungated <w_jet> over [SFT-1 Gyr, SFT] < 0.1 / >= 0.5,
+│                                   #   adopted 2026-08-28 | quench_window | pre_jet; all three
+│                                   #   labels in the selection FITS; switching archives the old
+│                                   #   tables as *_<tag>.fits + plots to powderday_quenched_<tag>/);
+│                                   #   per-anchor gated
 │                                   #   history+BH builds → sample stats (Part 2b: the class rule
 │                                   #   vs plain terciles / quench_mode post-t_AGN terciles / the
 │                                   #   8p6a epoch class along (M_BH, f_Edd, f_gas) ->
@@ -246,7 +251,12 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   points per class, and the pre-SFT vs [SFT,QT] selection
 │                                   #   scorecard (terciles / thresholds / jet lead) ->
 │                                   #   agn_feedback_evolution.png, agn_selection_{windows,
-│                                   #   scorecard}.png, agn_classifier_windows.fits)
+│                                   #   scorecard}.png, agn_classifier_windows.fits;
+│                                   #   Part 2e: paper versions of the 2d figures for the two
+│                                   #   rules compared, pre-SFT threshold vs [SFT,QT] terciles
+│                                   #   (P2E_RULES) -> paper_agn_{feedback_sequence,
+│                                   #   selection_windows,selection_scorecard}.{png,pdf};
+│                                   #   coupling_pre_threshold = the adopted driver rule)
 │                                   #   → dust_on/off RT over
 │                                   #   5 log-spaced apertures (10–160 kpc, powderday patch) →
 │                                   #   per-aperture flux catalogs with MC errors
