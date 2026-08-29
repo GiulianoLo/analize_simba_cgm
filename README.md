@@ -203,7 +203,10 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   files carry attr h2_recipe; a stale/absent stamp gets
 │                                   #   m_HI/m_H2 recomputed on the next run (backfill path)
 │                                   #   star fields m_star/member/tform (tform = formation scale
-│                                   #   factor, added 2026-08-27; older files are backfilled)
+│                                   #   factor, added 2026-08-27; older files are backfilled);
+│                                   #   `vel` (n,3) km/s peculiar = Velocities x sqrt(a) in BOTH
+│                                   #   groups (added 2026-08-28 for the per-zone kappa_rot of
+│                                   #   the KS notebook; re-running a plan's sbatch backfills it)
 │                                   #   Batched snapshot I/O: _catalog_pass (per-galaxy candidate
 │                                   #   lists, halo-cached), _gather (slab-streamed reads at the
 │                                   #   sorted union of indices; skips unneeded slabs), _Ctx (lazy
@@ -251,7 +254,9 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   points per class, and the pre-SFT vs [SFT,QT] selection
 │                                   #   scorecard (terciles / thresholds / jet lead) ->
 │                                   #   agn_feedback_evolution.png, agn_selection_{windows,
-│                                   #   scorecard}.png, agn_classifier_windows.fits;
+│                                   #   scorecard}.png, agn_classifier_{windows,tracks}.fits
+│                                   #   (per-galaxy critical times + the tracks behind the stacks:
+│                                   #   the inputs of paper_figures_quenched_m25.ipynb Part 1);
 │                                   #   Part 2e: paper versions of the 2d figures for the two
 │                                   #   rules compared, pre-SFT threshold vs [SFT,QT] terciles
 │                                   #   (P2E_RULES) -> paper_agn_{feedback_sequence,
@@ -267,13 +272,25 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   the reduced `tform`), measure_ks (fixed + R50 apertures,
 │                                   #   member-only), ks_columns (He x1.36, 0.5 M/pi R50^2
 │                                   #   convention, SFR=0 upper limits), build_stage_records
-│                                   #   (critical epochs; H2 trough after QT), RELATIONS (K98/B08/RK19),
-│                                   #   interp_track / grid_stats / ecdf (histories on the t - t_QT clock)
+│                                   #   (critical epochs; H2 trough after QT) + attach_bh_stages /
+│                                   #   nearest_row (STAGES_BH agn_ign / jet_on from the m25 Part 2d
+│                                   #   windows table, times relative to SFT), RELATIONS (K98/B08/RK19),
+│                                   #   interp_track / grid_stats / ecdf (histories on the t - t_QT clock),
+│                                   #   kappa_rot (Sales+12 K_rot/K, the m25 8j0 estimator) +
+│                                   #   measure_zone_kinematics (kappa of gas / H2 / stars + stellar
+│                                   #   age in the spherical KIN_ZONES ap3kpc / ann10kpc / ap10kpc;
+│                                   #   needs `vel` in the reduced files, else NaN kappas)
 ├── ks_tracks_quenched_m25.ipynb    # Kennicutt-Schmidt EVOLUTION TRACKS of the m25 quenched sample:
-│                                   #   critical epochs (sSFR peak/SFT/QT/post-quench/H2 trough/anchor)
-│                                   #   via the per-anchor histories + progen links -> plan for
+│                                   #   critical epochs (sSFR peak/SFT/QT/post-quench/H2 trough/anchor
+│                                   #   + AGN ignition / jet onset attached from
+│                                   #   agn_classifier_windows.fits, 2026-08-28) via the per-anchor
+│                                   #   histories + progen links -> plan for
 │                                   #   build_reduced_particles_job.py (prof_kstracks) -> Sigma_H2 /
-│                                   #   Sigma_SFR from the CAESAR member particles per epoch ->
+│                                   #   Sigma_SFR from the CAESAR member particles per epoch (Part 3;
+│                                   #   Part 3b: kappa_rot of gas / H2 / stars + stellar age in the
+│                                   #   core sphere / outskirt shell / 10 kpc rung at every epoch ->
+│                                   #   ks_stage_kinematics.fits, incremental, re-measures files once
+│                                   #   their `vel` is backfilled; anchor QC vs annulus_kinematics) ->
 │                                   #   binned AVERAGE tracks (terciles of anchor SFR / M* / M_dust/M* /
 │                                   #   Sigma_dust, own Sigma_H2, M_H2/M*, KS region, AGN class; 3 z
 │                                   #   panels + all-z, R50(H2) only) vs the observed ALMA-C11 QGs
@@ -281,14 +298,104 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   regions (below/on/above B08 at the track end) followed on the
 │                                   #   t - t_QT clock: ks_track_histories.fits (history + BH history +
 │                                   #   caesar rotation via progen), quench timing, AGN, fdust-age plane,
-│                                   #   kappa_rot, H2 extent -> ks_regions_*.png, ks_region_properties.csv.
+│                                   #   kappa_rot, H2 extent -> ks_regions_*.png, ks_region_properties.csv,
+│                                   #   ks_galaxies.fits (one row per Q galaxy: region, class, clock,
+│                                   #   stage snapshots; read by paper_figures_quenched_m25.ipynb).
 │                                   #   AGN class = KS_AGN_CLASSIFIER (pre_threshold since 2026-08-28):
 │                                   #   agn_class_<tag> of the selection table, applied to the cached
 │                                   #   epochs on load (refresh_agn_classes; no rebuild); strength
 │                                   #   variable COUP_VAR (w_pre | xstr_quench); non-legacy rules write
 │                                   #   to ks_tracks_<tag>/ + plots/ks_tracks_<tag>/ (caches stay put)
-└── obs_data/almac11/               # observed tables the cluster notebooks read (ks_table.csv +
-                                    #   README: conventions/provenance; committed, unlike output/)
+├── paper_figures_quenched_m25.ipynb # PAPER FIGURES of the m25 quenched sample: pure reads of the
+│                                   #   caches of the two notebooks above (no simulation access, no
+│                                   #   simbanator; runs wherever output/cis25 is visible). Part 1 =
+│                                   #   the AGN classifier figures of m25 Part 2e from
+│                                   #   agn_classifier_{windows,tracks}.fits (feedback-event sequence,
+│                                   #   pre-SFT threshold vs [SFT,QT] terciles tracks, scorecard +
+│                                   #   sweeps); Part 2 = the KS Part 5c presentation figures (AGN
+│                                   #   composition + strength, dust, kinematics of the KS regions on
+│                                   #   the t - t_QT clock) from ks_tracks/ks_galaxies/ks_track_histories;
+│                                   #   Part 3 = NEW test: 10.5 < log M* < 11.2 quenched galaxies
+│                                   #   binned by their anchor A_V (annulus_av_allincl, core ap3kpc,
+│                                   #   median over 4 sightlines; terciles, same edges everywhere)
+│                                   #   followed SFT -> QT -> track end on the KS plane, one column
+│                                   #   per AGN class (+ all classes) + the A_V ECDFs; Part 4 = m25
+│                                   #   Part 8 (T4/T8) re-drawn without scatter / rank stats from
+│                                   #   annulus_ism_truth + annulus_av_allincl + aperture_truth +
+│                                   #   annulus_kinematics: figure D = A_V, M_dust/M*, Sigma_dust
+│                                   #   (log axes) of each annulus vs the stellar age of the same
+│                                   #   annulus (one colour per annulus, one column per class + SF),
+│                                   #   figure E = radial ladder core (0-3.2) / outskirt (3.2-10) /
+│                                   #   10-32 kpc down the y axis, medians + galaxy-bootstrap CIs
+│                                   #   along x in A_V, M_dust/M*, Sigma_dust, stellar age,
+│                                   #   kappa_rot^gas per quenched class, figure F (Part 4d) = the
+│                                   #   radial trend across the 4 annuli (A_V, M_dust/M*, M_gas/M*,
+│                                   #   M_H2/M*, age, kappa_rot gas/H2/stars) per class + SF controls
+│                                   #   for log M* >/< 10.25; Part 5 = the quench sequence in the
+│                                   #   (kappa_rot, stellar age) plane from ks_stage_kinematics at the
+│                                   #   critical points AGN ignition -> jet onset -> SFT -> QT -> end
+│                                   #   (the first two need the KS notebook of 2026-08-28 evening+;
+│                                   #   fallback SFT -> QT -> end): figure A = kappa_rot^H2 / ^* of the
+│                                   #   core sphere and the outskirt shell vs the zone's stellar age,
+│                                   #   per anchor-A_V tercile, one column per class; figures B = the
+│                                   #   critical points on a categorical axis, classes side by side
+│                                   #   per A_V bin, core / outskirt rows (zone-coloured frames):
+│                                   #   kinematics_sequence (kappa H2 0-1, kappa stars zoomed),
+│                                   #   stellar_sequence (sSFR, age, dt / t_cosmic per interval),
+│                                   #   ism_sequence (M_dust/M*, M_H2/M*); sSFR and the fractions
+│                                   #   from the tracks' projected apertures; the ALMA-C11 dust- /
+│                                   #   CO-detection ranges of obs_data/almac11/almac11_gas_dust.csv
+│                                   #   shaded; figure C = paired per-galaxy changes (d kappa, dt)
+│                                   #   over each interval between consecutive points; for log M*
+│                                   #   >/< 10.25, dashed kappa = 0.3, class palette teal / amber /
+│                                   #   dark red (CLASS_COLOR_PRES); AGN_CLASSIFIER must be the rule both
+│                                   #   notebooks ran with; Part 6 = figures G and H (P6_FIGS), no
+│                                   #   fitted plane: G = paper_sigma_age, Sigma_e vs stellar age, the
+│                                   #   observed points coloured by A_V, the strong-coupling quenched
+│                                   #   models split at log(M_dust/M*) = -3.75 (P6_SPLIT) into a dusty
+│                                   #   (N=5: older, rotating H2 disc kappa_H2 0.8 vs 0.3) and a dust-poor
+│                                   #   running median; H = paper_ism_prediction, the ISM content an
+│                                   #   observer cannot cheaply measure (rows M_dust/M*, M_H2/M*) as the
+│                                   #   models' running median against what they can (columns age,
+│                                   #   Sigma_e, SED sSFR; weak / intermediate / strong, no age cut on
+│                                   #   the models — per-figure options classes / logage_min / model —
+│                                   #   + all quenched dotted), drawn from the CIGALE fits of the mock
+│                                   #   CORE photometry (model="cigale": tables/cigale_region_results
+│                                   #   of m25 Part 7f, P6_CIG_REGION core 0-3.2 kpc, dust_on arm:
+│                                   #   M*, M_dust, bayes.sfh.sfr, pinned age of the fit; M_H2 = the
+│                                   #   region's SIMBA H2 over the CIGALE M*; Sigma_e = the sim
+│                                   #   half-mass radius with the core M* aperture-corrected to 0-32
+│                                   #   kpc; 172/178 galaxies fitted, closure -0.06 / -0.08 dex in M* /
+│                                   #   M_dust), the measured ALMA-C11 / Spilker+18 / ADF22-QG1 values
+│                                   #   as the check (sSFR orders the dust content in every class, age
+│                                   #   in weak / intermediate; detections 0.7-1.6 dex above the
+│                                   #   tracks, the ALMA-C11 limits on them) — every ALMA-C11
+│                                   #   source (fiducial CIGALE values, COSMOS-Web / ACS R_e and Sersic n
+│                                   #   of obs_data/almac11/age_sersic_sigma.csv, censors as arrows), the
+│                                   #   Spilker+18 LEGA-C passive galaxies (CO only) and ADF22-QG1
+│                                   #   (Umehata+25, typed in: P6_UMEHATA), the LEGA-C and 3D-HST running
+│                                   #   medians of obs_data/literature/av_re_literature.csv where both
+│                                   #   axes exist; other axes on offer: A_V, R_e, kappa_H2 (8j0, models
+│                                   #   only), Sersic n (observed only); model="sim" (figure G, the
+│                                   #   default P6_MODEL) = 0-10 kpc dust / 1.36 M_H2 over the 0-32 kpc
+│                                   #   stars, Sigma_e from the projected half-mass radius of the
+│                                   #   1/3.2/10/32 kpc curve of growth, sSFR = SFR100/M* of the 0-32
+│                                   #   kpc stars; models + literature cut at log M* > 10.25 and
+│                                   #   log(age/yr) > 9 ->
+│                                   #   plots/paper_m25[_<tag>]/paper_*.{png,pdf},
+│                                   #   paper_{ks_av_bins,dust_vs_age_annuli,core_vs_outskirt,radial_profiles,
+│                                   #   kappa_vs_age,kappa_sequence,kappa_intervals,sigma_age,
+│                                   #   ism_prediction}{,_points}.csv
+├── obs_data/almac11/               # observed tables the cluster notebooks read (ks_table.csv: KS
+│                                   #   placement; almac11_gas_dust.csv: dust / CO detections + fiducial
+│                                   #   CIGALE age, M*, M_dust, logDGR; age_sersic_sigma.csv: optical
+│                                   #   R_e (COSMOS-Web / ACS), Sersic n, ALMA sizes; README:
+│                                   #   conventions/provenance; committed, unlike output/)
+└── obs_data/literature/            # published comparison samples (copied from the pilot_specphot
+                                    #   tables, README = provenance): av_re_literature.csv = LEGA-C
+                                    #   (de Graaff+21 MAGPHYS A_V, vdW+21 F814W R_e) + 3D-HST
+                                    #   (Momcheva+16 FAST A_V, vdW+14 R_e) with log M*, SED ages, UVJ;
+                                    #   spilker18_legac.csv = the 8 Spilker+18 CO(2-1) LEGA-C rows
 ```
 
 ---

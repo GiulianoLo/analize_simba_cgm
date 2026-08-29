@@ -18,5 +18,21 @@ Conventions of that table (see the `plot_ks.py` docstring):
 - `dlog_<rel>` / `nsig_<rel>` = offset from Kennicutt 98 / Bigiel+08 / de los Reyes & Kennicutt 19 in
   dex and in units of sqrt(scatter² + own errors²).
 
-Consumer: `ks_tracks_quenched_m25.ipynb` (Part 4) via `OBS_CSV`. The simulated Σ_H2 there is corrected
+`almac11_gas_dust.csv` — the per-source ALMA-C11 measurement / SED table, copied verbatim from the same
+`pilot_specphot/results/` directory (file of 2026-08-27 13:06; copied 2026-08-29). Per source: the ALMA dust-continuum
+and CO(3–2) fluxes with their detection flags (`det_dust`, `det_co`, S/N, 3σ limits, method / engine / QA columns), the
+observed Dn4000 / age, and the CIGALE fits of the `noagn` and `agn` runs (`logage_*`, `logMstar_*`, `logMdust_*`,
+`AV_*`, SFR, …) with the fiducial choice `fid_run` and its `logMstar`, `logMdust`, `logage` (log yr), `fracAGN_fid`,
+`MH2_fid`. Refresh by re-copying — nothing here is derived.
+
+`age_sersic_sigma.csv` — the per-source ALMA-C11 structure table, copied verbatim from `pilot_specphot/results/age_sersic_sigma.csv`
+(written by `scripts/plot_age_sersic_sigma.py`, file of 2026-08-29 13:58; copied 2026-08-29). Per source: the optical half-light radius
+`re_kpc` with its origin `re_source` (COSMOS-Web JWST semi-major Sérsic radius `re_jwst_maj_kpc`, the circularised `re_cosmosweb_kpc`,
+ACS/COSMOS `re_acs_kpc` where JWST is missing: hc5, hc9, hc10, hc12), the Sérsic index `n` (`n_source`), the CIGALE no-AGN age /
+A_V / dust fraction, the ALMA dust and CO sizes (`r_dust_kpc`, `r_co_kpc`, their limit flags) and Σ_dust. Refresh by re-copying.
+Consumer: `paper_figures_quenched_m25.ipynb` Part 6 (Σ_e = M*/(2π R_e²) of every ALMA-C11 source, `re_kpc`).
+
+Consumers: `ks_tracks_quenched_m25.ipynb` (Part 4) via `OBS_CSV` (ks_table.csv); `paper_figures_quenched_m25.ipynb`
+Part 5 via `OBS_GD_CSV` (almac11_gas_dust.csv: the age / M_dust/M* range of the `det_dust` sources, drawn as the band
+of the observed parameter space) and Part 6 (every source as a point: fiducial-run `AV_<fid_run>`, `logMstar`, `logDGR` + `dgr_censor`). The simulated Σ_H2 there is corrected
 by ×1.36 (He) before comparison because SIMBA's per-particle H2 mass is hydrogen-only.

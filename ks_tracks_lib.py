@@ -4,7 +4,8 @@ Kennicutt–Schmidt (KS) evolution tracks of the cis25 quenched sample: surface 
 molecular gas and star formation measured from the CAESAR member particles (glist/slist) stored in
 the reduced particle files written by ``build_reduced_particles_job.py``, at each galaxy's critical
 epochs (sf_peak → sft → qt → post_quench → gas_min → anchor, plus ``end`` = the anchor or, when the
-anchor holds no measurable H2, the last snapshot with M_H2/M_star > ``fh2_min``).
+anchor holds no measurable H2, the last snapshot with M_H2/M_star > ``fh2_min``; plus the AGN-feedback
+epochs ``agn_ign`` / ``jet_on`` attached from the m25 Part 2d windows table by ``attach_bh_stages``).
 
 The module deliberately imports NOTHING from ``simbanator`` (its ``analysis`` package pulls in yt
 through sfh_fsps and is not importable off the cluster), so every measurement here can be unit-tested
@@ -29,6 +30,14 @@ Conventions (all documented in the notebook's closing cell as well)
   Fixed apertures never carry a 0.5.
 * SFR = 0 inside an aperture over a window is a censored value: the one-particle floor
   ``m_star_particle / window / area`` is stored as an upper limit (``is_ul``).
+* Rotation support: ``kappa_rot`` is the Sales+12 K_rot/K estimator of the m25 notebook's Part 8j0
+  (``_kin``), verbatim: velocities about the weighted mean of the subset (its bulk motion), spin
+  axis = the subset's angular momentum, so a constant velocity unit cancels. ``measure_zone_kinematics``
+  evaluates it for all gas / H2-weighted gas / stars in SPHERICAL zones about the stored centre
+  (``KIN_ZONES`` = the m25 ladder's core ``ap3kpc`` (r < 3.16 kpc), outskirt shell ``ann10kpc``
+  (3.16 < r < 10 kpc) and the ``ap10kpc`` rung) together with the mass-weighted stellar age of the
+  same zone — the reduced files must carry ``vel`` (build_reduced_particles_job, 2026-08-28+;
+  older files are backfilled by re-running the plan); without it the kappas are NaN, the ages not.
 """
 import os
 
@@ -40,11 +49,14 @@ __all__ = [
     "HE_FACTOR", "RELATIONS", "tdep_ms_gyr", "relation_y",
     "reduced_path", "load_reduced", "face_on_R", "half_mass_radius", "make_a_to_t", "sfr_window",
     "measure_ks", "MEASURE_COLUMNS", "ks_columns", "build_stage_records", "stage_time_order",
+    "STAGES_BH", "nearest_row", "attach_bh_stages",
     "interp_track", "grid_stats", "ecdf",
+    "KIN_ZONES", "KIN_COMPONENTS", "ZONE_KIN_COLUMNS", "kappa_rot", "measure_zone_kinematics",
 ]
 
 # ── stages / apertures ────────────────────────────────────────────────────────────────────────────
-STAGES_KS = ["sf_peak", "ssfr_min", "sft", "qt", "post_quench", "gas_min", "anchor", "end"]
+STAGES_BH = ["agn_ign", "jet_on"]   # AGN ignition / jet-mode onset (m25 Part 2d windows table; attach_bh_stages), 2026-08-28
+STAGES_KS = ["sf_peak", "ssfr_min", "sft", "qt", "post_quench", "gas_min", "anchor", "end"] + STAGES_BH
 STAGES_PLOT = ["sf_peak", "sft", "qt", "post_quench", "gas_min", "anchor"]   # time order (summary / t_dep clock)
 FH2_MIN_END = 1e-4        # `end` stage: the anchor when M_H2/M_star (history) > this, else the last snapshot above it
 FIXED_AP_KPC = (1.0, 3.162, 10.0)                 # the m25 ladder rungs (ap3kpc is really 3.16 kpc)
@@ -351,6 +363,115 @@ def ks_columns(tab, sfr_key="sfr100", sfr_tot_key="sfr100_tot", window_myr=100.0
     return out
 
 
+
+# ── rotation support in spherical zones (kappa_rot of gas / H2 / stars + stellar age per zone) ───
+KIN_ZONES = (("ap3kpc", 0.0, 3.162), ("ann10kpc", 3.162, 10.0), ("ap10kpc", 0.0, 10.0))
+KIN_COMPONENTS = ("gas", "H2", "star")
+ZONE_KIN_COLUMNS = [
+    "zone", "r_in_kpc", "r_out_kpc",
+    "kappa_gas", "n_gas", "kappa_H2", "n_H2", "kappa_star", "n_star", "cos_gas_star", "cos_H2_star",
+    "m_gas", "m_H2", "m_star", "n_star_age", "age_mw_gyr", "has_vel",
+]
+
+
+def kappa_rot(r, v, w, n_min=10):
+    """Sales+12 kappa_rot = K_rot / K of a weighted particle subset -> (kappa, unit spin axis, n_used).
+
+    r: positions about the centre [kpc]; v: velocities (any constant unit — the weighted mean of the
+    subset is subtracted, so only the internal motions count and the unit cancels in the ratio);
+    w: weights (only finite w > 0 count). NaN (axis None) below `n_min` usable particles or without a
+    net angular momentum. Verbatim the m25 notebook's Part 8j0 estimator (`_kin`).
+    """
+    r, v, w = np.asarray(r, float), np.asarray(v, float), np.asarray(w, float)
+    if r.ndim != 2 or v.shape != r.shape or len(w) != len(r):
+        return np.nan, None, 0
+    ok = np.isfinite(w) & (w > 0) & np.isfinite(r).all(axis=1) & np.isfinite(v).all(axis=1)
+    n = int(ok.sum())
+    if n < max(int(n_min), 1):
+        return np.nan, None, n
+    r, v, w = r[ok], v[ok], w[ok]
+    v = v - np.average(v, axis=0, weights=w)              # bulk motion of the subset
+    j = np.cross(r, v)
+    L = np.sum(w[:, None] * j, axis=0)
+    Ln = float(np.linalg.norm(L))
+    if not (np.isfinite(Ln) and Ln > 0):
+        return np.nan, None, n
+    zh = L / Ln
+    jz = j @ zh
+    Rc = np.sqrt(np.maximum(np.sum(r ** 2, axis=1) - (r @ zh) ** 2, 0.0))
+    okR = Rc > 1e-3
+    K_rot = 0.5 * np.sum(w[okR] * (jz[okR] / Rc[okR]) ** 2)
+    K_tot = 0.5 * np.sum(w * np.sum(v ** 2, axis=1))
+    return (float(K_rot / K_tot) if K_tot > 0 else np.nan), zh, n
+
+
+def measure_zone_kinematics(red, t_obs_gyr, a_to_t, zones=KIN_ZONES, member_only=False,
+                            nkin_min=10, nstar_min=20):
+    """kappa_rot of all gas / H2-weighted gas / stars and the stellar age in spherical zones of one reduced file.
+
+    Returns one dict row per zone (ZONE_KIN_COLUMNS). Geometry is spherical about the stored centre
+    (``r = |pos|``; the m25 Part 8j0 convention — a 3-D quantity, sightline-independent), so ``zone``
+    labels are those of the m25 ladder rungs / shells. Per component: ``kappa_<c>`` and ``n_<c>`` = the
+    number of weighted particles in the zone (counted even when the file has no ``vel``, so the consumer
+    can tell "too few particles" from "no velocities": ``has_vel``). ``cos_*`` = alignment of the spin
+    axes. ``age_mw_gyr`` = m_star-weighted mean of ``t_obs - t(tform)`` over the zone's stars (NaN below
+    ``nstar_min`` stars with a formation epoch). ``member_only`` restricts every set to the CAESAR
+    members (the KS-plane measurements' convention); the default takes every particle in the zone
+    (the Part 8j0 convention, which the anchor rows reproduce).
+    """
+    gas, star = red.get("gas", {}), red.get("star", {})
+    has_vel = ("vel" in gas) and ("vel" in star)
+
+    def _set(grp, mass_key):
+        pos = np.asarray(grp.get("pos", np.zeros((0, 3))), float)
+        n = len(pos)
+        keep = np.asarray(grp["member"], bool) if (member_only and "member" in grp) else np.ones(n, bool)
+        pos = pos[keep]
+        vel = np.asarray(grp["vel"], float)[keep] if "vel" in grp else np.full((len(pos), 3), np.nan)
+        m = np.asarray(grp[mass_key], float)[keep] if mass_key in grp else np.zeros(len(pos))
+        return pos, vel, m, keep
+
+    gpos, gvel, m_gas, gkeep = _set(gas, "m_gas")
+    m_H2 = np.asarray(gas["m_H2"], float)[gkeep] if "m_H2" in gas else np.zeros(len(gpos))
+    spos, svel, m_star, skeep = _set(star, "m_star")
+    tform = np.asarray(star["tform"], float)[skeep] if "tform" in star else np.full(len(spos), np.nan)
+    with np.errstate(invalid="ignore"):
+        t_form = a_to_t(tform) if len(tform) else np.zeros(0)
+    age = np.where(np.isfinite(t_form), np.maximum(float(t_obs_gyr) - t_form, 0.0), np.nan)
+    rg = np.sqrt(np.sum(gpos ** 2, axis=1)) if len(gpos) else np.zeros(0)
+    rs = np.sqrt(np.sum(spos ** 2, axis=1)) if len(spos) else np.zeros(0)
+
+    rows = []
+    for label, r_in, r_out in zones:
+        ing = (rg <= r_out) & ((rg > r_in) if r_in > 0 else True)
+        ins = (rs <= r_out) & ((rs > r_in) if r_in > 0 else True)
+        row = dict(zone=str(label), r_in_kpc=float(r_in), r_out_kpc=float(r_out), has_vel=bool(has_vel))
+        axes = {}
+        for comp, pos, vel, w, sel in (("gas", gpos, gvel, m_gas, ing), ("H2", gpos, gvel, m_H2, ing),
+                                       ("star", spos, svel, m_star, ins)):
+            ww = w[sel]
+            n_w = int(np.sum(np.isfinite(ww) & (ww > 0)))
+            if has_vel:
+                kap, ax, n_w = kappa_rot(pos[sel], vel[sel], ww, n_min=nkin_min)
+            else:
+                kap, ax = np.nan, None
+            row["kappa_%s" % comp] = kap
+            row["n_%s" % comp] = int(n_w)
+            axes[comp] = ax
+        for a, b in (("gas", "star"), ("H2", "star")):
+            row["cos_%s_%s" % (a, b)] = (float(axes[a] @ axes[b])
+                                         if (axes.get(a) is not None and axes.get(b) is not None) else np.nan)
+        row["m_gas"] = float(np.nansum(m_gas[ing]))
+        row["m_H2"] = float(np.nansum(m_H2[ing]))
+        row["m_star"] = float(np.nansum(m_star[ins]))
+        oka = ins & np.isfinite(age) & np.isfinite(m_star) & (m_star > 0)
+        row["n_star_age"] = int(oka.sum())
+        row["age_mw_gyr"] = (float(np.average(age[oka], weights=m_star[oka]))
+                             if oka.sum() >= max(int(nstar_min), 1) else np.nan)
+        rows.append(row)
+    return rows
+
+
 # ── critical epochs (port of quench_mode_vs_sigma_gas build_records, trimmed to the KS stages) ────
 def _smooth(y, w=3):
     n = len(y)
@@ -425,9 +546,7 @@ def build_stage_records(P, t_cosmic_yr, redshift, galaxy_ids, cols, find_quenchi
     cols = np.asarray(cols, int)
 
     def _nearest_row(t_target):
-        if not np.isfinite(t_target):
-            return -1
-        return int(np.argmin(np.abs(t_cosmic_yr - t_target)))
+        return nearest_row(t_cosmic_yr, t_target)
 
     records = []
     for col in cols:
@@ -514,6 +633,39 @@ def stage_time_order(rec, stages=STAGES_PLOT):
     have = [(rec["t_%s" % st], st) for st in stages
             if np.isfinite(rec.get("t_%s" % st, np.nan)) and rec.get("row_%s" % st, -1) >= 0]
     return [st for _, st in sorted(have, key=lambda x: x[0])]
+
+
+def nearest_row(t_cosmic_yr, t_target, t_anchor=None, tol_yr=1.0):
+    """Index of the history row nearest to `t_target` [yr]; -1 when the time is not finite or (with `t_anchor`)
+    lies more than `tol_yr` beyond the anchor, i.e. outside the history."""
+    if not np.isfinite(t_target):
+        return -1
+    if t_anchor is not None and t_target > float(t_anchor) + tol_yr:
+        return -1
+    return int(np.argmin(np.abs(np.asarray(t_cosmic_yr, float) - float(t_target))))
+
+
+def attach_bh_stages(recs, t_cosmic_yr, dt_sft_gyr, stages=STAGES_BH):
+    """Add the AGN-feedback epochs to the stage records of `build_stage_records` (in place; returns `recs`).
+
+    dt_sft_gyr : {gid: {stage: dt}} — the epoch of each stage in Gyr RELATIVE TO SFT, the convention of the m25
+    notebook's Part 2d windows table (`agn_classifier_windows.fits`: t_agn = ignition, first crossing of half the
+    pre-QT peak BHAR; t_jet = first snapshot with the ungated w_jet >= 0.5; both (t - t_SFT)/Gyr).
+    A stage gets t_<stage> = t_sft + dt [yr] and row_<stage> = the nearest history row (-1 beyond the anchor,
+    row 0 = anchor); it stays undefined (NaN / -1) when the galaxy has no SFT, no entry, or a NaN dt.
+    """
+    t_cosmic_yr = np.asarray(t_cosmic_yr, float)
+    t_anchor = float(t_cosmic_yr[0])
+    for rec in recs:
+        d = dt_sft_gyr.get(int(rec["gid"]), {}) or {}
+        t_sft = float(rec.get("t_sft", np.nan))
+        for st in stages:
+            dt = d.get(st, np.nan)
+            dt = float(dt) if dt is not None else np.nan
+            t = t_sft + dt * 1e9 if (np.isfinite(t_sft) and np.isfinite(dt)) else np.nan
+            rec["t_%s" % st] = float(t) if np.isfinite(t) else np.nan
+            rec["row_%s" % st] = nearest_row(t_cosmic_yr, t, t_anchor=t_anchor)
+    return recs
 
 
 # ── histories on a common clock (notebook Part 5: evolutionary properties of the KS regions) ─────

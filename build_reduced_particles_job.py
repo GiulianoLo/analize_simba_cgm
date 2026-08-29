@@ -22,9 +22,11 @@ build_profiles_job.py) it writes ONE lean HDF5 per galaxy:
     attrs : sim_name, snap, gx, redshift, a, hub, rmax_kpc,
             center_kpc(3), evecs(3,3)              # stellar principal frame, for face-on projection
     gas/  : idx(n) [GLOBAL snapshot index], pos(n,3) [kpc, RELATIVE to centre],
-            m_gas, m_dust, m_HI, m_H2, sfr, temp [Msun, Msun/yr, K], member(bool)
+            m_gas, m_dust, m_HI, m_H2, sfr, temp [Msun, Msun/yr, K], member(bool),
+            vel(n,3) [km/s peculiar = snapshot Velocities x sqrt(a); NaN if absent]
     star/ : idx(m), pos(m,3) [kpc, relative], m_star [Msun], member(bool),
-            tform [scale factor a_form = PartType4/StellarFormationTime; NaN if absent]
+            tform [scale factor a_form = PartType4/StellarFormationTime; NaN if absent],
+            vel(m,3) [km/s peculiar, as for the gas]
 
 The `member` boolean marks each particle as belonging to the CAESAR galaxy member list
 (``gal.glist`` / ``gal.slist``). Member particles are ALWAYS kept (even if just outside the aperture),
@@ -46,7 +48,9 @@ Extraction is split into two passes:
 
 To add a field later: add a producer to the registry (with its dependency tag) and add its name to
 ``GAS_FIELDS`` / ``STAR_FIELDS``; re-run the job. Files missing it get *only that dataset* appended
-(catalog-only fields don't even open the snapshot). Files missing ``idx``/``pos`` (or absent/corrupt)
+(catalog-only fields don't even open the snapshot). History of such additions: ``tform`` (2026-08-27),
+``vel`` (2026-08-28) — every reduced file built before them (any plan, cis25 and cis100 alike) is
+"partial" and is completed the next time ITS plan is submitted. Files missing ``idx``/``pos`` (or absent/corrupt)
 fall back to a full geometry rebuild. ``REDUCED_OVERWRITE=1`` forces a full rebuild of everything.
 Files are stamped with the HI/H2 split they were built with (attr ``h2_recipe`` = build_profiles_job
 ``H2_RECIPE``); files carrying an older/absent stamp get ``m_HI``/``m_H2`` recomputed at the stored
@@ -94,8 +98,8 @@ OVERWRITE = int(os.environ.get("REDUCED_OVERWRITE", 0)) == 1
 # Written by the geometry pass (never backfillable — defines the particle set):
 GEOM_DS = ("idx", "pos")
 # Per-particle fields produced from `idx` (order here = write order in a fresh file):
-GAS_FIELDS = ("m_gas", "m_dust", "m_HI", "m_H2", "sfr", "temp", "member")
-STAR_FIELDS = ("m_star", "member", "tform")
+GAS_FIELDS = ("m_gas", "m_dust", "m_HI", "m_H2", "sfr", "temp", "member", "vel")
+STAR_FIELDS = ("m_star", "member", "tform", "vel")
 _DEP_SNAP, _DEP_CAT = "snapshot", "catalog"       # what a producer needs to run
 
 
@@ -235,16 +239,37 @@ def _star_tform(ctx, idx):
     return {"tform": np.asarray(ctx.take("star", "StellarFormationTime", idx), np.float32)}
 
 
+def _velocity(ctx, part, idx):
+    """Peculiar velocity [km/s] (n, 3) = snapshot ``Velocities`` x sqrt(a): GIZMO cosmological runs store
+    v_pec / sqrt(a) in km/s (yt/caesar apply the same factor). NaN if the snapshot lacks the column.
+    Added 2026-08-28 for the KS-track notebook (kappa_rot of the H2 / stars in the core and outskirt at
+    every critical epoch, ks_tracks_lib.measure_zone_kinematics); kappa_rot itself is unit-free."""
+    if not ctx.has_field(part, "Velocities"):
+        return {"vel": np.full((len(idx), 3), np.nan, np.float32)}
+    v = np.asarray(ctx.take(part, "Velocities", idx), np.float64) * np.sqrt(float(ctx.a))
+    return {"vel": v.astype(np.float32)}
+
+
+def _gas_vel(ctx, idx):
+    return _velocity(ctx, "gas", idx)
+
+
+def _star_vel(ctx, idx):
+    return _velocity(ctx, "star", idx)
+
+
 GAS_PRODUCERS = [
     (("m_gas", "m_dust", "m_HI", "m_H2"), _DEP_SNAP, _gas_components),
     (("sfr",),    _DEP_SNAP, _gas_sfr),
     (("temp",),   _DEP_SNAP, _gas_temp),
     (("member",), _DEP_CAT,  _gas_member),
+    (("vel",),    _DEP_SNAP, _gas_vel),
 ]
 STAR_PRODUCERS = [
     (("m_star",), _DEP_SNAP, _star_mass),
     (("member",), _DEP_CAT,  _star_member),
     (("tform",),  _DEP_SNAP, _star_tform),
+    (("vel",),    _DEP_SNAP, _star_vel),
 ]
 _PRODUCERS = {"gas": GAS_PRODUCERS, "star": STAR_PRODUCERS}
 
