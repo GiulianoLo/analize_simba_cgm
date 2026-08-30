@@ -381,11 +381,218 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   stars, Sigma_e from the projected half-mass radius of the
 │                                   #   1/3.2/10/32 kpc curve of growth, sSFR = SFR100/M* of the 0-32
 │                                   #   kpc stars; models + literature cut at log M* > 10.25 and
-│                                   #   log(age/yr) > 9 ->
+│                                   #   log(age/yr) > 9; H_sim = paper_ism_prediction_sim, the grid of H with
+│                                   #   model="sim" (the truth in the 0-10 / 0-32 kpc discs: the estimator and
+│                                   #   the core at once; against the caesar catalogue of the same galaxies
+│                                   #   the 0-10 kpc disc holds +0.26 dex more dust, +0.34 dex more gas, the
+│                                   #   0-100 kpc rung +1.3 dex: no rung is the catalogue galaxy) ->
 │                                   #   plots/paper_m25[_<tag>]/paper_*.{png,pdf},
 │                                   #   paper_{ks_av_bins,dust_vs_age_annuli,core_vs_outskirt,radial_profiles,
 │                                   #   kappa_vs_age,kappa_sequence,kappa_intervals,sigma_age,
-│                                   #   ism_prediction}{,_points}.csv
+│                                   #   ism_prediction,ism_prediction_sim}{,_points}.csv
+├── paper_ism_prediction_boxes.ipynb # figure H from the caesar CATALOGUES alone (no particles, RT or
+│                                   #   CIGALE): the 100 / 50 / 25 Mpc boxes at the m25 anchors (z=0.3-2,
+│                                   #   ANCHORS; BOXES = catalogue dir + pattern under SHARE, default
+│                                   #   /mnt/home/share/simbas, env SIMBA_SHARE for a local run through
+│                                   #   the mount). Part 1 reads every galaxy with log M* > 9.5 per
+│                                   #   (box, anchor) with h5py (masses, sfr/sfr_100, ngas/nstar, central,
+│                                   #   ages.mass_weighted, half-mass radii kpccm -> physical, kappa_rot,
+│                                   #   M_BH, f_Edd) into output/box_resolution/ism_prediction/
+│                                   #   ism_prediction_catalogue.fits (incremental: only the pairs the
+│                                   #   cache lacks are read), applies the m25 Part 1 rule on the
+│                                   #   catalogue columns (log M* > 10, sSFR < 0.2/t_H, >= 21 gas / >= 20
+│                                   #   star particles, M_dust >= 1e-4 M_H2; funnel per (box, anchor)) ->
+│                                   #   Q, QM (log M* > 10.25); Part 2 = the figure-H grid (M_dust/M*
+│                                   #   and the gas row: SIM_GAS_ROW 'fgas' (default) = the whole-galaxy
+│                                   #   M_gas/M* for the simulation, 'fh2' = 1.36 M_H2/M*; the observed
+│                                   #   points stay the alpha_CO H2 either way; not nested: caesar sums
+│                                   #   HI / H2 over the halo gas assigned to the galaxy, masses.HI >
+│                                   #   masses.gas, median M_gas / 1.36 M_H2 = +0.08 dex in cis100 / cis50,
+│                                   #   +0.26 in cis25; lfh2 stays the H2 in every table; vs age, Sigma_e =
+│                                   #   M*/2 pi R_e^2 with R_e = 0.75 x the 3-D stellar half-mass radius,
+│                                   #   sSFR) with ONE running median
+│                                   #   per box (bootstrap band, Spearman per panel), the m25 REFERENCE
+│                                   #   track overlaid (M25_REF_MODEL: 'catalogue' = the quenched galaxies
+│                                   #   of the m25 sample, tables/powderday_quenched_selection_pt.fits, read
+│                                   #   from the cis25 catalogue rows - the same whole-galaxy columns, the
+│                                   #   m25 classes, binned like figure H (4 bins); 'sim' = figure H_sim's
+│                                   #   paper_ism_prediction_sim.csv (the truth in the 0-10 / 0-32 kpc
+│                                   #   discs); 'cigale' = figure H's CIGALE-core paper_ism_prediction.csv;
+│                                   #   no particle rung is the catalogue galaxy, see H_sim above;
+│                                   #   SHOW_M25_CLASSES adds the class tracks), the same
+│                                   #   observed points (ALMA-C11 / Spilker+18 / ADF22-QG1, A_V colour,
+│                                   #   obs_vs_track offsets per box) -> paper_ism_prediction_boxes
+│                                   #   .{png,pdf,csv,_points.csv}; Part 3 = the catalogue's only AGN
+│                                   #   state: the same grid for P3_BOX split by SIMBA's jet criterion at
+│                                   #   the anchor (log M_BH > 7.5, f_Edd < 0.2; Mann-Whitney contrasts,
+│                                   #   jet fraction per box / anchor; the m25 reference weak / strong tracks as
+│                                   #   the reference) -> paper_ism_prediction_agnstate_<box>.*; Part 4 =
+│                                   #   the 50 Mpc feedback VARIANTS (VARIANTS: cis50 / cis50nox /
+│                                   #   cis50noagn; cis50nojet configured) on the same grid, one track
+│                                   #   per variant with finer bins (P4_NBIN 8, P4_NMIN 3), + the printed
+│                                   #   per-panel median offsets of the detections from each variant's
+│                                   #   track and the median |offset| over the dust / H2 panels (which
+│                                   #   physics puts the quenched galaxies where the data are) ->
+│                                   #   paper_ism_prediction_variants_m50.*; the variant catalogues live
+│                                   #   in SHARE/SIMBA_50/<variant>/Groups (ROE_CATALOG_URL, wget -c);
+│                                   #   Part 5 = the AGN state INSIDE each variant (agn_state_contrasts
+│                                   #   per variant, grid split by state -> paper_ism_prediction_agnstate
+│                                   #   _m50_<variant>.*), the same state across the variants (colour =
+│                                   #   state, line = variant; Mann-Whitney vs the fiducial run's galaxies
+│                                   #   in that state -> paper_ism_prediction_agnstate_variants_m50.*) and
+│                                   #   the joint scorecard (every population's median offsets over the
+│                                   #   dust / H2 panels, log M_dust/M_H2 vs the observed, ranked by the
+│                                   #   larger |offset| -> ..._variants_m50_scorecard.csv; bands only for
+│                                   #   >= P5_BAND_MIN galaxies). Result: at the same BH state the X-ray
+│                                   #   channel is what removes the dust (s50 jet -4.7 vs s50nox jet -3.1),
+│                                   #   every dust-rich population is 0.4 dex under the observed H2.
+│                                   #   Part 6 = the m25 AGN COUPLING CLASSES for the other boxes: main-
+│                                   #   branch histories of mstar / sfr / mgas / mbh / bh_fedd from the
+│                                   #   in-catalogue trees (cis25: the progen_links sidecars) for every
+│                                   #   anchor whose catalogue ladder END_SNAP..anchor is on disk (one pass,
+│                                   #   each catalogue read once -> ism_prediction_histories_<box>.hdf5),
+│                                   #   SFT / QT with find_quenching_times, w_pre over [SFT - 1 Gyr, SFT],
+│                                   #   pre_threshold cuts 0.10 / 0.50 (agn_class3) and the class SCHEME
+│                                   #   used everywhere (CLASS_SCHEME 'two' default: weak / strong only,
+│                                   #   the rule's intermediate galaxies redistributed at TWO_CLASS_THR =
+│                                   #   0.30 on w_pre; 'three' = the rule) -> ism_prediction_agn_classes.csv,
+│                                   #   merged into Q / QM (agn_class, w_pre, t_sft, t_qt, agn_onset);
+│                                   #   cis25 labels checked against powderday_quenched_selection_pt.fits;
+│                                   #   grid per box split by class (the m25 reference class tracks)
+│                                   #   -> paper_ism_prediction_agnclass_<box>.*, weak / strong across
+│                                   #   the boxes -> paper_ism_prediction_agnclass_boxes.* + the scorecard
+│                                   #   over every population (offset_scorecard). ISM_H_BOXES env narrows
+│                                   #   a test run; the m50 z < 1.15 anchors need ROE snaps 101-133.
+│                                   #   Part 7 = the DUSTY TAIL, the galaxies behind the medians: per
+│                                   #   population (box, AGN state, class) the percentiles of log M_dust/M*
+│                                   #   and the number / fraction at or above P7_THR (-3.5 / -3.2 / -3.0;
+│                                   #   the ALMA-C11 detections span -3.8 to -2.6) -> paper_ism_prediction
+│                                   #   _dusty_tail.csv; the tail (>= P7_TAIL -3.2) vs the rest per box
+│                                   #   (Part 6b contrasts + state / class / anchor mix); figure = the
+│                                   #   M_dust/M* row per box with EVERY galaxy as a point, the tail in the
+│                                   #   box colour, the running median + 84th / 95th percentiles, the
+│                                   #   observed points -> paper_ism_prediction_dusty_tail.{png,pdf}
+│                                   #   (P7_Y = 'fh2' for the H2 fraction). Result: 8 % of the cis100 and
+│                                   #   11 % of the cis50 quenched galaxies (4 % in cis25) sit at or above
+│                                   #   log f_dust = -3.2, 4-6 % above -3.0 (the tail: younger, lower-mass,
+│                                   #   more satellites, less often in jet mode, 2x the gas particles);
+│                                   #   in s50nox / s50noagn the majority does (60 / 77 %) - the medians
+│                                   #   hide a real minority.
+│                                   #   Part 8 = THREE DUST SIDES at M_dust/M* = 1e-5 and 1e-3.5 (P8_EDGES:
+│                                   #   dust-rich >= 1e-3.5, undetected [1e-5, 1e-3.5), no-dust < 1e-5 incl.
+│                                   #   zero dust) x the class: the side fractions per class per box (Wilson
+│                                   #   68 %), the class x side table with chi-square p + Cramer's V, the
+│                                   #   best class -> side rule vs the majority baseline, Fisher's p + the
+│                                   #   weak-vs-strong odds at each end (dust-rich vs rest, no-dust vs rest),
+│                                   #   the AUC of w_pre against age / sSFR / M_gas/M* / M* / Sigma_e / kappa
+│                                   #   / jet / central / z / tau_q at each end + Spearman rho with the
+│                                   #   ordinal side -> paper_ism_prediction_dusty_split{,_stats,_predictors}
+│                                   #   .csv; contrasts weak vs strong within each side and the ends vs the
+│                                   #   undetected middle within each class; per-box grids with the side x
+│                                   #   class medians (colour = class; solid dust-rich / dashed undetected /
+│                                   #   dotted no-dust) -> paper_ism_prediction_dusty_split_<box>.* and the
+│                                   #   summary figure (per box the side fractions per class; the AUC per
+│                                   #   predictor at each end) -> paper_ism_prediction_dusty_split_summary.*
+│                                   #   Part 9 = the X-RAY EXPOSURE after quenching from the same histories:
+│                                   #   E_x = int w_jet [f_gas < 0.2] dt from SFT to the anchor (the gated
+│                                   #   channel; duty f_x, gas-poor time T_gaspoor, jet weight while gas-poor
+│                                   #   r_x, ungated E_jet, the pre-SFT E_x, the gate's timing t_gate - t_SFT,
+│                                   #   the quenching sequence = f_gas at SFT below / above 0.2) ->
+│                                   #   ism_prediction_xray_exposure.csv, merged into Q / QM; the target is
+│                                   #   the dust-to-gas ratio (ldg; the gate is a gas cut) next to M_dust/M*
+│                                   #   (lfd, zero dust at P9_FLOOR): the exposure per class, the populations
+│                                   #   (first X-ray episode never / before SFT / in [SFT,QT] / after QT, the
+│                                   #   sequence x class -> ..._populations.csv), every quantity as a
+│                                   #   predictor (Spearman with both targets, overall and per class, AUC at
+│                                   #   the dust ends -> ..._predictors.csv), E_x / dt_SFT / T_gaspoor
+│                                   #   terciles x class (-> ..._stats.csv), contrasts (never-exposed vs
+│                                   #   exposed, the sequences per class), the figure (D/G vs E_x per class
+│                                   #   with the s50nox / s50noagn medians as the zero-exposure reference, vs
+│                                   #   time since SFT per onset population, vs T_gaspoor per r_x tercile,
+│                                   #   the rank correlations) -> paper_ism_prediction_xray_exposure.*
+│                                   #   Result: 98-100 % of the classified quenched galaxies are exposed and
+│                                   #   the D/G saturates within ~0.5 Gyr (-1.4 -> -3.5); the 39 never-
+│                                   #   exposed cis100 galaxies (1.3 %: undergrown BH, 90 % satellites) sit at
+│                                   #   the observed log M_dust/M* = -3.0 with kappa_gas 0.85 = the s50nox
+│                                   #   phenotype inside the fiducial box; among the exposed the first
+│                                   #   episode's timing and the sequence (gas-poor before SFT keeps 0.5 dex
+│                                   #   more D/G) set the dust, the class only modulates it (strong keeps
+│                                   #   0.15-0.5 dex more at fixed exposure; the m25 figure-G direction).
+│                                   #   Caveats: whole-galaxy (FOF) quantities, no sightlines; the
+│                                   #   gas-particle cut is a gas mass floor 8x higher in m100 / m50 than
+│                                   #   in m25; each variant's track is its OWN quenched population
+├── paper_xray_classes_m25.ipynb  # PAPER FIGURES under the X-RAY CLASSIFICATION: one ordered notebook of pure
+│                                   #   reads that rebuilds the figures of paper_figures_quenched_m25 (A) and
+│                                   #   paper_ism_prediction_boxes (B) under one official division of the
+│                                   #   quenched galaxies, XSCHEME (Part 0): "onset" (adopted 2026-08-30) = the
+│                                   #   TIMING OF THE FIRST X-RAY EPISODE of B Part 6a (t_onset = first history
+│                                   #   snapshot with x_coup = w_jet [f_gas < 0.2] >= 0.5, B Part 9 panels d-f):
+│                                   #   early = by QT (B's lead + concurrent merged, user 2026-08-30; XREF, the
+│                                   #   reference every other class is contrasted with), late = after QT, never
+│                                   #   = no episode by the anchor; no event -> no_event. "onset_sft" splits the
+│                                   #   same episode at SFT instead of QT: before (= B's lead) / after (=
+│                                   #   concurrent + late; XREF) / never; "onset4" keeps lead /
+│                                   #   concurrent apart; "rx" = the previous jet weight while gas-poor r_x =
+│                                   #   E_x / T_gaspoor cut at R_X_CUT (0.97 = B Part 9's cis25 tercile edge;
+│                                   #   0.5 the earlier tail) -> xlow / xhigh; the four-way onset label and the
+│                                   #   rx label are always in the table (onset_class, rx_class). Every section reads
+│                                   #   XCLASSES / XREF / XCOL / XNAME / XSHORT / XABBR, so the switch changes
+│                                   #   every figure (N classes: one column / line per class, Mann-Whitney per
+│                                   #   class vs XREF, stacked significance strips). Baseline = fast / slow
+│                                   #   quenchers, log10(tau_q / t_QT) < FAST_CUT = -1.25. Part 0 ->
+│                                   #   output/cis25/plots/paper_xray/xray_classes.csv (every galaxy of every
+│                                   #   classified anchor of cis100 / cis50 / cis25; the m25 sample = the cis25
+│                                   #   rows on (snap, gal_id): all 266 Q present) + counts / per-class medians
+│                                   #   / crosstabs (x fast-slow, x old class, x the other scheme). Sections: 1
+│                                   #   = A Parts 1b + 1c merged (paper_xray_feedback_tracks; columns fast/slow
+│                                   #   | the classes); 2 = A Part 3 at log M* > 10.25 (A_V terciles, a class
+│                                   #   column with < P3_SPLIT_MIN = 12 galaxies drawn unsplit) ->
+│                                   #   paper_xray_ks_av_bins_R50_H2 + .csv; 3 = A Part 4d (both mass samples,
+│                                   #   lines SF + the classes) -> paper_xray_radial_profiles_*; 4 = A Part 5
+│                                   #   figure B (mgt10p25, one all-A_V column) -> paper_xray_{kinematics,
+│                                   #   stellar,ism}_sequence_mgt10p25 + paper_xray_kappa_{sequence,intervals}
+│                                   #   .csv; 5 = B Part 9 rows 1-3 from the exposure table (D/G vs E_x, vs
+│                                   #   dt_SFT, vs T_gaspoor, the classes on every row, s50nox / s50noagn as
+│                                   #   the zero-exposure reference; class contrasts inside terciles of the
+│                                   #   two clocks) + THE EXPOSURE AS A DIAGNOSTIC INSIDE EACH CLASS (Spearman
+│                                   #   of E_x, f_x, r_x, T_gaspoor, dt_SFT, t_onset - t_SFT with log D/G and
+│                                   #   log f_d per box x class -> paper_xray_exposure_diagnostic.csv) ->
+│                                   #   paper_xray_dg_vs_exposure{.png,.pdf,.csv,_classes.csv}; 5b = B Part 2's
+│                                   #   figure-H grid per box + across the boxes, tracks per class + the small
+│                                   #   classes (<= G5_POINTS_MAX) as points -> paper_xray_ism_grid_*; 6 = the
+│                                   #   fiducial KS plane (all / one column per class, below / on / above B08
+│                                   #   counts of the track ends next to the observed ones) ->
+│                                   #   paper_xray_ks_fiducial_R50_H2 + .csv. Inputs: A's tables, ks_tracks_pt/
+│                                   #   {ks_tracks,ks_galaxies}.fits, ks_tracks/ks_stage_kinematics.fits, the
+│                                   #   boxes' catalogue cache + classes + exposure CSVs, obs_data/almac11; no
+│                                   #   simbanator, no HIST; palette = B Part 9's onset colours (lead #fdae61,
+│                                   #   concurrent #d7191c, late #2c7bb6, never black), onset_sft before
+│                                   #   #e66101 / after #5e3c99, rx xlow #d95f0e / xhigh #31688e, fast
+│                                   #   #7b3294 / slow #a6761d. Local results under "onset"
+│                                   #   (2026-08-30, the cluster caches copied), log M* > 10.25: cis100 early
+│                                   #   2694 / late 204 / never 39, median log D/G -3.41 / -2.60 / -1.75 (late
+│                                   #   and never vs early p < 1e-14); cis50 164 / 12 / 0, -3.26 / -2.99 (p
+│                                   #   0.7); cis25 144 / 12 / 4, -2.81 / -2.98 / -1.33 (late = early there).
+│                                   #   Inside early (onset4) lead is 0.5 dex dustier than concurrent at fixed
+│                                   #   dt_SFT in cis100 / cis50 but not in cis25; late's excess is the short
+│                                   #   elapsed time (cis100 T1 -2.18 vs -3.41, T2-T3 equal); late = 95-100 %
+│                                   #   fast quenchers, dt_SFT 0.44 Gyr. The diagnostic: inside cis100 late
+│                                   #   rho(E_x, D/G) = -0.60 (E_x is a clock there), inside early E_x is
+│                                   #   saturated (~1 Gyr, rho ~0) and only f_x / r_x carry -0.1 / -0.3; cis25
+│                                   #   early rho(E_x) -0.35, rho(r_x) -0.47. The 4 m25 never galaxies are the
+│                                   #   former xlow tail (core A_V 0.73 mag, M_dust/M* 2.5e-3 vs 2e-5). KS ends
+│                                   #   below B08: early 39 / late 42 / never 25 % vs observed 50 %. ISM grid
+│                                   #   cis100: the ALMA-C11 dust detections sit on the never track (+0.09
+│                                   #   dex), +0.75 above late, +1.7 above early. Under "onset_sft" (local,
+│                                   #   2026-08-30): cis100 before 1052 / after 1846 / never 39, log D/G -3.07
+│                                   #   / -3.56 / -1.75 (before vs after p 4e-35, 0.4-0.6 dex in every dt_SFT
+│                                   #   tercile); cis50 67 / 109, -2.98 / -3.47 (p 7e-4); cis25 47 / 109 / 4,
+│                                   #   -2.78 / -2.84 / -1.33 (p = 1; core A_V 0.083 vs 0.089 mag) -- before =
+│                                   #   100 % jet lead, w_pre 0.46 vs 0.18, older / lower-sSFR cores at SFT,
+│                                   #   ~ the m25 strong pre-SFT coupling class; diagnostic inside cis25 after
+│                                   #   rho(E_x, D/G) = -0.48, inside before only f_x / r_x (-0.43 / -0.54).
+│                                   #   Deployed 2026-08-30 (fourth version, onset_sft switch added, default
+│                                   #   still "onset"); not yet run on the cluster.
 ├── obs_data/almac11/               # observed tables the cluster notebooks read (ks_table.csv: KS
 │                                   #   placement; almac11_gas_dust.csv: dust / CO detections + fiducial
 │                                   #   CIGALE age, M*, M_dust, logDGR; age_sersic_sigma.csv: optical
