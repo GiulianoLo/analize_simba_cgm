@@ -557,7 +557,20 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   two clocks) + THE EXPOSURE AS A DIAGNOSTIC INSIDE EACH CLASS (Spearman
 │                                   #   of E_x, f_x, r_x, T_gaspoor, dt_SFT, t_onset - t_SFT with log D/G and
 │                                   #   log f_d per box x class -> paper_xray_exposure_diagnostic.csv) ->
-│                                   #   paper_xray_dg_vs_exposure{.png,.pdf,.csv,_classes.csv}; 5b = B Part 2's
+│                                   #   paper_xray_dg_vs_exposure{.png,.pdf,.csv,_classes.csv} + THE
+│                                   #   DUSTY TAIL PER CLASS (unit-area distributions of M_dust/M* and
+│                                   #   M_dust/M_gas per class, the class shares of the whole box
+│                                   #   against the shares above the threshold -4 / -2.5, hypergeometric
+│                                   #   P of the tail count -> paper_xray_dust_distributions +
+│                                   #   _dust_tail_composition.csv, the cell placed after the ISM grid);
+│                                   #   5c (after the tail cell) = THE COUPLING x ONSET CROSS (the weak /
+│                                   #   strong division of B 6a x the X-ray classes: tail fraction + share
+│                                   #   per cell, hypergeometric P, stratified Fisher / MW in both
+│                                   #   directions, AUC of E_x / f_x / T_gaspoor / onset lead / w_pre / age
+│                                   #   for tail membership, the tail split at age 2 Gyr — young under-dosed
+│                                   #   vs old fully-dosed; figure: tail fraction per coupling x onset cell
+│                                   #   + the dose-age plane -> paper_xray_coupling_onset{.png,.pdf,.csv});
+│                                   #   5b = B Part 2's
 │                                   #   figure-H grid per box + across the boxes, tracks per class + the small
 │                                   #   classes (<= G5_POINTS_MAX) as points -> paper_xray_ism_grid_*; 6 = the
 │                                   #   fiducial KS plane (all / one column per class, below / on / above B08
@@ -591,8 +604,18 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   100 % jet lead, w_pre 0.46 vs 0.18, older / lower-sSFR cores at SFT,
 │                                   #   ~ the m25 strong pre-SFT coupling class; diagnostic inside cis25 after
 │                                   #   rho(E_x, D/G) = -0.48, inside before only f_x / r_x (-0.43 / -0.54).
-│                                   #   Deployed 2026-08-30 (fourth version, onset_sft switch added, default
-│                                   #   still "onset"); not yet run on the cluster.
+│                                   #   The dusty tail (distribution figure): the cis100 tail above
+│                                   #   M_dust/M* -4 (20 % of the box) is tilted to late (18 % of the
+│                                   #   tail vs 7 % of the box, P 4e-27) and never (7 vs 1 %, P 3e-28;
+│                                   #   early falls 92 -> 75 %); the cis25 tail matches the box shares
+│                                   #   (early 88 vs 90 %; onset_sft before 27 vs 29 %) except its 4
+│                                   #   never galaxies (all above -4, 7 vs 2 %, P 0.01); cis50 under
+│                                   #   onset_sft tilts to before (54 % of the tail vs 38 % of the box,
+│                                   #   P 0.07; above D/G -2.5 58 vs 38 %, P 0.01).
+│                                   #   Deployed 2026-08-30 late evening (fifth version: onset_sft switch
+│                                   #   + the Section 5 dusty-tail distributions; default "onset"). The
+│                                   #   user ran the fourth version on the cluster under both schemes
+│                                   #   (a _new copy for "onset", since removed: one notebook again).
 ├── obs_data/almac11/               # observed tables the cluster notebooks read (ks_table.csv: KS
 │                                   #   placement; almac11_gas_dust.csv: dust / CO detections + fiducial
 │                                   #   CIGALE age, M*, M_dust, logDGR; age_sersic_sigma.csv: optical
