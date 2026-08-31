@@ -447,7 +447,10 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   channel is what removes the dust (s50 jet -4.7 vs s50nox jet -3.1),
 │                                   #   every dust-rich population is 0.4 dex under the observed H2.
 │                                   #   Part 6 = the m25 AGN COUPLING CLASSES for the other boxes: main-
-│                                   #   branch histories of mstar / sfr / mgas / mbh / bh_fedd from the
+│                                   #   branch histories of mstar / sfr / mgas / mbh / bh_fedd (+ mdust /
+│                                   #   zgas since 2026-08-31: masses.dust + metallicities.mass_weighted;
+│                                   #   a pre-mdust cache fills the new keys NaN — rm ism_prediction_
+│                                   #   histories_*.hdf5 + re-run Part 6 for the dust tracks) from the
 │                                   #   in-catalogue trees (cis25: the progen_links sidecars) for every
 │                                   #   anchor whose catalogue ladder END_SNAP..anchor is on disk (one pass,
 │                                   #   each catalogue read once -> ism_prediction_histories_<box>.hdf5),
@@ -666,6 +669,17 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   for tail membership, the tail split at age 2 Gyr — young under-dosed
 │                                   #   vs old fully-dosed; figure: tail fraction per coupling x onset cell
 │                                   #   + the dose-age plane -> paper_xray_coupling_onset{.png,.pdf,.csv});
+│                                   #   5d (after 5c) = THE SURVIVOR TEST of the old fully-dosed tail (age
+│                                   #   >= 2 Gyr, E_x >= 1 Gyr: tail vs control at fixed dose + age, the
+│                                   #   5c puzzle): x_coup(t) rebuilt per galaxy from B's histories (gate
+│                                   #   verbatim), duty-cycle anatomy (t_since_x, f_x_late, gap_max,
+│                                   #   n_epi), gas re-accretion (regas = log mgas_anchor / min mgas
+│                                   #   post-SFT, t_regas) and the shielding proxies (gate_at_sft, w_pre,
+│                                   #   e_x_pre, lag_gate), AUC / MW per mechanism + the centrals-only
+│                                   #   repeat (satellite chain inheritance); once B's histories carry
+│                                   #   mdust (Part 6 HIST_COLS + rebuild) the cell auto-adds the direct
+│                                   #   SURVIVOR / REGROWER split (net_lfd vs rebound_lfd at 0.5 dex) and
+│                                   #   the dust-route panel -> paper_xray_survivor_anatomy{.png,.pdf,.csv};
 │                                   #   5e (after 5c / the 5d survivor cell) = THE SPECIFICITY OF THE 5c AUC
 │                                   #   TEST (every catalogue
 │                                   #   property scored for the dusty tail in blocks dose / kinematics /
