@@ -620,6 +620,25 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   not on the measurement. s50nox itself has no
 │                                   #   histories (ladder not on the share; once downloaded the
 │                                   #   boxes notebook Part 6a builds them)
+│                                   #   Part 6 = the RESILIENT SURVIVORS (P6_AGE 2 Gyr, P6_DOSE E_x >=
+│                                   #   1 Gyr, P6_TAIL log f_dust >= -4: the X-ray notebook's 5c/5d old
+│                                   #   fully-dosed dusty tail) taken as a POPULATION, not a mechanism
+│                                   #   hunt: placed on f_dust-age, f_H2-age, D/G-sSFR and kappa_gas x
+│                                   #   Sigma_e (Part 4's plane, its rule drawn), vs the destroyed
+│                                   #   control (same age + dose, dust-poor), the young under-dosed
+│                                   #   dusty tail and the nox cloud in every panel; per-axis AUC
+│                                   #   contrasts, the Part 2 nox-analogue share and what the Part 4
+│                                   #   rule catches per group -> noxray_resilient_planes.{png,pdf} +
+│                                   #   noxray_resilient_contrasts.csv. Part 7 = the m25 CLOSE-UP of
+│                                   #   resilient vs destroyed (the only box with resolved kappa_gas /
+│                                   #   ISM): (A) log f_dust / f_gas / sSFR histories on the t - t_SFT
+│                                   #   clock (histories hdf5; the dust leg once the mdust rebuild
+│                                   #   ran), (B) radial f_dust / f_gas / f_H2 / age per annulus (m25
+│                                   #   8a/7e tables, sightline medians, bootstrap bands), (C) the K-S
+│                                   #   plane at R50_H2 (KS 'pt' tracks: sft -> qt -> end, end regions
+│                                   #   vs B08) -> noxray_resilient_m25_{histories,profiles,ks}.
+│                                   #   {png,pdf} + noxray_resilient_m25.csv; each block gates on its
+│                                   #   product file (cluster)
 ├── paper_xray_classes_m25.ipynb  # PAPER FIGURES under the X-RAY CLASSIFICATION: one ordered notebook of pure
 │                                   #   reads that rebuilds the figures of paper_figures_quenched_m25 (A) and
 │                                   #   paper_ism_prediction_boxes (B) under one official division of the
