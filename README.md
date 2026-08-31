@@ -521,6 +521,99 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   Caveats: whole-galaxy (FOF) quantities, no sightlines; the
 │                                   #   gas-particle cut is a gas mass floor 8x higher in m100 / m50 than
 │                                   #   in m25; each variant's track is its OWN quenched population
+├── noxray_analogues.ipynb      # the NO-X-RAY run vs the fiducial one and the nox ANALOGUES: pure
+│                                   #   reads of the ism_prediction products (catalogue cache, Part 6a
+│                                   #   classes, Part 9 exposures - nothing here opens a catalogue);
+│                                   #   outputs -> output/box_resolution/noxray_analogues/. Part 1 =
+│                                   #   s50nox vs s50 (same box, resolution and selection): per-quantity
+│                                   #   medians + Mann-Whitney / AUC, the disc-verdict fractions
+│                                   #   (DISC_KAPPA 0.5, old, extended = above the fiducial size relation
+│                                   #   fit with a log(1+z) term, Fisher p) and 213 mass- and anchor-
+│                                   #   matched pairs (MATCH_DM 0.2, Wilcoxon) ->
+│                                   #   noxray_analogues_populations.{png,pdf,csv}. Result: the nox QG is
+│                                   #   OLD (4.1 vs 2.0 Gyr), GAS-rotating (kappa_gas 0.77 vs 0.35; 87 vs
+│                                   #   37 % gas discs), 30x dustier (log f_dust -3.1 vs -4.7), more
+│                                   #   massive and lower-z, but NOT a stellar-spin disc (kappa_star 0.30
+│                                   #   vs 0.33) and NOT extended at fixed M* and z (dlre ~ 0: the raw
+│                                   #   R_e excess is mass + epoch) and 0.4 dex GAS-POORER; the matched
+│                                   #   pairs keep age +0.7, kappa_gas +0.3, dust +1.4 dex. Part 2 = the
+│                                   #   Mahalanobis match: FEATURES = age + log M_dust/M* ONLY (the
+│                                   #   cheap observable pair; the structural set of the first version
+│                                   #   is listed in the cell), an ANALOGUE = a quenched galaxy of
+│                                   #   ANALOG_BOXES (cis50 / cis100 / cis25) within the nox cloud's own
+│                                   #   ANALOG_Q (0.90) D^2 quantile -> noxray_analogues_match
+│                                   #   {,_medians}.csv + figure. Result: 12.1 % of s50 (43), 11.3 % of
+│                                   #   m100 (381), 10.1 % of m25 (18) are (age, f_dust) analogues;
+│                                   #   reverse containment 34 vs 12 %. Part 2b = PART 1 ON THE
+│                                   #   ANALOGUES (everything the match did not see is a PREDICTION):
+│                                   #   contrasts vs the nox population itself + CDF grid ->
+│                                   #   noxray_analogues_analogue_populations.{png,pdf,csv}, and the
+│                                   #   (age, log f_dust) plane coloured by the DUST-TO-GAS ratio ->
+│                                   #   noxray_analogues_dgr_plane.*. Result: the (age, f_dust)-selected
+│                                   #   analogues are NOT the nox phenotype - younger (AUC 0.22-0.38),
+│                                   #   0.3-0.4 dex gas-richer (AUC 0.75-0.86) and 0.5-0.6 dex LOWER in
+│                                   #   D/G (AUC 0.11-0.14): dust-rich because gas-rich, not unscoured
+│                                   #   survivors; their kappa_gas is ~0.5 vs the nox 0.77 in m50 /
+│                                   #   m100 (m25's 18 do reach 0.83). Part 3 = the AGN history of the
+│                                   #   analogues vs the rest (w_pre / class, onset, exposure, BH +
+│                                   #   environment; Fisher / MW / AUC; chain check: satellite most-
+│                                   #   massive-progenitor chains inherit the central's M_BH / f_Edd /
+│                                   #   f_gas -> w_pre / E_x = upper limits, exposure contrasts repeated
+│                                   #   on centrals / satellites) -> noxray_analogues_agnhistory
+│                                   #   .{png,pdf,csv}. Result (m100, 381): the coupling class does NOT
+│                                   #   make them (weak 45 vs 57 %: they lean STRONG, p 9e-5; w_pre AUC
+│                                   #   0.56) - what separates them is the DOSE: never-exposed 14 vs
+│                                   #   0 %, duty f_x 0.66 vs 0.89 (AUC 0.28; satellites 0.39 vs 0.88),
+│                                   #   BH-not-grown 33 vs 1 %, late onset 18 vs 6 % -> UNDER-EXPOSED,
+│                                   #   not weakly coupled (cis25 the same: f_x AUC 0.16). Part 4 =
+│                                   #   SELECTING DUSTY QGs IN REAL LIFE (kappa_gas vs Sigma_e;
+│                                   #   DUSTY_CUT -3.5): AUC of every structural quantity for dust-rich
+│                                   #   membership, the F1-best two-cut rule kappa_gas >= a & log
+│                                   #   Sigma_e <= s (completeness / purity vs the base rate) + the
+│                                   #   one-cut gas-disc rule, the plane coloured by log f_dust with
+│                                   #   s50nox as the reference panel -> noxray_analogues_structure
+│                                   #   .{png,pdf,csv}. Result: in m100 / m50 the plane is weak
+│                                   #   (kappa_gas AUC 0.53-0.55, purity ~20 vs 15 % base - the coarse
+│                                   #   gas washes it out); in the resolved m25 box kappa_gas works
+│                                   #   (AUC 0.69, rule purity 35 vs 12 % base; sSFR AUC 0.73): gas
+│                                   #   rotation selects dusty QGs where the gas is resolved. Part 5 =
+│                                   #   WHY ONLY m25 - resolution, statistics, or the BH? catalogue
+│                                   #   tests -> noxray_analogues_resolution_tests.{png,pdf,csv}:
+│                                   #   (a) statistics EXCLUDED - 2000 pseudo-m25 samples drawn from
+│                                   #   m100 (per-anchor |dlog M*| <= 0.2 twins) give AUC 0.52
+│                                   #   (0.47-0.58), P(>= m25's 0.69) = 0.001; (b) matched M_gas
+│                                   #   [m100 floor, 3e9) - same reservoirs, 8x the particles in m25:
+│                                   #   AUCs converge (m25 0.61, m100 0.60) so part of the box gap is
+│                                   #   WHICH reservoirs each selection keeps; (c) the BH mix EXCLUDED
+│                                   #   - the AUC inside M_BH strata stays (m25 weighted 0.64, m100
+│                                   #   0.50); (e) the sign flip (dusty - rest median kappa_gas +0.18
+│                                   #   in m25 vs -0.03 / -0.07 in m100 / m50) - pure estimator noise
+│                                   #   cannot reverse a sign, pointing at a physically different
+│                                   #   dusty population in the coarse boxes (the Part 2b gas-rich
+│                                   #   passers-through). Part 5b = the DEGRADATION EXPERIMENT (the
+│                                   #   remaining channel, the estimator): kappa_gas of every cis25
+│                                   #   sample galaxy recomputed (Sales+10, member gas of the m25
+│                                   #   reduced particle files output/cis25/reduced_particles/, all
+│                                   #   178 covered; full-N value validated against the catalogue
+│                                   #   kappa in the printout) then resampled to n100 = member gas
+│                                   #   mass / 1.82e7 = the particle count m100 would give the SAME
+│                                   #   reservoir (under-floor n100 < 21 galaxies flagged: not even
+│                                   #   in the m100 selection), P5B_NREAL 200 realisations -> the AUC
+│                                   #   at m100 sampling with and without the m100 selection, vs the
+│                                   #   full-N and the observed m100 AUC ->
+│                                   #   noxray_analogues_kappa_degraded.{png,pdf,csv}; needs the
+│                                   #   reduced files (cluster; skipped cleanly elsewhere,
+│                                   #   NOX_P5B_LIMIT caps a smoke test). Result (full 178, validation
+│                                   #   corr 0.95, median |diff| 0.025; median n100 = 66 vs 259
+│                                   #   member): degraded AUC 0.709 (0.691-0.728) vs full-N 0.717 -
+│                                   #   sampling noise closes ~1 % of the m25 -> m100 gap: the
+│                                   #   ESTIMATOR IS NOT THE BOTTLENECK, kappa_rot is stable at ~66
+│                                   #   particles; the coarse boxes fail because their dusty QGs are
+│                                   #   a physically different population (the sign flip + Part 2b),
+│                                   #   i.e. resolution acts on the ISM physics / who quenches dusty,
+│                                   #   not on the measurement. s50nox itself has no
+│                                   #   histories (ladder not on the share; once downloaded the
+│                                   #   boxes notebook Part 6a builds them)
 ├── paper_xray_classes_m25.ipynb  # PAPER FIGURES under the X-RAY CLASSIFICATION: one ordered notebook of pure
 │                                   #   reads that rebuilds the figures of paper_figures_quenched_m25 (A) and
 │                                   #   paper_ism_prediction_boxes (B) under one official division of the
