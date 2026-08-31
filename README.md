@@ -493,7 +493,10 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   dotted no-dust) -> paper_ism_prediction_dusty_split_<box>.* and the
 │                                   #   summary figure (per box the side fractions per class; the AUC per
 │                                   #   predictor at each end) -> paper_ism_prediction_dusty_split_summary.*
-│                                   #   Part 9 = the X-RAY EXPOSURE after quenching from the same histories:
+│                                   #   Part 9 = the X-RAY EXPOSURE after quenching from the same histories
+│                                   #   (P9_BOXES now also lists cis50nox, gated on its histories file: the
+│                                   #   would-be dose of the channel-off run once its catalogue ladder is
+│                                   #   downloaded and Part 6a builds it):
 │                                   #   E_x = int w_jet [f_gas < 0.2] dt from SFT to the anchor (the gated
 │                                   #   channel; duty f_x, gas-poor time T_gaspoor, jet weight while gas-poor
 │                                   #   r_x, ungated E_jet, the pre-SFT E_x, the gate's timing t_gate - t_SFT,
@@ -663,6 +666,19 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   for tail membership, the tail split at age 2 Gyr — young under-dosed
 │                                   #   vs old fully-dosed; figure: tail fraction per coupling x onset cell
 │                                   #   + the dose-age plane -> paper_xray_coupling_onset{.png,.pdf,.csv});
+│                                   #   5e (after 5c / the 5d survivor cell) = THE SPECIFICITY OF THE 5c AUC
+│                                   #   TEST (every catalogue
+│                                   #   property scored for the dusty tail in blocks dose / kinematics /
+│                                   #   structure / BH / population / gas + a drawn random control; raw AUC
+│                                   #   and AUC inside the (age, log M*) quantile cells with a within-cell
+│                                   #   label-permutation p, hand-rolled Benjamini-Hochberg FDR per box —
+│                                   #   what survives at fixed age + mass; s50nox / s50noagn run the same
+│                                   #   battery as channel-off controls, their dose rows fill with the
+│                                   #   would-be dose once B builds the nox histories ->
+│                                   #   paper_xray_auc_battery{.png,.pdf,.csv}); the nox run also joins the
+│                                   #   Section 5 dust distributions as a full outline histogram (not only
+│                                   #   the median line) and the 5b grids as its own all-quenched dashed
+│                                   #   track (NOX_BOX);
 │                                   #   5b = B Part 2's
 │                                   #   figure-H grid per box + across the boxes, tracks per class + the small
 │                                   #   classes (<= G5_POINTS_MAX) as points -> paper_xray_ism_grid_*; 6 = the
