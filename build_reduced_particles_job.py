@@ -22,7 +22,7 @@ build_profiles_job.py) it writes ONE lean HDF5 per galaxy:
     attrs : sim_name, snap, gx, redshift, a, hub, rmax_kpc,
             center_kpc(3), evecs(3,3)              # stellar principal frame, for face-on projection
     gas/  : idx(n) [GLOBAL snapshot index], pos(n,3) [kpc, RELATIVE to centre],
-            m_gas, m_dust, m_HI, m_H2, sfr, temp [Msun, Msun/yr, K], member(bool),
+            m_gas, m_dust, m_HI, m_H2, sfr, temp [Msun, Msun/yr, K], nh [cm^-3], zgas (mass fraction), member(bool),
             vel(n,3) [km/s peculiar = snapshot Velocities x sqrt(a); NaN if absent]
     star/ : idx(m), pos(m,3) [kpc, relative], m_star [Msun], member(bool),
             tform [scale factor a_form = PartType4/StellarFormationTime; NaN if absent],
@@ -49,7 +49,8 @@ Extraction is split into two passes:
 To add a field later: add a producer to the registry (with its dependency tag) and add its name to
 ``GAS_FIELDS`` / ``STAR_FIELDS``; re-run the job. Files missing it get *only that dataset* appended
 (catalog-only fields don't even open the snapshot). History of such additions: ``tform`` (2026-08-27),
-``vel`` (2026-08-28) — every reduced file built before them (any plan, cis25 and cis100 alike) is
+``vel`` (2026-08-28), ``nh`` and ``zgas`` (2026-09-02: the gas density
+and metallicity behind the sputtering and grain-growth timescales) — every reduced file built before them (any plan, cis25 and cis100 alike) is
 "partial" and is completed the next time ITS plan is submitted. Files missing ``idx``/``pos`` (or absent/corrupt)
 fall back to a full geometry rebuild. ``REDUCED_OVERWRITE=1`` forces a full rebuild of everything.
 Files are stamped with the HI/H2 split they were built with (attr ``h2_recipe`` = build_profiles_job
@@ -98,7 +99,7 @@ OVERWRITE = int(os.environ.get("REDUCED_OVERWRITE", 0)) == 1
 # Written by the geometry pass (never backfillable — defines the particle set):
 GEOM_DS = ("idx", "pos")
 # Per-particle fields produced from `idx` (order here = write order in a fresh file):
-GAS_FIELDS = ("m_gas", "m_dust", "m_HI", "m_H2", "sfr", "temp", "member", "vel")
+GAS_FIELDS = ("m_gas", "m_dust", "m_HI", "m_H2", "sfr", "temp", "nh", "zgas", "member", "vel")
 STAR_FIELDS = ("m_star", "member", "tform", "vel")
 _DEP_SNAP, _DEP_CAT = "snapshot", "catalog"       # what a producer needs to run
 
@@ -216,6 +217,32 @@ def _gas_temp(ctx, idx):
     return {"temp": T.astype(np.float32)}
 
 
+def _gas_nh(ctx, idx):
+    """Hydrogen number density [cm^-3] — build_profiles_job._nH, the caesar recipe (physical rho * XH / m_p),
+    so the gas mass density is rho = nh * m_p / XH_CAESAR exactly.
+    Added 2026-09-02 for the THERMAL SPUTTERING measurement: SIMBA destroys dust with
+    tau_sp = 0.17 Gyr (a/0.1um) (1e-27 / rho) [(2e6 K / T)^2.5 + 1]  (Tsai & Mathews 95; Li, Narayanan & Dave 19),
+    and the reduced files already carried `temp` — the density was the only missing ingredient. It BACKFILLS:
+    re-running the plan appends ONLY this dataset to existing files (no geometry redo, one snapshot column)."""
+    fld = ctx.fld
+    if not fld.get("rho"):
+        return {"nh": np.full(len(idx), np.nan, np.float32)}
+    return {"nh": _nH(np.asarray(ctx.take("gas", fld["rho"], idx), np.float64), ctx.a, ctx.hub).astype(np.float32)}
+
+
+def _gas_zgas(ctx, idx):
+    """Total gas metal mass fraction Z (SIMBA's ``Metallicity`` column 0; the 11-column array is
+    [total, He, C, N, O, Ne, Mg, Si, S, Ca, Fe]).
+    Added 2026-09-02 beside `nh` for the GRAIN-GROWTH timescale: dust accretes onto grains at a rate
+    proportional to rho * Z (tau_acc ∝ 1 / (rho Z)), the term that competes with thermal sputtering, so the
+    two halves of SIMBA's dust budget can be measured on the same particles."""
+    fld = ctx.fld
+    if not fld.get("Z"):
+        return {"zgas": np.full(len(idx), np.nan, np.float32)}
+    Z = np.asarray(ctx.take("gas", fld["Z"], idx), np.float64)
+    return {"zgas": (Z[:, 0] if Z.ndim == 2 else Z).astype(np.float32)}
+
+
 def _gas_member(ctx, idx):
     gml = np.unique(np.asarray(ctx.gal.glist, dtype=np.int64))
     return {"member": np.isin(idx, gml)}
@@ -262,6 +289,8 @@ GAS_PRODUCERS = [
     (("m_gas", "m_dust", "m_HI", "m_H2"), _DEP_SNAP, _gas_components),
     (("sfr",),    _DEP_SNAP, _gas_sfr),
     (("temp",),   _DEP_SNAP, _gas_temp),
+    (("nh",),     _DEP_SNAP, _gas_nh),
+    (("zgas",),   _DEP_SNAP, _gas_zgas),
     (("member",), _DEP_CAT,  _gas_member),
     (("vel",),    _DEP_SNAP, _gas_vel),
 ]
