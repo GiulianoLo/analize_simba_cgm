@@ -287,7 +287,7 @@ def test_load_reduced_missing_and_corrupt(tmp_path):
 # ── critical epochs with the REAL quenching finder (loaded standalone: numpy/scipy only) ─────────
 def _load_quenching():
     spec = importlib.util.spec_from_file_location(
-        "simbanator_quenching_standalone", os.path.join(ROOT, "simbanator", "analysis", "quenching.py"))
+        "simbanator_quenching_standalone", os.path.join(ROOT, "simbanator", "histories", "events.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod.find_quenching_times

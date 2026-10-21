@@ -1,0 +1,868 @@
+"""Powderday SED generation wrapper.
+
+Requires optional heavy dependencies: ``hyperion``, ``caesar``.
+Install with ``pip install simbanator[full]``.
+"""
+import warnings
+import sys
+import os
+import csv
+import numpy as np
+import h5py
+import subprocess
+from shutil import copyfile
+from collections import defaultdict
+
+import caesar
+import json
+import matplotlib
+matplotlib.use('Agg')
+
+import matplotlib.pyplot as plt
+from hyperion.model import ModelOutput
+from astropy.cosmology import Planck13
+from astropy import units as u
+from astropy import constants
+from astropy.table import Table
+from astropy.table import vstack
+
+from simbanator.photometry.fluxes import flux_extraction, get_svo_filters, load_local_filters
+
+# Powderday parameter masters and cluster setup scripts live next to this module.
+MASTERS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'masters')
+
+def _sed_to_mJy(wav_raw, flux_raw, z, apply_redshift=False):
+    """Convert raw Powderday SED arrays to observed-frame (wav, flux) astropy Quantities."""
+    wav = np.asarray(wav_raw) * u.micron
+    if apply_redshift:
+        wav = wav * (1. + z)
+    flux = np.asarray(flux_raw) * u.erg / u.s
+    dl = Planck13.luminosity_distance(z).to(u.cm)
+    flux /= (4. * np.pi * dl ** 2)
+    nu = (constants.c.cgs / wav.to(u.cm)).to(u.Hz)
+    return wav, (flux / nu).to(u.mJy)
+
+
+def _read_sed(rtout_path, aperture=-1, uncertainties=True):
+    """Read one .rtout.sed -> (wav_raw, flux_raw, unc_raw|None) at a given aperture index.
+
+    `aperture` is the Hyperion aperture index (0-based; -1 = largest/total).
+    Tries the Monte-Carlo `uncertainties=True` read first; Hyperion versions or runs
+    without stored uncertainties fall back to a plain read with unc=None (the caller
+    then writes NaN errors rather than failing the whole extraction).
+    """
+    m = ModelOutput(rtout_path)
+    if uncertainties:
+        try:
+            out = m.get_sed(inclination='all', aperture=aperture, uncertainties=True)
+            # hyperion >= 0.9 returns an SED object (no __len__); its __iter__
+            # yields (wav, val, unc) when uncertainties are stored, (wav, val) otherwise
+            out = tuple(out)
+            if len(out) == 3:
+                return out[0], out[1], out[2]
+        except Exception as e:
+            warnings.warn(f"[SED uncertainties unavailable] {rtout_path} -> {e}; "
+                          f"falling back to flux-only read (errors will be NaN)")
+    wav_raw, flux_raw = m.get_sed(inclination='all', aperture=aperture)
+    return wav_raw, flux_raw, None
+
+
+def list_sed_apertures(rtout_path):
+    """QC helper: report the SED aperture layout stored in a .rtout.sed.
+
+    Returns a dict with, per peeled group, the raw `seds` dataset shape and every
+    dataset/group attribute Hyperion stored (ap_min/ap_max/n_ap live here in most
+    versions). Use it after the first RT run to confirm the powderday aperture
+    patch took effect and to map aperture index -> physical radius.
+    """
+    info = {}
+    with h5py.File(rtout_path, 'r') as f:
+        if 'Peeled' not in f:
+            return info
+        for gname, g in f['Peeled'].items():
+            entry = {'group_attrs': {k: g.attrs[k] for k in g.attrs}}
+            if 'seds' in g:
+                entry['seds_shape'] = g['seds'].shape
+                entry['seds_attrs'] = {k: g['seds'].attrs[k] for k in g['seds'].attrs}
+            info[gname] = entry
+    return info
+
+
+def read_selection_centers(selection_h5):
+    """RT-grid centres from a Stage-1 selection HDF5 -> {(snap, gal_id): xyz}.
+
+    Reads the ``code_coods`` (code units) that ``MakeSED.selection_gals``
+    stored per snapshot group — the EXACT grid centres the RT jobs used, so
+    any projected-aperture measurement built on them matches the peeled SEDs.
+
+    Returns an empty dict if the file does not exist (caller decides the
+    fallback, e.g. caesar positions — identical values by construction).
+    """
+    centers = {}
+    if not os.path.exists(selection_h5):
+        return centers
+    with h5py.File(selection_h5, "r") as f:
+        for grp in f:
+            snap = int(grp[4:])                        # groups: 'snap<NNN>'
+            for g, pos in zip(f[grp]["galaxy_GroupID"][:],
+                              f[grp]["code_coods"][:]):
+                centers[(snap, int(g))] = np.asarray(pos, float)
+    return centers
+
+
+def flatten_results(results, snap, gal):
+    rows = []
+
+    for fac in results:
+        for inst in results[fac]:
+            for f in results[fac][inst]:
+                entry = results[fac][inst][f]
+
+                rows.append({
+                    'snap': snap,
+                    'gal': gal,
+                    'facility': fac,
+                    'instrument': inst,
+                    'filter': f,
+                    'xmean': entry['xmean'],
+                    'mJy': entry['mJy'],
+                    'mag': entry['mag'],
+                    'mJy_err': entry.get('mJy_err', np.nan),
+                    'mag_err': entry.get('mag_err', np.nan),
+                })
+
+    return rows
+
+
+
+class MakeSED:
+    """Create and run Powderday SED models for selected galaxies.
+
+    Parameters
+    ----------
+    sb : :class:`~simbanator.io.simba.Simba`
+        Simba path manager.
+    nnodes : int
+        Number of compute nodes.
+    model_run_name : str
+        Name tag for the model run.
+    hydro_dir_base : str
+        Base directory for simulation particle files.
+    selection_file : str
+        Name of the HDF5 file with target galaxy info.
+    COSMOFLAG : int
+        Cosmological simulation flag (0 or 1).
+    output_dir : str, optional
+        Base output directory for SED products.
+    run_tag : str, optional
+        Subfolder label used to separate different runs (e.g., dust/no-dust).
+        If None, ``model_run_name`` is used.
+    """
+
+    def __init__(self, sb, nnodes, model_run_name, hydro_dir_base,
+                 selection_file, COSMOFLAG=0, output_dir=None,
+                 run_tag=None):
+        self.sb = sb
+        self.nnodes = nnodes
+        self.model_run_name = model_run_name
+        self.COSMOFLAG = COSMOFLAG
+        self.hydro_dir_base = hydro_dir_base
+        self.selection_file = selection_file
+
+        if output_dir is None:
+            output_dir = os.path.join(os.getcwd(), 'output', sb.name, 'sed')
+        os.makedirs(output_dir, exist_ok=True)
+        self.output_dir = output_dir
+
+        if run_tag is None:
+            run_tag = model_run_name
+        run_tag = str(run_tag).strip()
+        if not run_tag:
+            raise ValueError("run_tag must be a non-empty string")
+        run_tag = run_tag.replace('/', '_').replace(' ', '_')
+        self.run_tag = run_tag
+
+        self.model_dir_base = os.path.join(output_dir, self.run_tag, 'powderday_sed_out')
+        os.makedirs(self.model_dir_base, exist_ok=True)
+
+    def selection_gals(self, snaps, galaxyID):
+        """Write galaxy selection info to an HDF5 file.
+
+        Parameters
+        ----------
+        snaps : list of int
+            Snapshot numbers, one per selected galaxy.
+        galaxyID : array-like of int
+            Galaxy GroupIDs to select, paired with *snaps*.
+        """
+        filepath = os.path.join(self.output_dir, self.run_tag, 'target_selection', self.selection_file + '.h5')
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+        if not os.path.exists(filepath):
+            with h5py.File(filepath, 'w') as hf:
+                pass
+
+        snaps = np.asarray(snaps, dtype=int)
+        galaxyID = np.asarray(galaxyID, dtype=int)
+
+        if snaps.shape != galaxyID.shape:
+            raise ValueError(
+                "snaps and galaxyID must have the same shape (pairwise mapping: snaps[i] -> galaxyID[i])."
+            )
+
+        grouped_ids = defaultdict(list)
+        for snap, gid in zip(snaps, galaxyID):
+            grouped_ids[int(snap)].append(int(gid))
+
+        data_dict = defaultdict(lambda: {
+            'galaxy_GroupID': [], 'halo_GroupID': [], 'code_coods': []
+        })
+
+        for snap, ids_for_snap in grouped_ids.items():
+            cs = self.sb.get_caesar(snap)
+            coods_code = np.array([g.pos.in_units('code_length').value for g in cs.galaxies])
+            hidx = np.array([g.parent_halo_index for g in cs.galaxies])
+            ids_for_snap = np.asarray(ids_for_snap, dtype=int)
+            data_dict[snap]['galaxy_GroupID'].extend(ids_for_snap)
+            data_dict[snap]['halo_GroupID'].extend(hidx[ids_for_snap])
+            data_dict[snap]['code_coods'].extend(coods_code[ids_for_snap])
+
+        current_groups = {f'snap{s:03}' for s in grouped_ids}
+        with h5py.File(filepath, 'a') as hf:
+            stale = [g for g in list(hf.keys()) if g not in current_groups]
+            for g in stale:
+                del hf[g]
+                warnings.warn(f"Removed stale selection group '{g}' not present in current snaps.")
+            for snap, data in data_dict.items():
+                grp = f'snap{snap:03}'
+                if grp in hf:
+                    del hf[grp]
+                hf.create_group(grp)
+                hf.create_dataset(f'{grp}/galaxy_GroupID', data=np.array(data['galaxy_GroupID']))
+                hf.create_dataset(f'{grp}/halo_GroupID', data=np.array(data['halo_GroupID']))
+                hf.create_dataset(f'{grp}/code_coods', data=np.array(data['code_coods']))
+                print(f'Written data for {grp}')
+
+    def _resolve_hydro_dir_for_snap(self, snap):
+        """Return the most likely filtered-particle directory for a snapshot.
+
+        Supports common layouts under ``hydro_dir_base`` such as:
+        - ``snap_XXX``
+        - ``XXX``
+        - ``snapXXX``
+        - ``snap_XXX`` with non-padded integer folder names
+        """
+        snap_i = int(snap)
+        snap3 = f"{snap_i:03d}"
+        candidates = [
+            os.path.join(self.hydro_dir_base, f'snap_{snap3}'),
+            os.path.join(self.hydro_dir_base, snap3),
+            os.path.join(self.hydro_dir_base, f'snap{snap3}'),
+            os.path.join(self.hydro_dir_base, str(snap_i)),
+            os.path.join(self.hydro_dir_base, f'snap_{snap_i}'),
+            os.path.join(self.hydro_dir_base, f'snap{snap_i}'),
+        ]
+        for path in candidates:
+            if os.path.isdir(path):
+                return path
+        return candidates[0]
+
+    def create_master(self, where, subset_type='plist', radius=None, max_parallel_snaps=2,
+                      galaxies_per_task=4, use_job_deps=False, partition='INTEL_HASWELL',
+                      cluster_setup_template=None, prefix=None, paramf='parameters_master.py', snaps_to_run=None):
+        """Generate Powderday parameter files and batch scripts.
+
+        Parameters
+        ----------
+        where : str
+            ``'local'`` or ``'cluster'``.
+        subset_type : str
+            Particle subset method: ``'plist'`` (particle list) or
+            ``'region'`` (spherical aperture).
+        radius : float, optional
+            Aperture radius (required when *subset_type* is ``'region'``).
+        max_parallel_snaps : int, optional
+            Maximum number of snapshot jobs to run concurrently on the cluster.
+            Default: 2. Set to None for unlimited.
+        galaxies_per_task : int, optional
+            Number of galaxies to process per parallel task within a job.
+            Default: 4. Increase for better parallelization, decrease to reduce
+            per-task memory usage.
+        use_job_deps : bool, optional
+            If True, chain jobs with SLURM dependencies so snapshots run sequentially.
+            If False (default), all jobs can run in parallel (up to max_parallel_snaps).
+        partition : str, optional
+            SLURM partition to submit jobs to. Default: 'INTEL_HASWELL'.
+        cluster_setup_template : str, optional
+            Path to the cluster setup shell script template. If None, defaults
+            to ``simbanator/rt/masters/cosmology_setup_all_cluster.cis.sh``.
+        prefix : str, optional
+            Optional filtered-file prefix used in snapshot naming (for example
+            ``m100n1024``), generating names like
+            ``snap_<prefix>_<snap3>_snap<snap>_gal<id>.h5``. If None, use
+            default local names (``subset_snap...`` / ``region_snap...``).
+
+        Notes
+        -----
+        This method only prepares files for later execution (e.g. via Slurm).
+        It does not execute Powderday jobs during setup.
+        """
+        if where not in {'local', 'cluster'}:
+            raise ValueError("where must be 'local' or 'cluster'")
+        if subset_type not in {'plist', 'region'}:
+            raise ValueError("subset_type must be 'plist' or 'region'")
+        if subset_type == 'region' and radius is None:
+            raise ValueError("radius is required when subset_type='region'")
+        if where == 'cluster' and max_parallel_snaps is not None and max_parallel_snaps < 1:
+            raise ValueError("max_parallel_snaps must be >= 1 or None")
+        if prefix is not None:
+            prefix = str(prefix).strip()
+            if not prefix:
+                raise ValueError("prefix must be a non-empty string when provided")
+
+        filepath = os.path.join(self.output_dir, self.run_tag, 'target_selection', self.selection_file + '.h5')
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"Selection file not found: {filepath}")
+
+        # A bare file name resolves inside MASTERS_DIR; a path is used as given.
+        paramfile = paramf if os.path.dirname(paramf) else os.path.join(MASTERS_DIR, paramf)
+        if not os.path.exists(paramfile):
+            raise FileNotFoundError(f"Parameter master not found: {paramfile}")
+        if cluster_setup_template is None:
+            cluster_setup_template = os.path.join(MASTERS_DIR, 'cosmology_setup_all_cluster.cis.sh')
+        if where == 'cluster' and not os.path.exists(cluster_setup_template):
+            raise FileNotFoundError(
+                f"Cluster setup template not found: {cluster_setup_template}"
+            )
+        cluster_job_files = []
+        local_run_files = []
+
+        with h5py.File(filepath, 'r') as hf:
+            all_snaps = sorted([int(s[4:]) for s in hf.keys()])
+            if snaps_to_run is not None:
+                snaps = [s for s in all_snaps if s in np.atleast_1d(snaps_to_run)]
+            else:
+                snaps = all_snaps
+
+            for snap in snaps:
+                ids = hf[f'snap{snap:03}/galaxy_GroupID'][:]
+                hidx = hf[f'snap{snap:03}/halo_GroupID'][:]
+                pos = hf[f'snap{snap:03}/code_coods'][:]
+
+                hydro_dir = self._resolve_hydro_dir_for_snap(snap)
+                model_dir = os.path.join(self.model_dir_base, f'snap_{snap:03}')
+                os.makedirs(model_dir, exist_ok=True)
+                os.makedirs(os.path.join(model_dir, 'out'), exist_ok=True)
+                os.makedirs(os.path.join(model_dir, 'err'), exist_ok=True)
+
+                if not os.path.isdir(hydro_dir):
+                    warnings.warn(
+                        f"Filtered snapshot folder not found for snap {snap:03d} "
+                        f"(looked under {self.hydro_dir_base}); job files will still be "
+                        f"written but the SLURM job will fail at runtime."
+                    )
+
+                redshift = self.sb.get_z_from_snap(snap)
+                tcmb = 2.73 * (1. + redshift)
+                N = len(ids)
+
+                if N == 0:
+                    continue
+
+                for i, nh in enumerate(ids):
+                    model_dir_remote = os.path.join(model_dir, f'gal_{nh}')
+                    os.makedirs(model_dir_remote, exist_ok=True)
+                    xpos, ypos, zpos = pos[i]
+
+                    if where == 'cluster':
+                        job_flag = 1 if i == 0 else 0
+                        cmd = [
+                            'bash',
+                            cluster_setup_template,
+                            str(self.nnodes),
+                            model_dir,
+                            hydro_dir,
+                            self.model_run_name,
+                            str(self.COSMOFLAG),
+                            model_dir_remote,
+                            hydro_dir,
+                            str(xpos),
+                            str(ypos),
+                            str(zpos),
+                            str(int(nh)),
+                            str(int(snap)),
+                            str(float(tcmb)),
+                            str(i),
+                            str(job_flag),
+                            str(max(0, N - 1)),
+                            str(int(hidx[i])),
+                            '' if radius is None else str(radius),
+                            subset_type,
+                            '' if prefix is None else prefix,
+                        ]
+                        subprocess.run(cmd, check=True)
+                        continue
+                    model_file = os.path.join(model_dir, f'snap{snap:03}_{nh:06}.py')
+                    with open(model_file, 'w', encoding='utf-8') as f:
+                        f.write('#Snapshot Parameters\n')
+                        f.write('snapshot_num = ' + str(int(snap)) + '\n')
+                        f.write('galaxy_num = ' + str(int(nh)) + '\n\n')
+                        
+                        f.write("galaxy_num_str = '{:06d}'.format(int(galaxy_num))\n")
+                        f.write("snapnum_str = '{:03d}'.format(int(snapshot_num))\n\n")
+
+
+                        f.write(f"hydro_dir = '{hydro_dir}/'\n")
+                        if prefix is not None:
+                            f.write(
+                                f"snapshot_name = '{prefix}_snap' + snapnum_str + '_gal' + galaxy_num_str + '.h5'\n\n"
+                            )
+                        else:
+                            f.write(
+                                "snapshot_name = 'snap' + snapnum_str + '_gal' + galaxy_num_str + '.h5'\n\n"
+                            )
+
+                        f.write('#where the files should go\n')
+                        f.write(f"PD_output_dir = '{model_dir_remote}/'\n")
+                        f.write("Auto_TF_file = 'snap'+snapnum_str+'.logical'\n")
+                        f.write("Auto_dustdens_file = 'snap'+snapnum_str+'.dustdens'\n\n")
+
+                        f.write('#===============================================\n')
+                        f.write('#FILE I/O\n')
+                        f.write('#===============================================\n')
+                        f.write("inputfile = PD_output_dir+'snap'+snapnum_str+'.galaxy'+galaxy_num_str+'.rtin'\n")
+                        f.write("outputfile = PD_output_dir+'snap'+snapnum_str+'.galaxy'+galaxy_num_str+'.rtout'\n\n")
+
+                        f.write('#===============================================\n')
+                        f.write('#GRID POSITIONS\n')
+                        f.write('#===============================================\n')
+                        f.write(f'x_cent = {xpos}\n')
+                        f.write(f'y_cent = {ypos}\n')
+                        f.write(f'z_cent = {zpos}\n\n')
+
+                        f.write('#===============================================\n')
+                        f.write('#CMB INFORMATION\n')
+                        f.write('#===============================================\n')
+                        f.write(f'TCMB = {tcmb}\n')
+
+                if where == 'cluster':
+                    # the cluster template names the job file with the UNPADDED snap
+                    # number (master.snap78.job, not master.snap078.job)
+                    qsubfile = os.path.join(model_dir, f'master.snap{int(snap)}.job')
+                    if os.path.exists(qsubfile):
+                        cluster_job_files.append(qsubfile)
+                else:
+                    runfile = os.path.join(model_dir, 'run_local.sh')
+                    with open(runfile, 'w', encoding='utf-8') as f:
+                        f.write('#!/bin/bash\n')
+                        f.write('set -e\n')
+                        f.write('echo "Starting local Powderday batch..."\n')
+                        f.write(f'for id in $(cat {os.path.join(model_dir, "ids.txt")}); do\n')
+                        f.write(
+                            '  python "${POWDERDAY_ROOT:-$HOME}/powderday/pd_front_end.py" . parameters_master '
+                            + f'snap{snap:03}_$id > gal_$id/snap{snap:03}_$id.LOG\n'
+                        )
+                        f.write('done\n')
+                        f.write('echo "Local batch complete"\n')
+                    os.chmod(runfile, 0o755)
+                    local_run_files.append(runfile)
+
+                np.savetxt(os.path.join(model_dir, 'ids.txt'), ids, fmt='%i')
+                copyfile(paramfile, os.path.join(model_dir, 'parameters_master.py'))
+        if where == 'cluster' and cluster_job_files:
+            submit_all = os.path.join(self.model_dir_base, 'submit_all_snaps.sh')
+            with open(submit_all, 'w', encoding='utf-8') as f:
+                f.write('#!/bin/bash\n')
+                f.write('set -e\n')
+                f.write('echo "Submitting snapshot Slurm jobs with rate limiting..."\n')
+                f.write(f'# Max parallel snapshots: {max_parallel_snaps if max_parallel_snaps else "unlimited"}\n')
+                f.write(f'# Using job dependencies: {use_job_deps}\n\n')
+                f.write(f'JOB_NAME_PREFIX="{self.model_run_name}.snap"\n')
+                f.write('POLL_SECONDS=10\n\n')
+                f.write('submit_job() {\n')
+                f.write('    local job_file=$1\n')
+                f.write('    local job_dir=$(dirname "$job_file")\n')
+                f.write('    local job_name=$(basename "$job_file")\n')
+                f.write('    echo "Submitting $job_name from $job_dir"\n')
+                f.write('    local job_id=""\n')
+                f.write('    while [ -z "$job_id" ]; do\n')
+                f.write(f'        job_id=$(cd "$job_dir" && sbatch -p {partition} "$job_name" | sed -n "s/^Submitted batch job //p") || true\n')
+                f.write('        if [ -z "$job_id" ]; then\n')
+                f.write('            echo "  sbatch rejected $job_name (queue/QOS submit limit?); retrying in 60s..."\n')
+                f.write('            sleep 60\n')
+                f.write('        fi\n')
+                f.write('    done\n')
+                f.write('    echo "  Job ID: $job_id"\n')
+                f.write('}\n\n')
+                
+                if use_job_deps:
+                    f.write('# Chain jobs so snapshots run sequentially\n')
+                    f.write('PREV_JOB_ID=""\n\n')
+                    for i, job_file in enumerate(cluster_job_files):
+                        dep_str = ' --dependency=afterok:$PREV_JOB_ID' if i > 0 else ''
+                        f.write(f'echo "Submitting {job_file}"\n')
+                        f.write(
+                            f'cd "{os.path.dirname(job_file)}" && '
+                            f'JOB_ID=$(sbatch{dep_str} -p {partition} {os.path.basename(job_file)} | sed -n "s/^Submitted batch job //p")\n'
+                            f'PREV_JOB_ID=$JOB_ID\n'
+                            f'echo "  Job ID: $JOB_ID"\n\n'
+                        )
+                else:
+                    if max_parallel_snaps is None:
+                        f.write('# Submit all snapshot jobs without queue throttling\n')
+                    else:
+                        f.write(f'# Submit with max {max_parallel_snaps} concurrent snapshot jobs\n')
+                        f.write(f'MAX_PARALLEL={max_parallel_snaps}\n\n')
+                        # squeue --name matches exact names only (no globs), so count
+                        # in-flight snapshot arrays by prefix on the job-name column;
+                        # %F collapses array tasks to one master id per snapshot.
+                        f.write('count_in_flight() {\n')
+                        f.write('    squeue -u "$USER" --states=R,PD -h -o "%F %j" 2>/dev/null | awk -v p="$JOB_NAME_PREFIX" \'index($2, p) == 1 {print $1}\' | sort -u | wc -l\n')
+                        f.write('}\n\n')
+                        f.write('wait_for_slot() {\n')
+                        f.write('    local running_count\n')
+                        f.write('    running_count=$(count_in_flight)\n')
+                        f.write('    while [ "$running_count" -ge "$MAX_PARALLEL" ]; do\n')
+                        f.write('        echo "Queue full for this run ($running_count >= $MAX_PARALLEL). Waiting ${POLL_SECONDS}s..."\n')
+                        f.write('        sleep "$POLL_SECONDS"\n')
+                        f.write('        running_count=$(count_in_flight)\n')
+                        f.write('    done\n')
+                        f.write('}\n\n')
+
+                    f.write('# Submit jobs\n')
+                    for job_file in cluster_job_files:
+                        if max_parallel_snaps is not None:
+                            f.write('wait_for_slot\n')
+                        f.write(f'submit_job "{job_file}"\n')
+                
+                f.write('echo "All snapshot jobs submitted."\n')
+                f.write('echo "Monitor with: squeue -u $USER"\n')
+            os.chmod(submit_all, 0o755)
+
+
+        if where == 'local' and local_run_files:
+            run_all_local = os.path.join(self.model_dir_base, 'run_all_local.sh')
+            with open(run_all_local, 'w', encoding='utf-8') as f:
+                f.write('#!/bin/bash\n')
+                f.write('set -e\n')
+                f.write('echo "Running all local snapshot batches..."\n')
+                for run_file in local_run_files:
+                    f.write(f'echo "Running {run_file}"\n')
+                    f.write(
+                        f'cd "{os.path.dirname(run_file)}" && '
+                        f'./{os.path.basename(run_file)}\n'
+                    )
+                f.write('echo "All local snapshot batches completed."\n')
+            os.chmod(run_all_local, 0o755)
+
+    def plotsed(self, snap, gal, show=False, ret=False, retval=False):
+        """Plot the SED output for a given galaxy at a given snapshot.
+
+        Parameters
+        ----------
+        snap : int
+            Snapshot number.
+        gal : int
+            Galaxy ID.
+        show : bool
+            Call ``plt.show()``.
+        ret : bool
+            If *True*, return ``(fig, ax)``.
+        retval: bool
+            If True, return frequency and fluxes
+
+        Notes
+        -----
+        Wavelengths are always shifted to the observed frame (``wav * (1+z)``),
+        so the plot shows the SED as seen by a telescope.  The
+        ``extract_flux_*`` methods instead default to rest-frame convolution
+        (``redshift=False``) and let the caller opt in.
+        """
+        fig, ax = plt.subplots()
+        run = os.path.join(
+            self.model_dir_base, f'snap_{snap:03}', f'gal_{gal}',
+            f'snap{snap:03}.galaxy{gal:06}.rtout.sed',
+        )
+        z = self.sb.get_z_from_snap(snap)
+        m = ModelOutput(run)
+        wav, flux = m.get_sed(inclination='all', aperture=-1)
+        wav = np.asarray(wav) * u.micron * (1. + z)
+
+        flux = np.asarray(flux) * u.erg / u.s
+        dl = Planck13.luminosity_distance(z).to(u.cm)
+        flux /= (4. * np.pi * dl ** 2)
+
+        nu = (constants.c.cgs / wav.to(u.cm)).to(u.Hz)
+        flux = (flux / nu).to(u.mJy)
+
+        for i in range(flux.shape[0]):
+            ax.loglog(wav.value, flux[i, :].value)
+
+        ax.set_xlabel(r'$\lambda\;[\mu\mathrm{m}]$')
+        ax.set_ylabel('Flux (mJy)')
+        ax.set_xlim(0.05, 15000)
+
+        out = os.path.join(self.output_dir, self.run_tag, 'sed_plots', f'snap_{snap:03}')
+        os.makedirs(out, exist_ok=True)
+        fig.savefig(os.path.join(out, f'gal_{gal:06}.png'), bbox_inches='tight')
+
+        if show:
+            plt.show()
+        if ret:
+            return fig, ax
+        if retval: 
+            return nu, flux
+
+
+    def extract_flux_single(self, snap, gal, facility, instrument,
+                     filters=None, wave_unit='micron', findx=0, redshift=False,
+                     local_filters=None, aperture=-1, uncertainties=True):
+        """Extract photometric fluxes for a single galaxy.
+
+        Parameters
+        ----------
+        snap : int
+        gal : int
+        facility : str or list of str
+        instrument : str or list of str
+        filters : list of str, optional
+        wave_unit : str
+        findx : int
+            Inclination index into the SED array.
+        redshift : bool
+            If True, shift wavelengths to observed frame before convolution.
+        local_filters : dict, optional
+            ``{facility: {instrument: {filter_name: filepath}}}`` of local
+            ASCII filter files (wavelength in Angstrom, transmission).
+            Merged with any SVO-fetched filters.
+        aperture : int
+            Hyperion SED aperture index (0-based; -1 = largest/total aperture).
+        uncertainties : bool
+            Propagate the Hyperion Monte-Carlo SED uncertainty through the
+            filter convolution (per-filter mJy_err / mag_err; NaN if the run
+            stored no uncertainties).
+        """
+        run = os.path.join(
+            self.model_dir_base,
+            f'snap_{snap:03}',
+            f'gal_{gal}',
+            f'snap{snap:03}.galaxy{gal:06}.rtout.sed',
+        )
+
+        z = self.sb.get_z_from_snap(snap)
+
+        if not os.path.isfile(run):
+            warnings.warn(f"[Missing SED] snap={snap:03}, gal={gal:06} → {run}")
+            return None
+
+        try:
+            wav_raw, flux_raw, unc_raw = _read_sed(run, aperture=aperture,
+                                                   uncertainties=uncertainties)
+        except Exception as e:
+            warnings.warn(f"[SED read error] snap={snap:03}, gal={gal:06} → {e}")
+            return None
+
+        wav, flux = _sed_to_mJy(wav_raw, flux_raw, z, apply_redshift=redshift)
+        flux = flux[findx]
+        flux_unc = None
+        if unc_raw is not None:
+            _, flux_unc = _sed_to_mJy(wav_raw, unc_raw, z, apply_redshift=redshift)
+            flux_unc = flux_unc[findx]
+
+        profiles = get_svo_filters(facility, instrument, filters=filters, wave_unit=wave_unit)
+        if local_filters is not None:
+            for fac, inst_dict in load_local_filters(local_filters, wave_unit).items():
+                profiles.setdefault(fac, {})
+                for inst, filt_dict in inst_dict.items():
+                    profiles[fac].setdefault(inst, {})
+                    profiles[fac][inst].update(filt_dict)
+
+        results = flux_extraction(
+            facility, instrument, wav, flux,
+            filters=filters, wave_unit=wave_unit,
+            filter_list=profiles, flux_unc=flux_unc,
+        )
+
+        rows = flatten_results(results, snap, gal)
+
+        outdir = os.path.join(self.output_dir, self.run_tag, 'sed_fluxes', f'snap_{snap:03}')
+        os.makedirs(outdir, exist_ok=True)
+        filename = os.path.join(outdir, f'snap{snap:03}_gal_{gal:06}_fluxes.fits')
+
+        Table(rows).write(filename, overwrite=True)
+        return filename
+
+
+    
+    def extract_flux_batch(self, snaps, gals, facility, instrument,
+                      filters=None, wave_unit='micron',
+                      findx=0, redshift=False, funyt='mJy', outname=None,
+                      local_filters=None, aperture=-1, uncertainties=True):
+        """Extract photometric fluxes for a batch of (snap, gal) pairs.
+
+        Parameters
+        ----------
+        snaps, gals : array-like of int
+            Paired snapshot numbers and galaxy IDs (must be same length).
+        facility : str or list of str
+        instrument : str or list of str
+        filters : list of str, optional
+        wave_unit : str
+        findx : int
+            Inclination index into the SED array.
+        redshift : bool
+            If True, shift wavelengths to observed frame before convolution.
+        funyt : str
+            Flux column to store in the output table (``'mJy'`` or ``'mag'``).
+        outname : str, optional
+            Override filename for the flux table (relative to sed_fluxes dir).
+            When given, the companion xmean / missing-sources files are named
+            ``<stem>_xmean.fits`` / ``missing_sources_<stem>.txt`` so per-aperture
+            calls never overwrite each other.
+        local_filters : dict, optional
+            ``{facility: {instrument: {filter_name: filepath}}}`` of local
+            ASCII filter files (wavelength in Angstrom, transmission).
+            Merged with any SVO-fetched filters.
+        aperture : int
+            Hyperion SED aperture index (0-based; -1 = largest/total aperture).
+            Call once per aperture with a distinct ``outname`` to build
+            per-aperture catalogs from the same .rtout.sed files.
+        uncertainties : bool
+            Propagate the Hyperion Monte-Carlo SED uncertainty through the
+            filter convolution; each ``<filter>`` column gains a
+            ``<filter>_err`` companion (NaN if the run stored no uncertainties).
+        """
+        snaps = np.asarray(snaps)
+        gals = np.asarray(gals)
+
+        if len(snaps) != len(gals):
+            raise ValueError("snaps and gals must have the same length")
+
+        all_tables = []
+        xmean_rows = []
+        missing_sed = []   # (snap, gal): no .rtout.sed file on disk
+        failed_read = []   # (snap, gal, error): file present but ModelOutput/get_sed raised
+
+        unique_snaps = np.unique(snaps)
+
+        profiles = get_svo_filters(facility, instrument, filters=filters, wave_unit=wave_unit)
+        if local_filters is not None:
+            for fac, inst_dict in load_local_filters(local_filters, wave_unit).items():
+                profiles.setdefault(fac, {})
+                for inst, filt_dict in inst_dict.items():
+                    profiles[fac].setdefault(inst, {})
+                    profiles[fac][inst].update(filt_dict)
+
+        for snap in unique_snaps:
+
+            mask = snaps == snap
+            snap_gals = gals[mask]
+
+            z = self.sb.get_z_from_snap(snap)
+
+            rows = []
+
+            for gal in snap_gals:
+
+                run = os.path.join(
+                    self.model_dir_base,
+                    f'snap_{snap:03}',
+                    f'gal_{gal}',
+                    f'snap{snap:03}.galaxy{gal:06}.rtout.sed',
+                )
+
+                if not os.path.isfile(run):
+                    warnings.warn(f"[Missing SED] snap={snap:03}, gal={gal:06} → {run}")
+                    missing_sed.append((int(snap), int(gal)))
+                    continue
+
+                try:
+                    wav_raw, flux_raw, unc_raw = _read_sed(run, aperture=aperture,
+                                                           uncertainties=uncertainties)
+                except Exception as e:
+                    warnings.warn(f"[SED read error] snap={snap:03}, gal={gal:06} → {e}")
+                    failed_read.append((int(snap), int(gal), str(e)))
+                    continue
+
+                wav, flux = _sed_to_mJy(wav_raw, flux_raw, z, apply_redshift=redshift)
+                flux = flux[findx]
+                flux_unc = None
+                if unc_raw is not None:
+                    _, flux_unc = _sed_to_mJy(wav_raw, unc_raw, z, apply_redshift=redshift)
+                    flux_unc = flux_unc[findx]
+
+                results = flux_extraction(
+                    facility, instrument, wav, flux,
+                    filters=filters, wave_unit=wave_unit,
+                    filter_list=profiles, flux_unc=flux_unc,
+                )
+
+                row = {'gal_id_at_snap': gal, 'snap': snap, 'redshift': z}
+
+                for fac, inst_dict in results.items():
+                    for inst, filt_dict in inst_dict.items():
+                        for filt_name, filt_data in filt_dict.items():
+                            colname = f"{fac}.{inst}.{filt_name}"
+                            row[colname] = filt_data[funyt]
+                            row[f"{colname}_err"] = filt_data.get(f"{funyt}_err", np.nan)
+                            xmean_rows.append({
+                                'gal_id_at_snap': gal,
+                                'snap': snap,
+                                'filter': colname,
+                                'xmean': filt_data.get('xmean', np.nan),
+                            })
+
+                rows.append(row)
+
+            if rows:
+                all_tables.append(Table(rows))
+
+        if not all_tables:
+            warnings.warn("No galaxies produced valid flux results; output table is empty.")
+            final_table = Table()
+        else:
+            final_table = vstack(all_tables)
+
+        outdir = os.path.join(self.output_dir, self.run_tag, 'sed_fluxes')
+        os.makedirs(outdir, exist_ok=True)
+        if outname is None:
+            flux_file = os.path.join(outdir, 'all_galaxies_fluxes.fits')
+            xmean_file = os.path.join(outdir, 'all_xmean.fits')
+            missing_name = 'missing_sources.txt'
+        else:
+            flux_file = os.path.join(outdir, outname)
+            _stem = os.path.splitext(os.path.basename(outname))[0]
+            xmean_file = os.path.join(outdir, f'{_stem}_xmean.fits')
+            missing_name = f'missing_sources_{_stem}.txt'
+
+        final_table.write(flux_file, overwrite=True)
+        Table(xmean_rows).write(xmean_file, overwrite=True)
+
+        # --- dropped-source summary -------------------------------------------
+        # A galaxy is in the output only if its .rtout.sed exists AND reads cleanly;
+        # report every (snap, gal) that was requested but skipped so a count
+        # mismatch between runs (e.g. dust vs no-dust) is never silent.
+        n_req = len(snaps)
+        n_out = len(final_table)
+        n_drop = len(missing_sed) + len(failed_read)
+        print(f"[extract_flux_batch] run_tag='{self.run_tag}': "
+              f"requested={n_req}, written={n_out}, dropped={n_drop} "
+              f"({len(missing_sed)} missing SED, {len(failed_read)} read errors)")
+        missing_file = os.path.join(outdir, missing_name)
+        if n_drop:
+            print(f"[extract_flux_batch] dropped sources -> {missing_file}")
+            for snap, gal in missing_sed:
+                print(f"    missing SED  : snap={snap:03}, gal={gal:06}")
+            for snap, gal, err in failed_read:
+                print(f"    read error   : snap={snap:03}, gal={gal:06} ({err})")
+            with open(missing_file, 'w') as mf:
+                mf.write("# sources requested but absent from the flux table\n")
+                mf.write("# reason\tsnap\tgal\tdetail\n")
+                for snap, gal in missing_sed:
+                    mf.write(f"missing_sed\t{snap}\t{gal}\t\n")
+                for snap, gal, err in failed_read:
+                    mf.write(f"read_error\t{snap}\t{gal}\t{err}\n")
+        elif os.path.exists(missing_file):
+            os.remove(missing_file)   # clean run -> drop any stale report
+
+        return flux_file, xmean_file

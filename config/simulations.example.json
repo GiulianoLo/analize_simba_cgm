@@ -1,0 +1,9 @@
+{
+  "simulations": {
+    "cis100": {
+      "data_dir": "/path/to/SIMBA/m100n1024/s50/snapshots",
+      "catalog_dir": "/path/to/SIMBA/m100n1024/s50/Groups",
+      "file_format": "m100n1024_{snap:03d}.hdf5"
+    }
+  }
+}

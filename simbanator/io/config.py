@@ -1,10 +1,8 @@
-"""Per-machine configuration for simbanator.
+"""Simulation paths for simbanator, kept in one visible, hand-editable file.
 
-Stores simulation data paths in ``~/.simbanator/config.json`` so that
-source code never contains hardcoded absolute paths.  The config is a
-simple JSON file you set up once per machine.
-
-Example ``~/.simbanator/config.json``::
+Source code never contains hardcoded data paths: every simulation is an entry in
+``config/simulations.json`` at the repository root. Edit it by hand or with
+:func:`add_simulation`. Example::
 
     {
       "simulations": {
@@ -15,32 +13,78 @@ Example ``~/.simbanator/config.json``::
         }
       }
     }
+
+Which file is used, in order:
+
+1. the path in the ``SIMBANATOR_CONFIG`` environment variable;
+2. ``config/simulations.json`` in the repository;
+3. the old hidden ``~/.simbanator/config.json``, read with a one-time notice to move it.
+
+Transition: while the old hidden file exists, every write is mirrored into it, because
+some notebooks still read it directly. Once they read through :func:`load_config`, delete it.
 """
 
 import json
 import os
+import warnings
 from pathlib import Path
 
 
-CONFIG_DIR = Path.home() / ".simbanator"
-CONFIG_FILE = CONFIG_DIR / "config.json"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_CONFIG = REPO_ROOT / "config" / "simulations.json"
+CONFIG_ENV = "SIMBANATOR_CONFIG"
+LEGACY_CONFIG = Path.home() / ".simbanator" / "config.json"
+
+# Kept for backward compatibility (tests and older code patch these two names).
+# When CONFIG_FILE is set to anything other than its default, it wins over the lookup.
+CONFIG_DIR = PROJECT_CONFIG.parent
+CONFIG_FILE = PROJECT_CONFIG
+_DEFAULT_CONFIG_FILE = CONFIG_FILE
+_legacy_notice_shown = False
+
+
+def config_path():
+    """The config file in use (see the module docstring for the lookup order)."""
+    global _legacy_notice_shown
+    if Path(CONFIG_FILE) != _DEFAULT_CONFIG_FILE:
+        return Path(CONFIG_FILE)
+    env = os.environ.get(CONFIG_ENV)
+    if env:
+        return Path(env).expanduser()
+    if PROJECT_CONFIG.exists():
+        return PROJECT_CONFIG
+    if LEGACY_CONFIG.exists():
+        if not _legacy_notice_shown:
+            warnings.warn(
+                f"Reading simulation paths from the old hidden file {LEGACY_CONFIG}. "
+                f"Copy it to {PROJECT_CONFIG} to use the visible config.", stacklevel=3)
+            _legacy_notice_shown = True
+        return LEGACY_CONFIG
+    return PROJECT_CONFIG
 
 
 # ── read / write ──────────────────────────────────────────────────────
 
 def load_config():
     """Load the configuration dict, or return defaults if no file exists."""
-    if not CONFIG_FILE.exists():
+    path = config_path()
+    if not path.exists():
         return {"simulations": {}}
-    with open(CONFIG_FILE) as f:
+    with open(path) as f:
         return json.load(f)
 
 
 def save_config(config):
-    """Write *config* to ``~/.simbanator/config.json``."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_FILE, "w") as f:
+    """Write *config* to the config file in use (and mirror it into the old hidden file, if present)."""
+    path = config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
         json.dump(config, f, indent=2)
+        f.write("\n")
+    if path != LEGACY_CONFIG and Path(CONFIG_FILE) == _DEFAULT_CONFIG_FILE and LEGACY_CONFIG.exists():
+        with open(LEGACY_CONFIG, "w") as f:
+            json.dump(config, f, indent=2)
+    return path
 
 
 # ── query helpers ─────────────────────────────────────────────────────
@@ -58,7 +102,7 @@ def get_simulation_config(name):
     if name not in sims:
         available = list(sims.keys()) or ["(none configured)"]
         raise KeyError(
-            f"Simulation '{name}' not found in {CONFIG_FILE}.\n"
+            f"Simulation '{name}' not found: it is not configured in {config_path()}.\n"
             f"Available: {available}\n"
             f"Add it with:\n"
             f"  simbanator.add_simulation('{name}', data_dir='/path/to/data')\n"
@@ -100,8 +144,8 @@ def add_simulation(name, data_dir, catalog_dir=None, file_format=None):
         entry["file_format"] = file_format
 
     config["simulations"][name] = entry
-    save_config(config)
-    print(f"Saved simulation '{name}' → {CONFIG_FILE}")
+    path = save_config(config)
+    print(f"Saved simulation '{name}' → {path}")
 
 
 def remove_simulation(name):
@@ -110,7 +154,7 @@ def remove_simulation(name):
     sims = config.get("simulations", {})
     if name in sims:
         del sims[name]
-        save_config(config)
-        print(f"Removed '{name}' from {CONFIG_FILE}")
+        path = save_config(config)
+        print(f"Removed '{name}' from {path}")
     else:
         print(f"'{name}' not found in config.")

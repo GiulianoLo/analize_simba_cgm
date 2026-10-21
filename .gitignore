@@ -36,4 +36,9 @@ output/fits/
 output/hdf5/
 output/plot/
 output/
-output/
+
+# Local backups of notebooks and loose files (kept out of git)
+backups/
+
+# Machine-specific simulation paths (the example file is committed)
+config/simulations.json

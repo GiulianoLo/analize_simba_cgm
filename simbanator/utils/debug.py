@@ -1,10 +1,10 @@
-"""Debugging and profiling helpers."""
+"""Moved to ``simbanator.io.sysinfo``.
 
-import psutil
+This file only keeps old imports working (``simbanator.utils.debug``): it hands back the new
+module itself, so every name, private ones included, is the same object.
+New code should import from ``simbanator.io.sysinfo``.
+"""
+import importlib as _importlib
+import sys as _sys
 
-
-def print_ram_usage():
-    """Print the current process RAM usage in MB."""
-    process = psutil.Process()
-    ram_mb = process.memory_info().rss / (1024 ** 2)
-    print(f"RAM Usage: {ram_mb:.2f} MB")
+_sys.modules[__name__] = _importlib.import_module("simbanator.io.sysinfo")

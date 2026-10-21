@@ -5,7 +5,7 @@ Quick start::
 
     import simbanator as sb
 
-    # One-time setup (stores paths in ~/.simbanator/config.json):
+    # One-time setup (stores paths in config/simulations.json):
     sb.add_simulation("simba_m100n1024",
                       data_dir="/data/SIMBA/box100",
                       catalog_dir="/data/SIMBA/box100/Groups")
@@ -26,16 +26,14 @@ __version__ = "0.3.0"
 # ---------------------------------------------------------------------------
 from .io.simba import Simulation, Simba
 from .io.paths import OutputPaths
-from .io.config import add_simulation, remove_simulation, list_simulations
+from .io.config import add_simulation, remove_simulation, list_simulations, config_path
 
 # ---------------------------------------------------------------------------
-# Analysis
+# Histories (trees, properties, SFHs, events)
 # ---------------------------------------------------------------------------
-from .analysis.sfh_caesar import HDF5BuildHistory
-from .analysis.particles import extract_particles
-from .analysis.profiles import radial_profile
-from .analysis.progenitors import caesar_read_progen, read_progen
-from .analysis.mergers import (
+from .histories.properties import HDF5BuildHistory
+from .histories.trees import caesar_read_progen, read_progen
+from .histories.mergers import (
     Progenitor,
     Galaxy,
     process_galaxies_with_tracks,
@@ -43,13 +41,20 @@ from .analysis.mergers import (
 )
 
 # ---------------------------------------------------------------------------
-# Utilities
+# Particles
 # ---------------------------------------------------------------------------
-from .utils.conversions import Z_to_OH12, Dust_to_Metal
-from .utils.search import findsatellites
-from .utils.debug import print_ram_usage
-from .utils.geometry import shrink_center, principal_axes, rotate_to_frame
-from .utils.svo_filters import (
+from .particles.cutouts import extract_particles
+from .particles.profiles import radial_profile
+from .particles.frames import shrink_center, principal_axes, rotate_to_frame
+from .particles.grains import Z_to_OH12, Dust_to_Metal
+
+# ---------------------------------------------------------------------------
+# I/O helpers and photometry filters
+# ---------------------------------------------------------------------------
+from .io.catalogs import findsatellites
+from .io.sysinfo import print_ram_usage
+from .io.tables import convert_hdf5_fits
+from .photometry.filters import (
     DEFAULT_SVO_FILTERS,
     download_svo_filter,
     download_svo_filters,
@@ -57,24 +62,16 @@ from .utils.svo_filters import (
 )
 
 # ---------------------------------------------------------------------------
-# Data conversion
+# Plotting (lightweight)
 # ---------------------------------------------------------------------------
-from .data.convert import convert_hdf5_fits
+from .plotting.plots import HistoryPlots
+from .plotting.animation import create_animation
 
-# ---------------------------------------------------------------------------
-# Visualization (lightweight)
-# ---------------------------------------------------------------------------
-from .visualization.plots import HistoryPlots
-from .visualization.animation import create_animation
-
-# Heavy visualization (yt / sphviewer) available via explicit import:
-#   from simbanator.visualization.rendering import RenderRGB, SingleRender
-
-# FSPS-based SFH recovery (requires fsps):
-#   from simbanator.analysis.sfh_fsps import compute_sfh
-
-# SED modeling (powderday) available via explicit import:
-#   from simbanator.sed.makesed import MakeSED
+# Modules with heavy dependencies load on first use, or import them explicitly:
+#   from simbanator.plotting.rendering import RenderRGB, SingleRender   (sphviewer, yt)
+#   from simbanator.histories.sfh_fsps import compute_sfh               (yt, fsps)
+#   from simbanator.rt import MakeSED                                    (caesar, hyperion)
+#   from simbanator.photometry import flux_extraction                    (hyperion)
 
 __all__ = [
     # io

@@ -56,19 +56,21 @@ out = sb.OutputPaths(sim.name)   # output/cis100/<task>/ created on first access
 
 ```
 simbanator/
-├── io/
+├── io/                   # I/O: simulation handles, paths, the visible config, tables, catalogues
 │   ├── simba.py          # Simulation – path resolution, Caesar/snapshot loading
 │   ├── paths.py          # OutputPaths – structured output directory manager
-│   └── config.py         # ~/.simbanator/config.json read/write helpers
-├── analysis/
-│   ├── progenitors.py    # caesar_read_progen, read_progen – merger-tree track FITS
+│   ├── config.py         # config/simulations.json read/write helpers (see config/README.md)
+│   ├── catalogs.py       # findsatellites
+│   ├── sysinfo.py        # print_ram_usage
+│   └── tables.py         # convert_hdf5_fits – Caesar HDF5 → FITS (legacy)
+├── histories/            # everything along a galaxy's branch through time
+│   ├── trees.py          # caesar_read_progen, read_progen – merger-tree track FITS
 │   ├── mergers.py        # Progenitor, Galaxy, process_galaxies_with_tracks,
 │   │                     #   analyze_mergers – companion detection & classification
 │   │                     #   Units: positions Mpc/h, r_half kpc/h, masses M☉
-│   ├── particles.py      # extract_particles – per-galaxy/halo/aperture HDF5 subsets
-│   ├── sfh_caesar.py     # HDF5BuildHistory – property histories from Caesar catalogs
+│   ├── properties.py     # HDF5BuildHistory – property histories from Caesar catalogs
 │   ├── sfh_fsps.py       # compute_sfh, bin_sfh, load_sfh_file – FSPS SFHs
-│   ├── sfh_utils.py      # smooth_resample_sfh, recent_sfr – de-burst snapshot-cadence
+│   ├── sfh.py            # smooth_resample_sfh, recent_sfr – de-burst snapshot-cadence
 │   │                     #   SFR tracks (Gaussian kernel + uniform resample);
 │   │                     #   sfr_delayed_bq, fit_delayed_bq – CIGALE sfhdelayedbq
 │   │                     #   form + bounded fit (shared by 7b′ and aperture truth);
@@ -78,16 +80,39 @@ simbanator/
 │   │                     #   grid (linear in weights: disjoint subsets sum exactly);
 │   │                     #   projected_region_sfh – SFH of r_in<R≤r_out along a
 │   │                     #   sightline (Hyperion aperture geometry, nstar_min skip)
+│   └── events.py         # find_quenching_times, load_quenching_events
+├── agn/                  # BH accretion and AGN feedback histories (filled in step 3)
+├── particles/            # radial and resolved analysis of particle files
+│   ├── cutouts.py        # extract_particles – per-galaxy/halo/aperture HDF5 subsets
 │   ├── profiles.py       # radial_profile – surface-density / mean radial profiles
-│   ├── quenching.py      # find_quenching_times, load_quenching_events
-│   ├── history.py        # deprecated shim → sfh_caesar
-│   └── sfh.py            # deprecated shim → sfh_fsps
-├── sed/
+│   ├── frames.py         # shrink_center, principal_axes, rotate_to_frame,
+│   │                     #   sightline_unit_vectors, projected_radius (image-plane R)
+│   └── grains.py         # Z_to_OH12, Dust_to_Metal
+├── rt/                   # radiative transfer with powderday
+│   ├── __init__.py       # MASTERS_DIR; MakeSED and friends load on first use (caesar + hyperion)
 │   ├── makesed.py        # MakeSED – Powderday setup + flux extraction (needs hyperion)
 │   │                     #   extract_flux_* take aperture= (Hyperion SED aperture index) and
 │   │                     #   uncertainties= (MC errors → <filter>_err); list_sed_apertures QC;
 │   │                     #   read_selection_centers – Stage-1 selection h5 → RT-grid centres
-│   ├── flux_extraction.py# flux_extraction, get_svo_filters – SED → photometry
+│   └── masters/          # powderday parameter masters + cosmology_setup_all_{cluster.cis,local.pc39}.sh;
+│                         #   MakeSED resolves a bare paramf name here (simbanator.rt.MASTERS_DIR):
+│                         #   parameters_master.py / parameters_master-nodust.py / parameters_master-agn.py / parameters_master-agn-nenkova.py
+│                         #   parameters_master-nenkova-i90.py / -i60.py / -i30.py
+│                         #   SED_APERTURE_NAP/MIN_KPC/MAX_KPC – multi-aperture SEDs
+│                         #   (read by the powderday patch documented in
+│                         #    powderday_flux_quenched_m25.ipynb; stock powderday ignores them)
+│                         #   -agn: dust_on + BH_SED=True (Hopkins+2007, BH_var=False;
+│                         #    needs PartType5 in the Stage-0 cutouts)
+│                         #   -agn-nenkova: as -agn but CLUMPY i=90 torus, 4 sightlines
+│                         #    (provenance of the CEERS dusty_simdust_chab_agn_nenkova tree)
+│                         #   -nenkova-i{90,60,30}: almac11 torus-inclination arms — CLUMPY
+│                         #    i=90/60/30, SINGLE sightline THETA=[0] (findx=0 only); staged
+│                         #    by analogues_specphot_almac11_rt.ipynb into
+│                         #    output/cis100/sed_almac11/{dust_on,dust_off,nenkova_i90,i60,i30}
+│                         #    (selection tables/maps in output/cis100/almac11_specphot/)
+├── photometry/           # photometry from the RT SEDs and SED fitting with CIGALE
+│   ├── __init__.py       # filters eager; flux_extraction and friends load on first use (hyperion)
+│   ├── fluxes.py         # flux_extraction, get_svo_filters – SED → photometry
 │   │                     #   flux_unc= propagates an SED uncertainty → mJy_err / mag_err
 │   │                     #   annular_flux_table – F(<r_out)−F(<r_in) between two
 │   │                     #   cumulative-aperture flux tables (non-positive → NaN)
@@ -154,28 +179,12 @@ simbanator/
 │   │                     #   emissivity_table + --emissivity-out CLI export the DL2014
 │   │                     #   ε(qpah, umin, gamma) [W/kg] table cigale.pin_umin consumes.
 │   │                     #   Run under the CIGALE env python (needs pcigale.data).
-│   └── parameters_master.py / parameters_master-nodust.py / parameters_master-agn.py / parameters_master-agn-nenkova.py
-│       parameters_master-nenkova-i90.py / -i60.py / -i30.py
-│                         #   SED_APERTURE_NAP/MIN_KPC/MAX_KPC – multi-aperture SEDs
-│                         #   (read by the powderday patch documented in
-│                         #    powderday_flux_quenched_m25.ipynb; stock powderday ignores them)
-│                         #   -agn: dust_on + BH_SED=True (Hopkins+2007, BH_var=False;
-│                         #    needs PartType5 in the Stage-0 cutouts)
-│                         #   -agn-nenkova: as -agn but CLUMPY i=90 torus, 4 sightlines
-│                         #    (provenance of the CEERS dusty_simdust_chab_agn_nenkova tree)
-│                         #   -nenkova-i{90,60,30}: almac11 torus-inclination arms — CLUMPY
-│                         #    i=90/60/30, SINGLE sightline THETA=[0] (findx=0 only); staged
-│                         #    by analogues_specphot_almac11_rt.ipynb into
-│                         #    output/cis100/sed_almac11/{dust_on,dust_off,nenkova_i90,i60,i30}
-│                         #    (selection tables/maps in output/cis100/almac11_specphot/)
-├── utils/
-│   ├── geometry.py       # shrink_center, principal_axes, rotate_to_frame,
-│   │                     #   sightline_unit_vectors, projected_radius (image-plane R)
-│   ├── svo_filters.py    # download_svo_filters – fetch filter curves from SVO
-│   ├── conversions.py    # Z_to_OH12, Dust_to_Metal
-│   ├── search.py         # findsatellites
-│   └── debug.py          # print_ram_usage
-├── visualization/
+│   └── filters.py        # download_svo_filters – fetch filter curves from SVO
+├── obs/                  # comparative data: obs_data loaders, relations, overlays (filled in step 3)
+├── selection/            # generic sample rules and the dust label (filled in step 3)
+├── stats/                # statistics used across projects (filled in step 3)
+├── plotting/             # history plots, paper style, particle rendering
+│   ├── __init__.py       # plots eager; rendering classes load on first use (sphviewer, yt)
 │   ├── plots.py          # HistoryPlots – generic multi-panel history figure
 │   │                     # plot_merger_rate_by_phase – bar chart of mergers by phase
 │   │                     # plot_main_galaxy_track – single-galaxy trajectory (unwrapped)
@@ -185,10 +194,13 @@ simbanator/
 │   ├── animation.py      # create_animation – GIF from x/y frame sequence
 │   └── rendering.py      # ParticleProjectionRender, RenderRGB, SingleRender
 │                         #   (requires yt + py-sphviewer)
-└── data/
-    ├── convert.py        # convert_hdf5_fits – Caesar HDF5 → FITS (legacy)
+└── data/                 # bundled reference data
     └── snap_z_maps/      # bundled snapshot → redshift tables per simulation box
 ```
+
+Old import paths still work: `simbanator.analysis.*`, `simbanator.sed.*`, `simbanator.utils.*`,
+`simbanator.visualization.*` and `simbanator.data.convert` are one-line shims that hand back the module
+at its new place (the same object, private names included). New code imports from the new paths.
 
 Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile pipeline):
 
@@ -774,7 +786,11 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 
 ## Configuration
 
-Simulation paths live in `~/.simbanator/config.json` — set up once per machine, never hardcoded in scripts.
+Simulation paths live in `config/simulations.json` at the repository root: a plain, visible JSON file you can edit
+by hand, never hardcoded in scripts. It is machine-specific, so it is not committed; start from
+`config/simulations.example.json` (see `config/README.md`). `SIMBANATOR_CONFIG=/path/file.json` points elsewhere,
+and the old hidden `~/.simbanator/config.json` is still read when the visible file does not exist
+(`sb.config_path()` tells you which file is in use).
 
 ```python
 import simbanator as sb
@@ -790,7 +806,7 @@ sb.list_simulations()        # show all registered simulations
 sb.remove_simulation("cis100")
 ```
 
-Example `~/.simbanator/config.json`:
+Example `config/simulations.json`:
 
 ```json
 {
