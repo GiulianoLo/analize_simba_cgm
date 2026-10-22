@@ -504,3 +504,200 @@ def binned_event_profile(t_yr, values, t0_yr, xwin_gyr=2.0, nbins=12, log=True, 
                 bref = b0 if np.isfinite(prof[j, b0]) else fin[np.argmin(np.abs(fin - b0))]
                 prof[j] = prof[j] - prof[j, bref]
     return xc, prof
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Moved from ks_tracks_lib.py (the K-S track measurements), unchanged
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ── stages / apertures ────────────────────────────────────────────────────────────────────────────
+STAGES_BH = ["agn_ign", "jet_on"]   # AGN ignition / jet-mode onset (m25 Part 2d windows table; attach_bh_stages), 2026-08-28
+
+STAGES_KS = ["sf_peak", "ssfr_min", "sft", "qt", "post_quench", "gas_min", "anchor", "end"] + STAGES_BH
+
+STAGES_PLOT = ["sf_peak", "sft", "qt", "post_quench", "gas_min", "anchor"]   # time order (summary / t_dep clock)
+
+FH2_MIN_END = 1e-4        # `end` stage: the anchor when M_H2/M_star (history) > this, else the last snapshot above it
+
+# ── critical epochs (port of quench_mode_vs_sigma_gas build_records, trimmed to the KS stages) ────
+def _smooth(y, w=3):
+    n = len(y)
+    h = w // 2
+    out = np.full(n, np.nan)
+    for i in range(n):
+        seg = y[max(0, i - h):min(n, i + h + 1)]
+        seg = seg[np.isfinite(seg)]
+        if seg.size:
+            out[i] = np.median(seg)
+    return out
+
+def _ordered_positive(q, valid, t):
+    d = np.where(valid, q, np.nan).astype(float)
+    pos = np.isfinite(d) & (d > 0)
+    if pos.sum() < 2:
+        return None, None
+    order = np.where(pos)[0]
+    order = order[np.argsort(t[order])]
+    return order, _smooth(d[order])
+
+def _peak_time(q, valid, t):
+    order, ds = _ordered_positive(q, valid, t)
+    if order is None or not np.isfinite(ds).any():
+        return np.nan
+    return t[order[np.nanargmax(ds)]]
+
+def _trough_before_floor(q, valid, t, floor_frac=1e-6):
+    order, ds = _ordered_positive(q, valid, t)
+    if order is None or not np.isfinite(ds).any():
+        return np.nan
+    floor = floor_frac * np.nanmax(ds)
+    below = np.isfinite(ds) & (ds <= floor)
+    cut = int(np.argmax(below)) if below.any() else len(ds)
+    cut = max(cut, 2)
+    seg = ds[:cut]
+    if not np.isfinite(seg).any():
+        return np.nan
+    return t[order[np.nanargmin(seg)]]
+
+def build_stage_records(P, t_cosmic_yr, redshift, galaxy_ids, cols, find_quenching_times,
+                        age_of_z_gyr=None, stages=STAGES_KS, min_valid=5, gas_key="masses.H2",
+                        fh2_min=FH2_MIN_END):
+    """Critical epochs of every selected history column (quench_mode_vs_sigma_gas §3, KS stages).
+
+    P : {property: (n_snap, n_gal) array} with row 0 = anchor; t_cosmic_yr / redshift per row;
+    cols : column indices of the sample galaxies; find_quenching_times : the simbanator finder
+    (injected); age_of_z_gyr(z) -> t_H [Gyr] (for tau_q / t_H; optional).
+    Every galaxy gets a record (unlike the original, which skipped event-less galaxies): stages
+    without a definition carry t_<stage>=NaN and row_<stage>=-1. The LAST quench event is used
+    (k = argmax(qts)), the same rule as the m25 selection table.
+
+    Departures from the residual_dust/quench_mode definitions, specific to a KS track:
+    * ``gas_min`` is the trough (before any floor) of ``gas_key`` — the H2 mass when the history has
+      it, else ``masses.gas`` — searched only AFTER t_QT (after the sSFR peak for event-less
+      galaxies), i.e. the post-quench molecular depletion, not the formation-epoch minimum.
+    * a stage whose time lies beyond the anchor (``post_quench`` = QT + persistence often does)
+      keeps its t_<stage> but gets row_<stage> = -1: it is not observable inside the history and
+      must not alias onto the anchor row.
+    * ``end`` (the drawn track endpoint) is the anchor row when the anchor's catalogue molecular
+      fraction ``masses.H2 / masses.stellar`` exceeds ``fh2_min``; otherwise the LATEST history row
+      whose fraction does (``end_is_anchor`` False, ``t_end`` / ``row_end`` of that snapshot; -1 when no
+      row qualifies). Without an H2 column in ``P`` the end is always the anchor.
+    """
+    t_cosmic_yr = np.asarray(t_cosmic_yr, float)
+    redshift = np.asarray(redshift, float)
+    galaxy_ids = np.asarray(galaxy_ids)
+    cols = np.asarray(cols, int)
+
+    def _nearest_row(t_target):
+        return nearest_row(t_cosmic_yr, t_target)
+
+    records = []
+    for col in cols:
+        gid = galaxy_ids[col]
+        mstar = np.asarray(P["masses.stellar"][:, col], float)
+        sfr = np.asarray(P["sfr"][:, col], float)
+        gas = np.asarray(P["masses.gas"][:, col], float)
+        with np.errstate(all="ignore"):
+            ssfr = np.where(mstar > 0, sfr / mstar, np.nan)
+        valid = np.isfinite(ssfr) & (ssfr > 0) & np.isfinite(t_cosmic_yr)
+        rec = dict(gid=int(gid), col=int(col), n_valid=int(valid.sum()), n_events=0,
+                   t_sft=np.nan, t_qt=np.nan, t_post_quench=np.nan, tau_q=np.nan,
+                   tau_q_over_tH=np.nan, z_qt=np.nan, t_qt_first=np.nan, t_sft_first=np.nan)
+        if valid.sum() >= min_valid:
+            t = t_cosmic_yr[valid]
+            sv = ssfr[valid]
+            o = np.argsort(t)
+            t, sv = t[o], sv[o]
+            tu, ui = np.unique(t, return_index=True)
+            su = sv[ui]
+            if len(tu) >= min_valid:
+                qts, sfts, _, dbg = find_quenching_times(
+                    tu, su, galaxy_id=int(gid), plot=False, save_fits_path=None, return_debug=True)
+                qts = np.asarray(qts, float)
+                sfts = np.asarray(sfts, float)
+                rec["n_events"] = int(len(qts))
+                if len(qts):
+                    k = int(np.argmax(qts))
+                    rec["t_qt"], rec["t_sft"] = float(qts[k]), float(sfts[k])
+                    pe = dbg.get("persistence_end_times") if isinstance(dbg, dict) else None
+                    if pe is not None and len(pe) > k and np.isfinite(pe[k]):
+                        rec["t_post_quench"] = float(pe[k])
+                    kf = int(np.argmin(qts))
+                    rec["t_qt_first"], rec["t_sft_first"] = float(qts[kf]), float(sfts[kf])
+                    rec["tau_q"] = rec["t_qt"] - rec["t_sft"]
+                    rec["z_qt"] = float(np.interp(rec["t_qt"], t_cosmic_yr[::-1], redshift[::-1]))
+                    if age_of_z_gyr is not None:
+                        rec["tau_q_over_tH"] = rec["tau_q"] / (float(age_of_z_gyr(rec["z_qt"])) * 1e9)
+        t_sfpeak = _peak_time(ssfr, valid, t_cosmic_yr)
+        gq = np.asarray(P[gas_key][:, col], float) if gas_key in P else gas
+        t_start = rec["t_qt"] if np.isfinite(rec["t_qt"]) else t_sfpeak
+        after = valid & (t_cosmic_yr >= t_start) if np.isfinite(t_start) else valid
+        t_gasmin = _trough_before_floor(gq, after, t_cosmic_yr)
+        if not np.isfinite(t_gasmin):                      # e.g. gas already at the floor: fall back
+            t_gasmin = _trough_before_floor(gas, after, t_cosmic_yr)
+        t_times = {
+            "sf_peak": t_sfpeak,
+            "ssfr_min": _trough_before_floor(ssfr, valid, t_cosmic_yr),
+            "sft": rec["t_sft"], "qt": rec["t_qt"], "post_quench": rec["t_post_quench"],
+            "gas_min": t_gasmin,
+            "anchor": float(t_cosmic_yr[0]),
+        }
+        t_anchor = float(t_cosmic_yr[0])
+        # end = anchor, or the last snapshot with a measurable H2 fraction (history level)
+        with np.errstate(all="ignore"):
+            fh2 = np.where(mstar > 0, np.asarray(P[gas_key][:, col], float) / mstar, np.nan) \
+                if gas_key in P else np.full(len(mstar), np.nan)
+        rec["fh2_anchor"] = float(fh2[0]) if np.isfinite(fh2[0]) else np.nan
+        if gas_key not in P or (np.isfinite(fh2[0]) and fh2[0] > fh2_min):
+            row_end, end_is_anchor = 0, True
+        else:
+            ok_h2 = np.isfinite(fh2) & (fh2 > fh2_min) & np.isfinite(t_cosmic_yr)
+            row_end = int(np.where(ok_h2)[0][np.argmax(t_cosmic_yr[ok_h2])]) if ok_h2.any() else -1
+            end_is_anchor = False
+        rec["end_is_anchor"] = bool(end_is_anchor)
+        t_times["end"] = float(t_cosmic_yr[row_end]) if row_end >= 0 else np.nan
+        for st in stages:
+            tt = t_times.get(st, np.nan)
+            rec["t_%s" % st] = float(tt) if np.isfinite(tt) else np.nan
+            if st == "anchor":
+                rec["row_%s" % st] = 0
+            elif st == "end":
+                rec["row_%s" % st] = int(row_end)
+            elif np.isfinite(tt) and tt > t_anchor + 1.0:      # beyond the history (1 yr tolerance)
+                rec["row_%s" % st] = -1
+            else:
+                rec["row_%s" % st] = _nearest_row(tt)
+        records.append(rec)
+    return records
+
+def stage_time_order(rec, stages=STAGES_PLOT):
+    """Stages of one record that are defined, sorted by their cosmic time (for drawing a track)."""
+    have = [(rec["t_%s" % st], st) for st in stages
+            if np.isfinite(rec.get("t_%s" % st, np.nan)) and rec.get("row_%s" % st, -1) >= 0]
+    return [st for _, st in sorted(have, key=lambda x: x[0])]
+
+def nearest_row(t_cosmic_yr, t_target, t_anchor=None, tol_yr=1.0):
+    """Index of the history row nearest to `t_target` [yr]; -1 when the time is not finite or (with `t_anchor`)
+    lies more than `tol_yr` beyond the anchor, i.e. outside the history."""
+    if not np.isfinite(t_target):
+        return -1
+    if t_anchor is not None and t_target > float(t_anchor) + tol_yr:
+        return -1
+    return int(np.argmin(np.abs(np.asarray(t_cosmic_yr, float) - float(t_target))))
+
+# ── histories on a common clock (notebook Part 5: evolutionary properties of the KS regions) ─────
+def interp_track(t, y, grid):
+    """One galaxy's y(t) linearly interpolated onto `grid`; NaN outside the coverage of its finite samples
+    (no extrapolation), non-finite samples dropped, duplicate times collapsed; all-NaN with < 2 samples."""
+    t, y, grid = np.asarray(t, float), np.asarray(y, float), np.asarray(grid, float)
+    out = np.full(len(grid), np.nan)
+    ok = np.isfinite(t) & np.isfinite(y)
+    if ok.sum() < 2:
+        return out
+    tt, ui = np.unique(t[ok], return_index=True)
+    yy = y[ok][ui]
+    if len(tt) < 2:
+        return out
+    inside = (grid >= tt[0]) & (grid <= tt[-1])
+    out[inside] = np.interp(grid[inside], tt, yy)
+    return out

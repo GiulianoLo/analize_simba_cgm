@@ -378,3 +378,139 @@ def extract_particles(
                 print(pt, "particles:", len(particle_lists[pt]))
 
         return _write_output(inp, particle_lists, output)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Moved from ks_tracks_lib.py (the K-S track measurements), unchanged
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ── reduced particle files ────────────────────────────────────────────────────────────────────────
+def reduced_path(reduced_dir, prefix, snap, gx):
+    """output/<sim>/reduced_particles/snap_NNN/<prefix>_snapNNN_galGGGGGG.h5"""
+    return os.path.join(reduced_dir, "snap_%03d" % int(snap),
+                        "%s_snap%03d_gal%06d.h5" % (prefix, int(snap), int(gx)))
+
+def load_reduced(path, keys=None, bad=None):
+    """Read one reduced file -> {attrs..., 'gas': {...}, 'star': {...}}; None if absent/corrupt.
+
+    keys=None reads every dataset; keys={'gas': (...), 'star': (...)} reads only those. A corrupt
+    (truncated) file is reported once into the optional `bad` list and skipped.
+    """
+    if not os.path.exists(path):
+        return None
+    try:
+        out = {}
+        with h5py.File(path, "r") as f:
+            for k in f.attrs:
+                out[k] = f.attrs[k]
+            for grp in ("gas", "star"):
+                if grp in f:
+                    if keys is None:
+                        want = list(f[grp].keys())
+                    else:
+                        want = [k for k in keys.get(grp, ()) if k in f[grp]]
+                    out[grp] = {k: f[grp][k][:] for k in want}
+        return out
+    except (OSError, RuntimeError) as e:            # inflate() failed etc.
+        if bad is not None and path not in bad:
+            bad.append(path)
+        print("  [load_reduced] SKIP corrupt file %s: %s" % (os.path.basename(path), e))
+        return None
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Cutout and reduced-file paths, header units, extraction plans
+# ═════════════════════════════════════════════════════════════════════════════
+
+def cutout_path(hydro_dir, prefix, snap, gid):
+    """``<hydro_dir>/snap_NNN/<prefix>_snapNNN_galGGGGGG.h5``: one Stage-0 per-galaxy particle cutout."""
+    return os.path.join(hydro_dir, f"snap_{int(snap):03d}", f"{prefix}_snap{int(snap):03d}_gal{int(gid):06d}.h5")
+
+
+def parse_reduced_name(basename):
+    """``"<prefix>_snapNNN_galGGGGGG.h5"`` -> ``(snap, gx)``; None for any other name."""
+    try:
+        return int(basename.split("_snap")[1].split("_")[0]), int(basename.split("_gal")[1].split(".")[0])
+    except (IndexError, ValueError):
+        return None
+
+
+def header_units(f):
+    """``(scale factor a, h)`` from an open snapshot or cutout's ``Header`` (1.0, 0.68 when absent)."""
+    hdr = f["Header"].attrs if "Header" in f else {}
+    return float(hdr.get("Time", 1.0)), float(hdr.get("HubbleParam", 0.68))
+
+
+def code_to_kpc(x, a, h):
+    """Comoving kpc/h (GIZMO code length) -> physical kpc."""
+    return np.asarray(x, float) * a / h
+
+
+def code_to_msun(m, h):
+    """1e10 Msun/h (GIZMO code mass) -> Msun."""
+    return np.asarray(m, float) * 1e10 / h
+
+
+def read_cutout(path, center_code, ptype, fields=()):
+    """One particle type of a cutout -> ``dict(pos [physical kpc about center_code], a, h, <fields> raw)``.
+
+    ``center_code`` (code units) is subtracted before the a/h conversion. A requested field
+    absent from the file is None. Returns None when the centre, the file or the particle type is missing.
+    """
+    if center_code is None or not os.path.exists(path):
+        return None
+    with h5py.File(path, "r") as f:
+        if ptype not in f:
+            return None
+        a, hh = float(f["Header"].attrs["Time"]), float(f["Header"].attrs["HubbleParam"])
+        out = dict(a=a, h=hh, pos=(np.asarray(f[f"{ptype}/Coordinates"][:], float) - center_code) * a / hh)
+        for fld in fields:
+            out[fld] = np.asarray(f[f"{ptype}/{fld}"][:]) if fld in f[ptype] else None
+    return out
+
+
+def read_star_formation(path, min_particles=20):
+    """Star particles of a cutout -> ``(formation scale factor, current mass [Msun])``; None when too few.
+
+    Pair with :func:`~simbanator.io.catalogs.make_a_to_t` and
+    :func:`~simbanator.histories.sfh.formed_mass_sfh` for an archaeological SFH (current masses:
+    the old bins are low by the return fraction unless divided by ``mfrac_of`` first).
+    """
+    if not os.path.exists(path):
+        return None
+    with h5py.File(path, "r") as f:
+        if "PartType4" not in f:
+            return None
+        a = np.asarray(f["PartType4/StellarFormationTime"][:], float)
+        m = np.asarray(f["PartType4/Masses"][:], float)
+        h = float(f["Header"].attrs["HubbleParam"])
+    ok = np.isfinite(a) & (a > 0) & (a <= 1)
+    if ok.sum() < min_particles:
+        return None
+    return a[ok], m[ok] * 1e10 / h
+
+
+def reduced_has(path, required=(("gas", "vel"), ("star", "vel"))):
+    """True when the reduced file opens and carries every ``(group, dataset)`` in ``required`` (e.g. the velocities)."""
+    try:
+        with h5py.File(path, "r") as f:
+            return all(ds in f[grp] for grp, ds in required)
+    except (OSError, KeyError):
+        return False
+
+
+def write_extraction_plan(path, snaps, gxs, sim_name, extra=None, attrs=None):
+    """The plan file ``build_reduced_particles_job.py`` reads: ``entry_snap`` / ``entry_gx`` (+ any ``extra`` datasets).
+
+    ``attrs`` are written as file attributes next to ``sim_name``. Returns the path.
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with h5py.File(path, "w") as out:
+        out.attrs["sim_name"] = sim_name
+        for k, v in (attrs or {}).items():
+            out.attrs[k] = v
+        out.create_dataset("entry_snap", data=np.asarray(snaps, np.int32))
+        out.create_dataset("entry_gx", data=np.asarray(gxs, np.int64))
+        for k, v in (extra or {}).items():
+            out.create_dataset(k, data=np.asarray(v))
+    return path

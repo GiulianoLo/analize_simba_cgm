@@ -24,7 +24,7 @@ __all__ = [
     "jet_weight", "xray_coupling", "xray_mode", "agn_states", "catalogue_agn_state",
     "ignition_time", "threshold_onset", "relative_onset_time", "onset_category", "pre_event_mean", "post_event_mean",
     "integrate_window", "exposure_integrals", "bh_window_metrics",
-    "bh_dataset_path", "read_bh_history", "build_bh_history",
+    "bh_dataset_path", "read_bh_history", "build_bh_history", "attach_bh_stages",
 ]
 
 JET_LOGMBH = 7.5            # jet mode needs M_BH above 10^7.5 Msun ...
@@ -360,3 +360,31 @@ def build_bh_history(sb, progenitor_index, snaps, candidates, out_path=None, ski
         if verbose:
             print(f"BH history -> {out_path}")
     return BH
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Moved from ks_tracks_lib.py (the K-S track measurements), unchanged
+# ═════════════════════════════════════════════════════════════════════════════
+from ..histories.events import STAGES_BH, nearest_row
+
+def attach_bh_stages(recs, t_cosmic_yr, dt_sft_gyr, stages=STAGES_BH):
+    """Add the AGN-feedback epochs to the stage records of `build_stage_records` (in place; returns `recs`).
+
+    dt_sft_gyr : {gid: {stage: dt}} — the epoch of each stage in Gyr RELATIVE TO SFT, the convention of the m25
+    notebook's Part 2d windows table (`agn_classifier_windows.fits`: t_agn = ignition, first crossing of half the
+    pre-QT peak BHAR; t_jet = first snapshot with the ungated w_jet >= 0.5; both (t - t_SFT)/Gyr).
+    A stage gets t_<stage> = t_sft + dt [yr] and row_<stage> = the nearest history row (-1 beyond the anchor,
+    row 0 = anchor); it stays undefined (NaN / -1) when the galaxy has no SFT, no entry, or a NaN dt.
+    """
+    t_cosmic_yr = np.asarray(t_cosmic_yr, float)
+    t_anchor = float(t_cosmic_yr[0])
+    for rec in recs:
+        d = dt_sft_gyr.get(int(rec["gid"]), {}) or {}
+        t_sft = float(rec.get("t_sft", np.nan))
+        for st in stages:
+            dt = d.get(st, np.nan)
+            dt = float(dt) if dt is not None else np.nan
+            t = t_sft + dt * 1e9 if (np.isfinite(t_sft) and np.isfinite(dt)) else np.nan
+            rec["t_%s" % st] = float(t) if np.isfinite(t) else np.nan
+            rec["row_%s" % st] = nearest_row(t_cosmic_yr, t, t_anchor=t_anchor)
+    return recs

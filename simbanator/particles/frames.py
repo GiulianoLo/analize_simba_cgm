@@ -170,3 +170,77 @@ def projected_radius(pos, nhat):
     para = pos @ np.asarray(nhat, float)
     return np.sqrt(np.clip(np.einsum("ij,ij->i", pos, pos) - para ** 2,
                            0.0, None))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Moved from ks_tracks_lib.py (the K-S track measurements), unchanged
+# ═════════════════════════════════════════════════════════════════════════════
+
+def face_on_R(pos, evecs):
+    """Face-on cylindrical radius [kpc] in the stored stellar principal frame.
+
+    `evecs` columns are the principal axes (descending eigenvalue) exactly as
+    simbanator.utils.geometry.principal_axes returns them; columns 0-1 span the disc plane.
+    """
+    pos = np.asarray(pos, float)
+    if pos.size == 0:
+        return np.zeros(0)
+    proj = pos @ np.asarray(evecs, float)
+    return np.hypot(proj[:, 0], proj[:, 1])
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Radii in the stored frame, gas selections, spin vectors
+# ═════════════════════════════════════════════════════════════════════════════
+
+def reduced_radius(pos, evecs, geom="cyl"):
+    """Radius of each particle: 3-D (``geom="3d"``) or face-on cylindrical in the stored principal frame (``"cyl"``).
+
+    The principal axes are the COLUMNS of ``evecs`` (:func:`principal_axes`), so the face-on plane
+    is ``(pos @ evecs)[:, :2]``. Two older notebooks used ``pos @ evecs.T``, which projects onto the
+    wrong frame.
+    """
+    pos = np.asarray(pos, float)
+    if geom == "3d":
+        return np.sqrt(np.sum(pos ** 2, axis=1))
+    return face_on_R(pos, evecs)
+
+
+def select_gas(red, mass_key, geom="cyl", region="all", member_only=False):
+    """``(R, mass, mask)`` of the gas of a reduced file for one mass column (``m_H2``, ``m_dust``, ...).
+
+    ``region``: ``"all"``, ``"ism"`` (star-forming gas, SFR > 0) or ``"cgm"`` (SFR = 0).
+    ``member_only`` keeps the CAESAR members. ``(None, None, None)`` when the column (or the
+    member flag, if asked for) is missing.
+    """
+    g = red.get("gas") if red else None
+    if g is None or mass_key not in g or (member_only and "member" not in g):
+        return None, None, None
+    R = reduced_radius(g["pos"], red["evecs"], geom)
+    m = np.asarray(g[mass_key], float)
+    sfr = np.asarray(g.get("sfr", np.zeros(len(m))), float)
+    reg = np.asarray(g["member"], bool) if member_only else np.ones(len(m), bool)
+    if region == "ism":
+        reg = reg & (sfr > 0)
+    elif region == "cgm":
+        reg = reg & (sfr == 0)
+    return R, m, reg
+
+
+def spin_unit(L=None, alpha=None, beta=None):
+    """Unit angular-momentum vectors ``(..., 3)`` from the L vectors, or from the caesar (ALPHA, BETA) angles.
+
+    The angles are taken in radians, BETA polar from z and ALPHA azimuthal (check against the
+    caesar build). None when neither is given.
+    """
+    if L is not None:
+        L = np.asarray(L, float)
+        if L.shape[-1] == 3:
+            nrm = np.linalg.norm(L, axis=-1, keepdims=True)
+            with np.errstate(all="ignore"):
+                return np.where(nrm > 0, L / nrm, np.nan)
+    if alpha is None or beta is None:
+        return None
+    a, b = np.asarray(alpha, float), np.asarray(beta, float)
+    sb = np.sin(b)
+    return np.stack([sb * np.cos(a), sb * np.sin(a), np.cos(b)], axis=-1)

@@ -108,12 +108,25 @@ simbanator/
 │                         #   onset_category, pre/post_event_mean; integrate_window, exposure_integrals
 │                         #   (e_x, e_jet, t_gaspoor, f_x, r_x, ...), bh_window_metrics; bh_dataset_path,
 │                         #   read_bh_history, build_bh_history
-├── particles/            # radial and resolved analysis of particle files
+├── particles/            # radial and resolved analysis of particle files; ks_tracks_lib.py (repo root) now only
+│                         #   re-exports the K-S code that moved into ks / kinematics / grains / profiles here
 │   ├── cutouts.py        # extract_particles – per-galaxy/halo/aperture HDF5 subsets
+│   │                     #   cutout_path, read_cutout, read_star_formation, reduced_path, load_reduced,
+│   │                     #   reduced_has, parse_reduced_name, header_units, code_to_kpc/msun, write_extraction_plan
 │   ├── profiles.py       # radial_profile – surface-density / mean radial profiles
+│   │                     #   reduced-file Σ(R) of gas components / phases / stars, Σ and mass in apertures,
+│   │                     #   temperature profile, member_radii, half_mass_radius, enclosed_radii,
+│   │                     #   radius_from_curve_of_growth, annulus_surface_densities, the profile cache
+│   ├── kinematics.py     # kappa_rot (Sales+12 K_rot/K), measure_zone_kinematics, KIN_ZONES
+│   ├── ks.py             # apertures, HE_FACTOR, sfr_window, measure_ks, ks_columns, ks_region,
+│   │                     #   select_tracks, measure_files, sf_law_depletion_time_gyr
 │   ├── frames.py         # shrink_center, principal_axes, rotate_to_frame,
 │   │                     #   sightline_unit_vectors, projected_radius (image-plane R)
-│   └── grains.py         # Z_to_OH12, Dust_to_Metal
+│   │                     #   face_on_R / reduced_radius (pos @ evecs: the axes are the COLUMNS), select_gas,
+│   │                     #   spin_unit
+│   └── grains.py         # Z_to_OH12, Dust_to_Metal; gas_components (caesar H2 split, the 2026-08-27 recipe),
+│                         #   growth_timescale, stellar_dust_budget, weighted/number_fraction,
+│                         #   measure_zone_budget, nfw_concentration, nfw_vesc_kms
 ├── rt/                   # radiative transfer with powderday
 │   ├── __init__.py       # MASTERS_DIR; MakeSED and friends load on first use (caesar + hyperion)
 │   ├── makesed.py        # MakeSED – Powderday setup + flux extraction (needs hyperion)
@@ -206,7 +219,8 @@ simbanator/
 │   │                     #   ε(qpah, umin, gamma) [W/kg] table cigale.pin_umin consumes.
 │   │                     #   Run under the CIGALE env python (needs pcigale.data).
 │   └── filters.py        # download_svo_filters – fetch filter curves from SVO
-├── obs/                  # comparative data: obs_data loaders, relations, overlays (filled in step 3)
+├── obs/                  # comparative data: RELATIONS (K98, B08, RK19), relation_y, tdep_ms_gyr (Tacconi+18);
+│                         #   obs_data loaders, overlays and analogue matching follow in the next batch
 ├── selection/            # generic sample rules and the dust label (filled in step 3)
 ├── stats/                # statistics used across projects (one module, plain arrays, seeds for bootstraps):
 │                         #   mw_auc, auc_rank, stratified_auc, cell_rank / auc_within_cells, auc_per_column, fdr_bh,

@@ -775,3 +775,26 @@ def log_rank(t, event, group1):
         return np.nan, np.nan
     chi2 = (O - E) ** 2 / V
     return float(chi2), float(chi2_dist.sf(chi2, 1))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Moved from ks_tracks_lib.py (the K-S track measurements), unchanged
+# ═════════════════════════════════════════════════════════════════════════════
+
+def grid_stats(tracks, nmin=5):
+    """tracks: (n_gal, n_grid) array, NaN = no coverage -> dict(n, med, p16, p84) per grid point; the statistics
+    are NaN wherever fewer than `nmin` galaxies contribute (n is always the true count)."""
+    tr = np.atleast_2d(np.asarray(tracks, float))
+    fin = np.isfinite(tr)
+    n = fin.sum(axis=0)
+    med, p16, p84 = (np.full(tr.shape[1], np.nan) for _ in range(3))
+    for j in range(tr.shape[1]):
+        if n[j] >= nmin:
+            v = tr[fin[:, j], j]
+            med[j], p16[j], p84[j] = np.median(v), np.percentile(v, 16), np.percentile(v, 84)
+    return dict(n=n, med=med, p16=p16, p84=p84)
+
+def ecdf(x):
+    """(sorted finite values, empirical CDF 1/n ... 1); empty arrays when nothing is finite."""
+    v = np.sort(np.asarray(x, float)[np.isfinite(np.asarray(x, float))])
+    return v, (np.arange(1, len(v) + 1) / len(v) if len(v) else np.zeros(0))

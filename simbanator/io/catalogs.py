@@ -214,3 +214,20 @@ def time_redshift_maps(cosmology=None, zmax=20.0, n=4000):
 def softening_pkpc(eps_ckpc_h, h, a):
     """A comoving softening length [ckpc/h] in physical kpc at scale factor ``a``."""
     return eps_ckpc_h / h * a
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Moved from ks_tracks_lib.py (the K-S track measurements), unchanged
+# ═════════════════════════════════════════════════════════════════════════════
+
+def make_a_to_t(cosmo, n=4096, a_min=0.02):
+    """Callable a_form (scale factor) -> cosmic time [Gyr] on an interpolation grid
+    (the Part-7e recipe of powderday_flux_quenched_m25: np.interp on 4096 nodes)."""
+    a_grid = np.linspace(a_min, 1.0, int(n))
+    t_grid = np.asarray(cosmo.age(1.0 / a_grid - 1.0).value, float)
+
+    def a_to_t(a):
+        a = np.asarray(a, float)
+        return np.interp(np.clip(a, a_grid[0], 1.0), a_grid, t_grid)
+    a_to_t.a_grid, a_to_t.t_grid = a_grid, t_grid
+    return a_to_t
