@@ -130,7 +130,7 @@ def find_quenching_times(
     galaxy_id=None,
     min_duration=None,
     max_events=3,
-    smooth_window=3,
+    smooth_window=1,         # 1 = NO smoothing; see 'Smoothing' below before raising it
     eps=1e-14,
     interp_factor=20,        # density of interpolation grid
     tolerance=0.1,           # dex tolerance for 1/t persistence
@@ -150,6 +150,34 @@ def find_quenching_times(
 
     Persistence time is `post_quench_frac * QT` by default. If
     `min_duration` is provided, it overrides this with a fixed duration.
+
+    Smoothing
+    ---------
+    ``smooth_window`` boxcar-smooths log sSFR over that many samples before the
+    crossings are looked for. **It defaults to 1 (no smoothing) since
+    2026-09-02**; it used to default to 3. At SIMBA's snapshot cadence
+    (~70-80 Myr in the tracked histories) a 3-sample boxcar is ~0.2 Gyr, which
+    is the fast-quenching timescale itself: it stretches tau_q for the fast
+    quenchers and merges them into the slow mode. Measured on the box histories
+    (``paper_ism_prediction_boxes`` Part 6a, ~2900 quenching events in m100n1024),
+    the distribution of log10(tau_q / t_H(z_QT)) goes from **unimodal** at
+    ``smooth_window=3`` (BIC(1) - BIC(2) = -14, single peak at -1.13) to
+    **strongly bimodal** at ``smooth_window=1`` (+693, modes at -2.11 and -1.09,
+    trough at -1.68) -- the fast / slow division that SIMBA's quenching
+    literature reports, whose dip sits at -1.5. The transient dips the smoothing
+    was suppressing are already rejected by the persistence requirement above,
+    and the fast events it recovers are real: they spend 75-100 % of the
+    following 0.5 Gyr below 0.2/t. Their tau_q (~40 Myr) is shorter than one
+    snapshot, so the fast mode's POSITION is set by the interpolation while its
+    EXISTENCE is not. Pass ``smooth_window=3`` to reproduce products built
+    before that date.
+
+    Zero SFR
+    --------
+    sSFR samples of exactly 0 are clipped to ``eps`` here and carry the quench:
+    callers must NOT drop them before the call. Dropping them alone turns the
+    m100n1024 distribution from bimodal (+44) into unimodal (-14) even at
+    ``smooth_window=3``.
 
     Parameters
     ----------
@@ -317,7 +345,6 @@ def find_quenching_times(
         }
 
     return quench_times, sft_times, time_since_quench
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Quench events per galaxy, critical points, values at stages, and clocks

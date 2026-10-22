@@ -607,3 +607,93 @@ def test_grid_stats_counts_and_nmin():
     v, F = kl.ecdf([3.0, np.nan, 1.0, 2.0])
     assert list(v) == [1.0, 2.0, 3.0] and np.isclose(F[-1], 1.0) and np.isclose(F[0], 1 / 3)
     assert kl.ecdf([np.nan]).__getitem__(0).size == 0
+
+
+# ── measure_zone_budget: shells out to the CGM, every particle, radial flows about the stellar systemic velocity ──
+def test_zone_budget_ring_outflow(tmp_path):
+    """A member core (stars + gas at rest) plus a NON-member dusty ring at 20 kpc receding at 100 km/s: the ring's
+    dust lands in cgm_in with vr_dust = +100, all of it 'out', none of it member; the core zone holds the members."""
+    path = str(tmp_path / "budget.h5")
+    n_core, n_ring = 50, 40
+    rng = np.random.default_rng(7)                    # its own generator: the module RNG's state depends on the test order
+    core = rng.normal(0, 0.2, (n_core, 3))
+    core *= np.minimum(1.0, 0.8 / np.linalg.norm(core, axis=1))[:, None]      # every core particle inside 0.8 kpc
+    phi = rng.uniform(0, 2 * np.pi, n_ring)
+    ring = np.column_stack([20.0 * np.cos(phi), 20.0 * np.sin(phi), np.zeros(n_ring)])
+    gpos = np.vstack([core, ring])
+    gvel = np.vstack([np.zeros((n_core, 3)), 100.0 * ring / 20.0])          # radial, +100 km/s
+    m_gas = np.full(n_core + n_ring, 1e6)
+    m_dust = np.concatenate([np.full(n_core, 1e3), np.full(n_ring, 5e3)])
+    m_H2 = np.concatenate([np.full(n_core, 1e5), np.zeros(n_ring)])
+    temp = np.concatenate([np.full(n_core, 1e4), np.full(n_ring, 1e6)])
+    member = np.concatenate([np.ones(n_core, bool), np.zeros(n_ring, bool)])
+    spos = rng.normal(0, 0.3, (60, 3)); svel = np.zeros((60, 3)); m_star = np.full(60, 2e6)
+    with h5py.File(path, "w") as f:
+        f.attrs["redshift"] = 1.0
+        g = f.create_group("gas")
+        for k, v in (("pos", gpos), ("vel", gvel), ("m_gas", m_gas), ("m_H2", m_H2), ("m_HI", m_gas * 0.1),
+                     ("m_dust", m_dust), ("temp", temp), ("member", member)):
+            g.create_dataset(k, data=v)
+        s = f.create_group("star")
+        for k, v in (("pos", spos), ("vel", svel), ("m_star", m_star), ("member", np.ones(60, bool))):
+            s.create_dataset(k, data=v)
+    red = kl.load_reduced(path)
+    rows = {r["zone"]: r for r in kl.measure_zone_budget(red)}
+    assert set(rows) == {z for z, _, _ in kl.BUDGET_ZONES}
+    assert rows["core"]["n_member"] == n_core and rows["core"]["m_dust_member"] == pytest.approx(n_core * 1e3)
+    assert rows["core"]["vr_dust"] == pytest.approx(0.0, abs=1e-6)
+    ci = rows["cgm_in"]
+    assert ci["n_gas"] == n_ring and ci["n_member"] == 0
+    assert ci["m_dust"] == pytest.approx(n_ring * 5e3) and ci["m_dust_member"] == 0.0
+    assert ci["vr_dust"] == pytest.approx(100.0) and ci["m_dust_out"] == pytest.approx(ci["m_dust"])
+    assert ci["m_dust_hot"] == pytest.approx(ci["m_dust"]) and rows["core"]["m_dust_hot"] == 0.0
+    assert ci["sigma_r_dust"] == pytest.approx(0.0, abs=1e-6) and rows["ring"]["m_dust"] == 0.0
+    # the Hubble term adds H * r to every radial velocity
+    rows_h = {r["zone"]: r for r in kl.measure_zone_budget(red, hubble_kms_per_kpc=0.1)}
+    assert rows_h["cgm_in"]["vr_dust"] == pytest.approx(102.0)
+
+
+def test_zone_budget_without_velocities(tmp_path):
+    path = str(tmp_path / "novel.h5")
+    with h5py.File(path, "w") as f:
+        f.attrs["redshift"] = 1.0
+        g = f.create_group("gas")
+        g.create_dataset("pos", data=np.array([[0.5, 0, 0], [15.0, 0, 0]]))
+        g.create_dataset("m_gas", data=np.array([1e6, 1e6])); g.create_dataset("m_dust", data=np.array([1e3, 2e3]))
+        g.create_dataset("member", data=np.array([True, False]))
+    rows = {r["zone"]: r for r in kl.measure_zone_budget(kl.load_reduced(path))}
+    assert not rows["core"]["has_vel"] and np.isnan(rows["core"]["vr_dust"]) and rows["cgm_in"]["m_dust"] == 2e3
+
+
+def test_zone_budget_escape(tmp_path):
+    """The escape criterion: a ring at 20 kpc receding at 100 km/s is bound in a 1e12 Msun halo (v_esc ~ 400 km/s there),
+    at 1000 km/s it escapes; the inward mass is the complement of the outward one; no halo -> NaN escape columns."""
+    path = str(tmp_path / "esc.h5")
+    n = 40
+    phi = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    ring = np.column_stack([20.0 * np.cos(phi), 20.0 * np.sin(phi), np.zeros(n)])
+    vel = 100.0 * ring / 20.0; vel[: n // 2] *= -1                       # half outward at +100, half inward at -100
+    with h5py.File(path, "w") as f:
+        f.attrs["redshift"] = 1.0
+        g = f.create_group("gas")
+        for k, v in (("pos", ring), ("vel", vel), ("m_gas", np.full(n, 1e6)), ("m_H2", np.full(n, 1e4)),
+                     ("m_dust", np.full(n, 1e3)), ("member", np.zeros(n, bool))):
+            g.create_dataset(k, data=v)
+        st = f.create_group("star")
+        for k, v in (("pos", np.zeros((20, 3))), ("vel", np.zeros((20, 3))), ("m_star", np.full(20, 1e6)), ("member", np.ones(20, bool))):
+            st.create_dataset(k, data=v)
+    red = kl.load_reduced(path)
+    c = kl.nfw_concentration(1e12, 1.0)
+    assert 3 < c < 12
+    vesc20 = kl.nfw_vesc_kms(20.0, 1e12, 200.0, c)
+    assert 250 < vesc20 < 700
+    rows = {r["zone"]: r for r in kl.measure_zone_budget(red, m200c_msun=1e12, r200c_kpc=200.0, z=1.0)}
+    ci = rows["cgm_in"]
+    assert ci["m_dust_out"] == pytest.approx(ci["m_dust_in"]) == pytest.approx(0.5 * ci["m_dust"])
+    assert ci["m_dust_esc"] == 0.0 and ci["m_H2_esc"] == 0.0 and ci["vesc_kms"] == pytest.approx(kl.nfw_vesc_kms(20.0, 1e12, 200.0, c))
+    with h5py.File(path, "r+") as f:
+        f["gas/vel"][...] = vel * 10.0                                    # +-1000 km/s
+    rows = {r["zone"]: r for r in kl.measure_zone_budget(kl.load_reduced(path), m200c_msun=1e12, r200c_kpc=200.0, z=1.0)}
+    assert rows["cgm_in"]["m_dust_esc"] == pytest.approx(rows["cgm_in"]["m_dust_out"])
+    rows = {r["zone"]: r for r in kl.measure_zone_budget(kl.load_reduced(path))}
+    assert np.isnan(rows["cgm_in"]["m_dust_esc"]) and np.isnan(rows["cgm_in"]["vesc_kms"]) and np.isfinite(rows["cgm_in"]["m_dust_in"])
