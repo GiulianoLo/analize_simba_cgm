@@ -16,7 +16,7 @@ __all__ = [
     "scalebar", "caption_lines", "wrap_caption",
     "to_plot_space", "from_plot_space", "robust_limits", "clipped_limits",
     "draw_track", "stage_medians", "draw_median_track", "significance_strip",
-    "count_histogram_behind", "kde_contour_or_scatter",
+    "count_histogram_behind", "kde_contour_or_scatter", "ks_axes",
 ]
 
 # The paper figures: large text, no grids (feedback: no titles, large labels, minimal in-panel text).
@@ -437,3 +437,18 @@ def kde_contour_or_scatter(ax, x, y, color, label=None, nmin=12, levels=4):
             pass
     ax.scatter(x[m], y[m], s=12, c=color, alpha=0.5, edgecolor="none", label=label)
     return "scatter"
+
+
+def ks_axes(ax, aperture_title, half_mass=True, he_factor=1.36, xlim=(-0.5, 3.6), ylim=(-4.6, 1.1),
+            sfr_note="SFR over 100 Myr (stars)", grid=False):
+    """Axis labels and limits of a Kennicutt-Schmidt panel (log Σ_H2 [Msun/pc²] vs log Σ_SFR [Msun/yr/kpc²]).
+
+    ``half_mass`` labels the half-mass convention (0.5 M / π R50²) rather than M(<r)/π r²; the He factor
+    on the simulated H2 is written into the x label.
+    """
+    conv = r"$0.5M/\pi R_{50}^2$" if half_mass else r"$M(<r)/\pi r^2$"
+    ax.set_xlabel(r"$\log(\Sigma_{\rm H_2}/M_\odot\,{\rm pc}^{-2})$  [" + aperture_title + ", " + conv + rf", $\times{he_factor:g}$ He]")
+    ax.set_ylabel(r"$\log(\Sigma_{\rm SFR}/M_\odot\,{\rm yr}^{-1}\,{\rm kpc}^{-2})$  [" + sfr_note + "]")
+    ax.set_xlim(xlim); ax.set_ylim(ylim)
+    ax.tick_params(direction="in", top=True, right=True)
+    ax.grid(grid)

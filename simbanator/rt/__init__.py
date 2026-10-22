@@ -1,12 +1,15 @@
 """Radiative transfer with powderday.
 
 - ``makesed``  MakeSED: target selection files, job staging, SED reading (needs caesar + hyperion; loaded on first use)
+- ``outputs``  tree layout, completeness / job status, staged masters, SED readers (hyperion only inside the readers)
 - ``masters/``  the powderday parameter masters and the cluster setup scripts. MakeSED resolves a bare
   ``paramf`` name inside this folder.
 """
 import os as _os
 
 MASTERS_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "masters")
+
+from .outputs import *  # noqa: F401,F403
 
 _LAZY = {n: "makesed" for n in ("MakeSED", "list_sed_apertures", "read_selection_centers", "flatten_results")}
 

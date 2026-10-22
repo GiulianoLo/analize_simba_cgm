@@ -2530,3 +2530,39 @@ def plot_parameter_priors(run_dir, module_params=None, sed_modules=None,
     else:
         plt.close(fig)
     return summary
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Helpers lifted from the notebooks
+# ═════════════════════════════════════════════════════════════════════════════
+
+def write_sfhfromfile_multi(run_dir, archive, ids, age_myr, shift_myr=0, filename="sfh.fits"):
+    """One ``sfhfromfile`` table with an SFR column per galaxy -> the ids written (None when none has an SFH).
+
+    ``archive`` maps id -> ``(t_gyr, sfr)``. Same grid and conventions as :func:`write_sfhfromfile`:
+    time 0..age_myr in strict 1 Myr steps, SFR = 0 before the first sample, edge-held after the last,
+    ``shift_myr`` drops the oldest Myr so the table still ends at the snapshot epoch.
+    """
+    t1 = np.arange(int(age_myr) + 1)
+    tab = Table()
+    tab["time"] = t1.astype(np.int64)
+    kept = []
+    for i in ids:
+        arch = archive.get(str(i))
+        if arch is None:
+            continue
+        ts, ss = arch
+        tab[str(i)] = np.clip(np.interp(t1 + shift_myr, np.asarray(ts, float) * 1e3, ss, left=0.0), 0.0, None)
+        kept.append(str(i))
+    if not kept:
+        return None
+    os.makedirs(run_dir, exist_ok=True)
+    tab.write(os.path.join(run_dir, filename), overwrite=True)
+    return kept
+
+
+def nearest_metallicity_node(value, grid, fallback):
+    """A SIMBA metallicity snapped to the nearest node of a CIGALE grid (in log); a non-finite value uses ``fallback``."""
+    v = float(value) if np.isfinite(value) else float(fallback)
+    out = float(nearest_option([v], grid, log=True)[0])
+    return out if np.isfinite(out) else float(nearest_option([fallback], grid, log=True)[0])

@@ -634,3 +634,59 @@ class SingleRender:
         prefix = 'map_region_' if self.region else 'map_'
         fig.savefig(os.path.join(output_dir, f'{prefix}{self.propr[1]}_{name}.png'))
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Helpers lifted from the notebooks (multiscale_figure, agn_feedback_view)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def make_camera(center, extent, xsize, ysize, t, p):
+    """An orthographic sphviewer camera centred on ``center`` with a square field of half-width ``extent``."""
+    return sph.Camera(x=float(center[0]), y=float(center[1]), z=float(center[2]), r="infinity", t=float(t), p=float(p),
+                      roll=0, extent=[-extent, extent, -extent, extent], xsize=xsize, ysize=ysize)
+
+
+def render_image(pos, mass, camera):
+    """SPH surface-density image of particles through ``camera`` -> ``(image, extent)``."""
+    R = sph.Render(sph.Scene(sph.Particles(pos, mass), Camera=camera))
+    return R.get_image(), R.get_extent()
+
+
+def blend_gas_stars(gas_img, star_img, dust_img=None, tau_max=1.5, gas_cmap=cm.magma, star_cmap=cm.Greys_r,
+                    gas_vmin=50, gas_vmax=99.5, gas_mode="log", star_vmin=50, star_vmax=99.7, star_mode="log", gamma=1.0):
+    """Gas and star SPH maps blended into one RGBA composite (``Screen``), optionally behind a dust screen.
+
+    ``*_vmin`` / ``*_vmax`` are percentiles: raise ``vmin`` to clip the diffuse background to black (the
+    full-box and CGM panels), push ``vmax`` toward 100 so a peaked core saturates less; ``gamma`` > 1
+    darkens the mid-tones (``Screen`` only brightens).
+    """
+    gas_n = get_normalized_image(gas_img, vmin=gas_vmin, vmax=gas_vmax, mode=gas_mode)
+    star_n = get_normalized_image(star_img, vmin=star_vmin, vmax=star_vmax, mode=star_mode)
+    if dust_img is not None:
+        dust_n = get_normalized_image(dust_img, vmin=5, vmax=99, mode="log")
+        gas_n = apply_dust_screen(gas_n, dust_n, tau_max)
+        star_n = apply_dust_screen(star_n, dust_n, tau_max)
+    if gamma != 1.0:
+        gas_n = np.clip(gas_n, 0, 1) ** gamma
+        star_n = np.clip(star_n, 0, 1) ** gamma
+    return Blend.Blend(star_cmap(star_n), gas_cmap(gas_n)).Screen()
+
+
+def project_mass_weighted(particles, quantity, extent, spos="edgeon", t=None, p=None):
+    """Mass-weighted line-of-sight projection of a per-particle scalar (or Σ with ``quantity=None``).
+
+    ``particles``: dict with ``pos``, ``mass``, ``hsml``, ``center``, ``L`` (the spin used to orient
+    the view, :func:`find_rot_ax`). Returns ``(map, surface density, extent)``.
+    """
+    t, p = find_rot_ax(particles["L"], t, p, spos)
+    R = rotation_matrices_from_angles(t, p)
+    cen = particles["center"]
+    pos_rot = (particles["pos"] - cen) @ R.T + cen
+    common = dict(hsml=particles["hsml"], r="infinity", x=cen[0], y=cen[1], z=cen[2], plot=False,
+                  extent=[-extent, extent, -extent, extent], logscale=False)
+    qd = QuickView(pos_rot, particles["mass"], **common)
+    den = qd.get_image()
+    ext = qd.get_extent()
+    if quantity is None:
+        return den, den, ext
+    num = QuickView(pos_rot, quantity * particles["mass"], **common).get_image()
+    return np.divide(num, den, out=np.zeros_like(num), where=den > 0), den, ext

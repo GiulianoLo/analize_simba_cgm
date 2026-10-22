@@ -223,8 +223,8 @@ def ks_region(x, y, upper_limit, ref="B08", band=None):
     one-particle floor) is ``'below'`` only when its floor is already below the band, otherwise
     ``'undef'``. Returns ``(regions, Δ = y - relation(x))``.
     """
-    from ..obs import RELATIONS, relation_y
-    band = float(RELATIONS[ref]["sig"]) if band is None else float(band)
+    from ..obs import relation, relation_y
+    band = float(relation(ref)["sig"]) if band is None else float(band)
     x, y, ul = np.asarray(x, float), np.asarray(y, float), np.asarray(upper_limit, bool)
     with np.errstate(invalid="ignore"):
         off = y - relation_y(ref, x)

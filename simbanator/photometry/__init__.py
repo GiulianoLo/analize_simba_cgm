@@ -1,12 +1,14 @@
 """Photometry from the radiative-transfer SEDs, and SED fitting with CIGALE.
 
 - ``filters``     SVO filter curves (download and load)
+- ``attenuation`` A_V from pairs / SEDs, SED unit conversions, modified blackbody, the anchor A_V tables
 - ``fluxes``      flux extraction, A_V, dust luminosity, annular fluxes (needs hyperion; loaded on first use)
 - ``cigale``      CIGALE inputs, runs, collection and truth comparison (import explicitly)
 - ``dl2014_fit``  dl2014 emissivity fit, run as a script
 """
 from .filters import (DEFAULT_SVO_FILTERS, download_svo_filter, download_svo_filters,
                       download_default_svo_filters)
+from .attenuation import *  # noqa: F401,F403
 
 _LAZY = {n: "fluxes" for n in ("flux_extraction", "get_svo_filters", "load_local_filters", "resolve_filter_ids",
                                  "magTo_mJy", "mJyToMag", "convolveFilterWithSED", "attenuation_mag",

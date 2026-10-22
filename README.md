@@ -129,6 +129,10 @@ simbanator/
 │                         #   measure_zone_budget, nfw_concentration, nfw_vesc_kms
 ├── rt/                   # radiative transfer with powderday
 │   ├── __init__.py       # MASTERS_DIR; MakeSED and friends load on first use (caesar + hyperion)
+│   ├── outputs.py        # tree layout (rtout_path, tree_rtout_path), sed_is_complete (Peeled SEDs are written
+│   │                     #   last), log_phase, rt_census, source_types, count_bh_particles, parse_master,
+│   │                     #   staged_master_values, check_bh_field_names, read_rt_sed (hyperion inside; aperture=,
+│   │                     #   sightline=), on_log_grid, stack_seds, sed_to_flux_density, dust_opacity, grid_centres
 │   ├── makesed.py        # MakeSED – Powderday setup + flux extraction (needs hyperion)
 │   │                     #   extract_flux_* take aperture= (Hyperion SED aperture index) and
 │   │                     #   uncertainties= (MC errors → <filter>_err); list_sed_apertures QC;
@@ -150,7 +154,9 @@ simbanator/
 │                         #    output/cis100/sed_almac11/{dust_on,dust_off,nenkova_i90,i60,i30}
 │                         #    (selection tables/maps in output/cis100/almac11_specphot/)
 ├── photometry/           # photometry from the RT SEDs and SED fitting with CIGALE
-│   ├── __init__.py       # filters eager; flux_extraction and friends load on first use (hyperion)
+│   ├── __init__.py       # filters + attenuation eager; flux_extraction and friends load on first use (hyperion)
+│   ├── attenuation.py    # av_from_pair, attenuation_curve, av_in_window, bolometric_from_nulnu,
+│   │                     #   nulnu_to_fnu_factor, fnu_to_nulnu, mbb_flux_mjy, anchor_av, attenuation_table
 │   ├── fluxes.py         # flux_extraction, get_svo_filters – SED → photometry
 │   │                     #   flux_unc= propagates an SED uncertainty → mJy_err / mag_err
 │   │                     #   annular_flux_table – F(<r_out)−F(<r_in) between two
@@ -158,7 +164,8 @@ simbanator/
 │   │                     #   attenuation_mag – A_λ = −2.5 log10(F_on/F_off), NaN-safe
 │   │                     #   dust_luminosity – L_dust [W] of a raw powderday SED
 │   │                     #   (∫νLν dlnν beyond 3 µm; optional dust_on−dust_off)
-│   ├── cigale.py         # CIGALE 2025.0 end-to-end: write_cigale_input (flux table →
+│   ├── cigale.py         # write_sfhfromfile_multi, nearest_metallicity_node (from the notebooks);
+│   │                     #   CIGALE 2025.0 end-to-end: write_cigale_input (flux table →
 │   │                     #   data_file, DB band names incl. Subaru Suprime-Cam — SVO
 │   │                     #   broad g/r/i/z map to CIGALE g+/r+/i+/z+),
 │   │                     #   stack_cigale_inputs/parse_stacked_id (many catalogs → ONE
@@ -219,9 +226,12 @@ simbanator/
 │   │                     #   ε(qpah, umin, gamma) [W/kg] table cigale.pin_umin consumes.
 │   │                     #   Run under the CIGALE env python (needs pcigale.data).
 │   └── filters.py        # download_svo_filters – fetch filter curves from SVO
-├── obs/                  # comparative data: RELATIONS (K98, B08, RK19), relation_y, tdep_ms_gyr (Tacconi+18);
-│                         #   obs_data loaders, overlays and analogue matching follow in the next batch
-├── selection/            # generic sample rules and the dust label (filled in step 3)
+├── obs/                  # comparative data: RELATIONS (K98, B08, RK19) + RELATIONS_EXTRA (VERTICO), relation,
+│                         #   relation_y (shift_dex= for an IMF), IMF_TO_CHABRIER, tdep_ms_gyr (Tacconi+18);
+│                         #   draw_relation, draw_ks_relations, overlay_ks_observations, draw_observed_points;
+│                         #   read_cigale_best_model, read_observed_photometry; mahalanobis_cloud / _d2
+├── selection/            # M25_RULE + quenched_sample (mask + individual cuts), dust_label, dusty_from_av,
+│                         #   mass_bins, sf_controls. The candidate divisions live in projects/divisions.
 ├── stats/                # statistics used across projects (one module, plain arrays, seeds for bootstraps):
 │                         #   mw_auc, auc_rank, stratified_auc, cell_rank / auc_within_cells, auc_per_column, fdr_bh,
 │                         #   cramers_v(_corrected), fisher_2x2; spearman, partial_spearman, partial_corr, theil_sen_ci;
@@ -238,7 +248,7 @@ simbanator/
 │   │                     #   panel_letter, panel_label, zone_frame, quiet_legend, scalebar, caption_lines,
 │   │                     #   wrap_caption, to/from_plot_space, robust_limits, clipped_limits, draw_track,
 │   │                     #   stage_medians, draw_median_track, significance_strip, count_histogram_behind,
-│   │                     #   kde_contour_or_scatter
+│   │                     #   kde_contour_or_scatter, ks_axes
 │   ├── plots.py          # HistoryPlots – generic multi-panel history figure
 │   │                     # plot_merger_rate_by_phase – bar chart of mergers by phase
 │   │                     # plot_main_galaxy_track – single-galaxy trajectory (unwrapped)
@@ -247,6 +257,7 @@ simbanator/
 │   │                     #   All track plots: positions in Mpc/h, radius param in Mpc/h
 │   ├── animation.py      # create_animation – GIF from x/y frame sequence
 │   └── rendering.py      # ParticleProjectionRender, RenderRGB, SingleRender
+│                         #   make_camera, render_image, blend_gas_stars, project_mass_weighted (from the notebooks);
 │                         #   (requires yt + py-sphviewer)
 └── data/                 # bundled reference data
     └── snap_z_maps/      # bundled snapshot → redshift tables per simulation box

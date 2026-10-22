@@ -12,7 +12,8 @@ from .figures import __all__ as _figures_all
 
 _LAZY = {n: "rendering" for n in ("ParticleProjectionRender", "plot_particle_projections", "RenderRGB",
                                     "SingleRender", "ReducedRender", "find_rot_ax", "rotation_matrices_from_angles",
-                                    "get_normalized_image", "log_stretch", "apply_dust_screen", "gamma_correction")}
+                                    "get_normalized_image", "log_stretch", "apply_dust_screen", "gamma_correction",
+                                    "make_camera", "render_image", "blend_gas_stars", "project_mass_weighted")}
 
 def __getattr__(name):
     # Heavy modules load on first use, so importing this package stays light.
