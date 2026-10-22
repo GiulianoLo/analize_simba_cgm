@@ -317,3 +317,190 @@ def find_quenching_times(
         }
 
     return quench_times, sft_times, time_since_quench
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Quench events per galaxy, critical points, values at stages, and clocks
+#
+# Self-contained (numpy only, plus the finder above): tests load this file by path.
+# ═════════════════════════════════════════════════════════════════════════════
+
+def ssfr_track(t_yr, mstar, sfr, keep_zero=True):
+    """One galaxy's sSFR(t) ready for :func:`find_quenching_times`: valid snapshots, sorted, duplicate times collapsed.
+
+    ``keep_zero=True`` keeps the SFR = 0 snapshots (the finder clips them to ``eps``): they carry
+    the quench, and dropping them flattens SIMBA's fast mode. ``keep_zero=False`` reproduces the
+    products built with ``sSFR > 0`` (ks_tracks, powderday_flux Part 2, quench_mode).
+    Returns ``(t_unique, ssfr_unique)``.
+    """
+    t_yr = np.asarray(t_yr, float); mstar = np.asarray(mstar, float); sfr = np.asarray(sfr, float)
+    with np.errstate(all="ignore"):
+        ssfr = np.where(mstar > 0, sfr / mstar, np.nan)
+    valid = np.isfinite(ssfr) & ((ssfr >= 0) if keep_zero else (ssfr > 0)) & np.isfinite(t_yr)
+    t, s = t_yr[valid], ssfr[valid]
+    o = np.argsort(t); t, s = t[o], s[o]
+    tu, ui = np.unique(t, return_index=True)
+    return tu, s[ui]
+
+
+def quench_event(t_yr, mstar, sfr, keep_zero=True, min_valid=5, galaxy_id=None, **finder_kwargs):
+    """The quench event of one galaxy history, with :func:`find_quenching_times`.
+
+    The LAST event is used (the one the galaxy is still in at the anchor). Returns a dict with
+    ``t_sft``, ``t_qt``, ``tau_q`` [yr], ``t_post_quench`` (end of the persistence window),
+    ``t_sft_first`` / ``t_qt_first`` (the first event), and ``n_events``; NaN when the history has
+    fewer than ``min_valid`` valid snapshots or no event. ``finder_kwargs`` go to the finder
+    (e.g. ``smooth_window``).
+    """
+    out = dict(t_sft=np.nan, t_qt=np.nan, tau_q=np.nan, t_post_quench=np.nan,
+               t_sft_first=np.nan, t_qt_first=np.nan, n_events=0)
+    tu, su = ssfr_track(t_yr, mstar, sfr, keep_zero=keep_zero)
+    if len(tu) < min_valid:
+        return out
+    qts, sfts, _, dbg = find_quenching_times(tu, su, galaxy_id=galaxy_id, plot=False, save_fits_path=None,
+                                             return_debug=True, **finder_kwargs)
+    qts, sfts = np.asarray(qts, float), np.asarray(sfts, float)
+    out["n_events"] = int(len(qts))
+    if not len(qts):
+        return out
+    k, kf = int(np.argmax(qts)), int(np.argmin(qts))
+    out.update(t_qt=float(qts[k]), t_sft=float(sfts[k]), t_qt_first=float(qts[kf]), t_sft_first=float(sfts[kf]))
+    out["tau_q"] = out["t_qt"] - out["t_sft"]
+    pe = dbg.get("persistence_end_times") if isinstance(dbg, dict) else None
+    if pe is not None and len(pe) > k and np.isfinite(pe[k]):
+        out["t_post_quench"] = float(pe[k])
+    return out
+
+
+def quench_records(P, t_yr, redshift, galaxy_ids, cols, age_of_z_gyr=None, keep_zero=True, **finder_kwargs):
+    """:func:`quench_event` for every selected column of a history block ``P`` (``{property: (n_snap, n_gal)}``).
+
+    Every column gets a record (``gid``, ``col``, the event times, ``tau_q``, ``z_qt``, and
+    ``tau_q_over_tH`` when ``age_of_z_gyr(z) -> t_H [Gyr]`` is given); galaxies without an event
+    keep NaN times.
+    """
+    t_yr = np.asarray(t_yr, float); redshift = np.asarray(redshift, float)
+    out = []
+    for col in np.asarray(cols, int):
+        gid = int(galaxy_ids[col])
+        ev = quench_event(t_yr, P["masses.stellar"][:, col], P["sfr"][:, col], keep_zero=keep_zero,
+                          galaxy_id=gid, **finder_kwargs)
+        rec = dict(gid=gid, col=int(col), **ev, z_qt=np.nan, tau_q_over_tH=np.nan)
+        if np.isfinite(ev["t_qt"]):
+            rec["z_qt"] = float(np.interp(ev["t_qt"], t_yr[::-1], redshift[::-1]))
+            if age_of_z_gyr is not None:
+                rec["tau_q_over_tH"] = ev["tau_q"] / (float(age_of_z_gyr(rec["z_qt"])) * 1e9)
+        out.append(rec)
+    return out
+
+
+def track_start(t_yr, mstar, sfr):
+    """Earliest time with a valid star-forming track (finite, positive sSFR); NaN if never."""
+    t_yr = np.asarray(t_yr, float)
+    with np.errstate(all="ignore"):
+        ssfr = np.where(np.asarray(mstar, float) > 0, np.asarray(sfr, float) / np.asarray(mstar, float), np.nan)
+    valid = np.isfinite(ssfr) & (ssfr > 0) & np.isfinite(t_yr)
+    return float(np.nanmin(t_yr[valid])) if valid.any() else np.nan
+
+
+def first_downward_crossing(t, y, threshold):
+    """Linearly interpolated time where ``y`` first crosses ``threshold`` going down; NaN if it never does."""
+    t, y = np.asarray(t, float), np.asarray(y, float)
+    d = y - threshold
+    for i in range(len(d) - 1):
+        if d[i] > 0 and d[i + 1] <= 0:
+            return t[i] + d[i] / (d[i] - d[i + 1]) * (t[i + 1] - t[i])
+    return np.nan
+
+
+def values_at_rows(arr, rows, cols):
+    """``arr[row, col]`` for each (row, col) pair (row < 0 -> NaN): a property at each galaxy's stage row."""
+    arr = np.asarray(arr)
+    rows, cols = np.asarray(rows, int), np.asarray(cols, int)
+    out = np.full(len(rows), np.nan)
+    ok = rows >= 0
+    out[ok] = arr[rows[ok], cols[ok]]
+    return out
+
+
+def ratio_at_rows(num, den, rows, cols):
+    """``num / den`` at each (row, col) pair; NaN where the denominator is not positive."""
+    a, b = values_at_rows(num, rows, cols), values_at_rows(den, rows, cols)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(b > 0, a / b, np.nan)
+
+
+def regrid(t, y, grid, nmin=3):
+    """One galaxy's track y(t) on ``grid`` (no extrapolation: NaN outside its sampled range; all NaN below ``nmin`` points).
+
+    ``t`` is usually the time relative to an event (``t - t_SFT``).
+    """
+    t, y, grid = np.asarray(t, float), np.asarray(y, float), np.asarray(grid, float)
+    ok = np.isfinite(t) & np.isfinite(y)
+    if ok.sum() < nmin:
+        return np.full(len(grid), np.nan)
+    return np.interp(grid, t[ok], y[ok], left=np.nan, right=np.nan)
+
+
+def log_track(t, q, nmin=3):
+    """``(t sorted, log10 q)`` over the snapshots where q is finite and positive; ``(None, None)`` below ``nmin``."""
+    t, q = np.asarray(t, float), np.asarray(q, float)
+    good = np.isfinite(q) & (q > 0) & np.isfinite(t)
+    if good.sum() < nmin:
+        return None, None
+    ts, ys = t[good], np.log10(q[good])
+    o = np.argsort(ts)
+    return ts[o], ys[o]
+
+
+def aligned_stack(t_yr, Q, t0_yr, grid_gyr, log=True, nmin=3):
+    """Each galaxy's whole history re-zeroed on its own event time and interpolated onto ``grid_gyr``.
+
+    ``Q`` is ``(n_snap, n_gal)``, ``t0_yr`` one event time per galaxy (NaN rows stay NaN). With
+    ``log`` the stack holds log10 of the positive values. Returns ``(n_gal, n_grid)``.
+    """
+    Q = np.asarray(Q, float); t_yr = np.asarray(t_yr, float); t0 = np.asarray(t0_yr, float)
+    out = np.full((Q.shape[1], len(grid_gyr)), np.nan)
+    for j in range(Q.shape[1]):
+        if not np.isfinite(t0[j]):
+            continue
+        if log:
+            ts, ys = log_track(t_yr, Q[:, j], nmin=nmin)
+        else:
+            ok = np.isfinite(Q[:, j]) & np.isfinite(t_yr)
+            ts, ys = (np.sort(t_yr[ok]), Q[:, j][ok][np.argsort(t_yr[ok])]) if ok.sum() >= nmin else (None, None)
+        if ts is None:
+            continue
+        out[j] = np.interp(grid_gyr, (ts - t0[j]) / 1e9, ys, left=np.nan, right=np.nan)
+    return out
+
+
+def binned_event_profile(t_yr, values, t0_yr, xwin_gyr=2.0, nbins=12, log=True, ref0=False):
+    """Per galaxy, the median of its values in bins of ``t - t0`` [Gyr] over ``[-xwin, +xwin]``.
+
+    ``values`` is ``(n_snap, n_gal)``; with ``log`` non-positive values are dropped and log10 is
+    taken. ``ref0=True`` subtracts each galaxy's own value in the bin containing 0 (or the
+    nearest filled bin), so the profile is the change about the event and immune to how the
+    contributing cohort changes. Returns ``(bin centres, (n_gal, nbins) profile)``.
+    """
+    t_yr = np.asarray(t_yr, float); V = np.asarray(values, float); t0 = np.asarray(t0_yr, float)
+    xe = np.linspace(-xwin_gyr, xwin_gyr, nbins + 1); xc = 0.5 * (xe[:-1] + xe[1:])
+    prof = np.full((V.shape[1], nbins), np.nan)
+    for j in range(V.shape[1]):
+        if not np.isfinite(t0[j]):
+            continue
+        tt = (t_yr - t0[j]) / 1e9
+        with np.errstate(divide="ignore", invalid="ignore"):
+            vv = np.where(V[:, j] > 0, np.log10(V[:, j]), np.nan) if log else V[:, j]
+        for b in range(nbins):
+            sel = (tt >= xe[b]) & (tt < xe[b + 1]) & np.isfinite(vv)
+            if sel.any():
+                prof[j, b] = np.nanmedian(vv[sel])
+    if ref0:
+        b0 = int(np.clip(np.searchsorted(xe, 0.0) - 1, 0, nbins - 1))
+        for j in range(prof.shape[0]):
+            fin = np.where(np.isfinite(prof[j]))[0]
+            if len(fin):
+                bref = b0 if np.isfinite(prof[j, b0]) else fin[np.argmin(np.abs(fin - b0))]
+                prof[j] = prof[j] - prof[j, bref]
+    return xc, prof

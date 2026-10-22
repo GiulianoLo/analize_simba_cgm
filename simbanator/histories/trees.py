@@ -184,3 +184,113 @@ def read_progen(ids, outname, snaplist, sb, fitsdir, output_dir=None):
     os.makedirs(output_dir, exist_ok=True)
     print('Saving...')
     table.write(os.path.join(output_dir, outname), overwrite=True)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Main branches: progenitor / descendant links, anchor histories
+# ═════════════════════════════════════════════════════════════════════════════
+
+def main_progenitors(sb, snap):
+    """Catalogue index at ``snap - 1`` of the most massive progenitor of every galaxy at ``snap`` (-1 = none).
+
+    Read from ``tree_data/progen_galaxy_star`` in the catalogue or its ``progen_links`` sidecar
+    (:func:`progen_tree_file`); None when neither exists.
+    """
+    tf = progen_tree_file(sb, snap)
+    if tf is None:
+        return None
+    with h5py.File(tf, "r") as f:
+        p = f["tree_data/progen_galaxy_star"][:]
+    return (p[:, 0] if p.ndim == 2 else p).astype(np.int64)
+
+
+def main_descendants(sb, snap_from, idx):
+    """Catalogue index at ``snap_from + 1`` of the galaxy whose most massive progenitor is ``idx`` (NaN if none).
+
+    When several galaxies share that progenitor, the most massive one is taken. Returns None
+    when ``snap_from + 1`` has no merger-tree links at all.
+    """
+    s_to = int(snap_from) + 1
+    prog = main_progenitors(sb, s_to)
+    if prog is None:
+        return None
+    ms = None
+    cat = sb.get_caesar_file(s_to)
+    if os.path.exists(cat):
+        with h5py.File(cat, "r") as f:
+            if "galaxy_data/dicts/masses.stellar" in f:
+                ms = np.asarray(f["galaxy_data/dicts/masses.stellar"][:], float)
+    order = np.argsort(ms) if (ms is not None and len(ms) == len(prog)) else np.arange(len(prog))
+    desc = {}
+    for j in order:                        # ascending mass: the last write per progenitor is the most massive
+        if prog[j] >= 0:
+            desc[int(prog[j])] = int(j)
+    idx = np.asarray(idx, float)
+    out = np.full(len(idx), np.nan)
+    ok = np.isfinite(idx) & (idx >= 0)
+    out[ok] = [desc.get(int(i), np.nan) for i in idx[ok]]
+    return out
+
+
+def load_anchor_history(path, cosmology=None):
+    """One anchor's property history (written by HDF5BuildHistory) -> dict.
+
+    Keys: ``galaxy_ids``, ``snaps_arr``, ``redshift``, ``t_cosmic_yr`` and ``P`` (every dataset
+    under ``properties``, shape ``(n_snap, n_gal)``, row 0 = the anchor). ``cosmology`` defaults
+    to Planck15.
+    """
+    if cosmology is None:
+        from astropy.cosmology import Planck15 as cosmology
+    H = {"P": {}}
+    with h5py.File(path, "r") as f:
+        H["galaxy_ids"] = f["metadata/galaxy_ids"][:]
+        H["snaps_arr"] = f["metadata/snapshots"][:]
+        H["redshift"] = f["redshift/Redshift"][:]
+        f["properties"].visititems(
+            lambda name, obj: H["P"].__setitem__(name, obj[:]) if isinstance(obj, h5py.Dataset) else None)
+    H["t_cosmic_yr"] = cosmology.age(H["redshift"]).value * 1e9
+    return H
+
+
+def progenitor_index_matrix(sb, anchor_snap, prog_file, galaxy_ids, snaps):
+    """``(n_snap, n_gal)`` catalogue index of each galaxy's main progenitor, one row per entry of ``snaps``.
+
+    Loads the anchor catalogue with caesar (needs caesar) and walks the progenitor links with
+    :class:`~simbanator.histories.properties.HDF5BuildHistory`.
+    """
+    import gc
+    from .properties import HDF5BuildHistory
+    cs0 = sb.load_catalog(snap=anchor_snap)
+    hP = HDF5BuildHistory(sb, cs0, progfilename=prog_file)
+    hP.get_history_indx(galaxy_ids, int(np.max(snaps)), int(np.min(snaps)))
+    M = np.vstack([hP.history_indx[str(s)] for s in snaps])
+    del cs0, hP
+    gc.collect()
+    return M
+
+
+def align_by_ids(arrays, cached_ids, current_ids, axis=0, name="", verbose=True):
+    """Re-index arrays built for ``cached_ids`` onto ``current_ids`` along ``axis`` (missing ids -> NaN).
+
+    Arrays whose length along ``axis`` is not ``len(cached_ids)`` are returned untouched.
+    Returns ``(arrays, n_matched)``; a mismatch prints a warning naming ``name``.
+    """
+    cached_ids = np.asarray(cached_ids).astype(np.int64); current_ids = np.asarray(current_ids).astype(np.int64)
+    if len(cached_ids) == len(current_ids) and np.array_equal(cached_ids, current_ids):
+        return arrays, len(current_ids)
+    pos = {int(g): j for j, g in enumerate(cached_ids)}
+    sel = np.array([pos.get(int(g), -1) for g in current_ids]); found = sel >= 0
+    out = {}
+    for k, a in arrays.items():
+        a = np.asarray(a)
+        if a.ndim <= axis or a.shape[axis] != len(cached_ids):
+            out[k] = a; continue
+        shape = list(a.shape); shape[axis] = len(current_ids)
+        b = np.full(shape, np.nan, float)
+        sl = [slice(None)] * b.ndim; sl[axis] = np.where(found)[0]
+        b[tuple(sl)] = np.take(a, sel[found], axis=axis)
+        out[k] = b
+    if verbose:
+        print(f"[warn] {name}: cached product holds {len(cached_ids)} galaxies but the sample has {len(current_ids)} "
+              f"({int(found.sum())} matched, {int((~found).sum())} -> NaN). Rebuild it to cover the full sample.")
+    return out, int(found.sum())

@@ -73,10 +73,14 @@ simbanator/
 │                         #   convert_hdf5_fits – Caesar HDF5 → FITS (legacy)
 ├── histories/            # everything along a galaxy's branch through time
 │   ├── trees.py          # caesar_read_progen, read_progen – merger-tree track FITS
+│   │                     #   main_progenitors / main_descendants (tree_data or progen_links sidecar),
+│   │                     #   load_anchor_history, progenitor_index_matrix, align_by_ids
 │   ├── mergers.py        # Progenitor, Galaxy, process_galaxies_with_tracks,
 │   │                     #   analyze_mergers – companion detection & classification
 │   │                     #   Units: positions Mpc/h, r_half kpc/h, masses M☉
 │   ├── properties.py     # HDF5BuildHistory – property histories from Caesar catalogs
+│   │                     #   trace_main_branches (one pass over the snapshots, each catalogue read once),
+│   │                     #   safe_ratio, gas_oh12, dust_to_metal_devis (De Vis+19), time_derivative
 │   ├── sfh_fsps.py       # compute_sfh, bin_sfh, load_sfh_file – FSPS SFHs
 │   ├── sfh.py            # smooth_resample_sfh, recent_sfr – de-burst snapshot-cadence
 │   │                     #   SFR tracks (Gaussian kernel + uniform resample);
@@ -88,8 +92,22 @@ simbanator/
 │   │                     #   grid (linear in weights: disjoint subsets sum exactly);
 │   │                     #   projected_region_sfh – SFH of r_in<R≤r_out along a
 │   │                     #   sightline (Hyperion aperture geometry, nstar_min skip)
+│   │                     #   formed_mass_sfh (unsmoothed), cumulative_ssfr, load_sfh_archive,
+│   │                     #   sfh_archive_attrs, sfh_shape_stats
 │   └── events.py         # find_quenching_times, load_quenching_events
-├── agn/                  # BH accretion and AGN feedback histories (filled in step 3)
+│                         #   ssfr_track / quench_event / quench_records (keep_zero=True keeps SFR = 0
+│                         #   snapshots; False reproduces products built with sSFR > 0), track_start,
+│                         #   first_downward_crossing, values_at_rows, ratio_at_rows, regrid, log_track,
+│                         #   aligned_stack, binned_event_profile
+├── agn/                  # BH accretion and SIMBA's feedback modes (one module): JET_LOGMBH / JET_FEDD /
+│                         #   XRAY_FGAS_MAX / W_FULL / MDOT_PER_MBH; eddington_ratio, mdot_from_fedd,
+│                         #   bolometric_luminosity; jet_weight (require_accretion= / missing_bh= : the two
+│                         #   conventions the notebooks used), xray_coupling (x_coup; gate= is the knob),
+│                         #   xray_mode, agn_states (xray / choked / radiative / dormant + diagnostics),
+│                         #   catalogue_agn_state; ignition_time, threshold_onset, relative_onset_time,
+│                         #   onset_category, pre/post_event_mean; integrate_window, exposure_integrals
+│                         #   (e_x, e_jet, t_gaspoor, f_x, r_x, ...), bh_window_metrics; bh_dataset_path,
+│                         #   read_bh_history, build_bh_history
 ├── particles/            # radial and resolved analysis of particle files
 │   ├── cutouts.py        # extract_particles – per-galaxy/halo/aperture HDF5 subsets
 │   ├── profiles.py       # radial_profile – surface-density / mean radial profiles

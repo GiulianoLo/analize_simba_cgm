@@ -259,3 +259,77 @@ def fit_delayed_bq(t, sfr, t_obs, age_bq0=None):
     r2 = 1.0 - np.sum(resid**2) / max(np.sum((sfr - sfr.mean())**2), 1e-30)
     return dict(A=A, tau_main_myr=tau * 1e3, age_main_myr=am * 1e3,
                 age_bq_myr=ab * 1e3, r_sfr=r, r2=r2, t_obs=t_obs)
+
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Unsmoothed formed-mass histories, SFH archives, shape statistics
+# ═════════════════════════════════════════════════════════════════════════════
+
+def formed_mass_sfh(tform_gyr, mass_msun, t_obs_gyr, bin_myr=25.0):
+    """SFR [Msun/yr] from star-particle formation times on a fixed 0-based grid, without smoothing -> ``(bin centres [Gyr], sfr)``.
+
+    The unsmoothed counterpart of :func:`archaeological_sfh`. Pass formed masses (current masses
+    divided by :func:`mfrac_of`) for a formed-mass SFH; current masses make the old bins low by
+    the return fraction.
+    """
+    dt = bin_myr / 1e3
+    edges = np.arange(0.0, float(t_obs_gyr) + dt, dt)
+    h, _ = np.histogram(np.asarray(tform_gyr, float), bins=edges, weights=np.asarray(mass_msun, float))
+    return 0.5 * (edges[:-1] + edges[1:]), h / (dt * 1e9)
+
+
+def cumulative_ssfr(t_yr, sfr, mstar, t0_yr, dt_gyr):
+    """∫ sSFR dt over ``[t0, t0 + dt]`` (the mass fraction formed); NaN unless the history covers the whole window."""
+    if not np.isfinite(t0_yr):
+        return np.nan
+    t = np.asarray(t_yr, float)
+    with np.errstate(all="ignore"):
+        ssfr = np.where(np.asarray(mstar, float) > 0, np.asarray(sfr, float) / np.asarray(mstar, float), np.nan)
+    good = np.isfinite(ssfr) & np.isfinite(t)
+    if good.sum() < 2:
+        return np.nan
+    ts, ss = t[good], ssfr[good]; o = np.argsort(ts); ts, ss = ts[o], ss[o]
+    t1 = t0_yr + dt_gyr * 1e9
+    if ts[0] > t0_yr or ts[-1] < t1:
+        return np.nan
+    grid = np.linspace(t0_yr, t1, 60)
+    trapz = getattr(np, "trapezoid", None) or np.trapz
+    return float(trapz(np.interp(grid, ts, ss), grid))
+
+
+def load_sfh_archive(path):
+    """Region SFH archive -> ``{id: {inclination: {region: (t_gyr, sfr, t_obs_gyr)}}}``."""
+    import h5py
+    out = {}
+    with h5py.File(path, "r") as f:
+        for sid in f:
+            for il in f[sid]:
+                for lab in f[sid][il]:
+                    d = f[sid][il][lab]
+                    arr = np.asarray(d[:], float)
+                    out.setdefault(str(sid), {}).setdefault(str(il), {})[str(lab)] = (
+                        arr[:, 0], arr[:, 1], float(d.attrs["t_obs_gyr"]))
+    return out
+
+
+def sfh_archive_attrs(path):
+    """Provenance attributes of an SFH archive (empty dict when the file does not exist)."""
+    import os
+    import h5py
+    if not os.path.exists(path):
+        return {}
+    with h5py.File(path, "r") as f:
+        return {k: (v.decode() if isinstance(v, bytes) else v) for k, v in f.attrs.items()}
+
+
+def sfh_shape_stats(t_gyr, sfr, t_obs_gyr, recent_gyr=0.1):
+    """``(mass-weighted age [Myr], fraction formed in the last recent_gyr, normalised cumulative mass)``; NaNs for an empty SFH."""
+    w = np.clip(np.asarray(sfr, float), 0.0, None)
+    tot = w.sum()
+    if not np.isfinite(tot) or tot <= 0:
+        return np.nan, np.nan, None
+    t_gyr = np.asarray(t_gyr, float)
+    age_mw = (t_obs_gyr - float((w * t_gyr).sum() / tot)) * 1e3
+    f_rec = float(w[t_gyr > t_obs_gyr - recent_gyr].sum() / tot)
+    return age_mw, f_rec, np.cumsum(w) / tot

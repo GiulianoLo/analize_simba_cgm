@@ -584,3 +584,93 @@ def find_property_threshold_crossings_from_hdf5(
     hdul.writeto(fits_output, overwrite=True)
 
     return fits_output, len(out_time)
+
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Derived history columns
+# ═════════════════════════════════════════════════════════════════════════════
+
+def safe_ratio(a, b):
+    """``a / b`` with NaN where ``b`` is not positive (either input None -> None)."""
+    if a is None or b is None:
+        return None
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    with np.errstate(all="ignore"):
+        return np.where(b > 0, a / np.where(b > 0, b, np.nan), np.nan)
+
+
+def gas_oh12(z_gas, z_sun=0.0134, oh_sun=8.69):
+    """Gas-phase 12 + log(O/H) from the mass-weighted metallicity (Asplund+09 solar values by default)."""
+    if z_gas is None:
+        return None
+    z = np.asarray(z_gas, float)
+    with np.errstate(all="ignore"):
+        return np.where(z > 0, oh_sun + np.log10(np.where(z > 0, z, np.nan) / z_sun), np.nan)
+
+
+def dust_to_metal_devis(m_dust, m_h2, oh12):
+    """Dust-to-metal ratio as in De Vis+19: ``M_dust / (f_z M_H2 + M_dust)``, ``f_z = 27.36 x 10^(O/H - 12)``."""
+    if m_dust is None or m_h2 is None or oh12 is None:
+        return None
+    md, mh2, oh = (np.asarray(v, float) for v in (m_dust, m_h2, oh12))
+    with np.errstate(all="ignore"):
+        mz = 27.36 * 10.0 ** (oh - 12.0) * mh2 + md
+        return np.where(mz > 0, md / mz, np.nan)
+
+
+def time_derivative(arr, t):
+    """d(arr)/dt along axis 0 (snapshots), with the rows sorted by time for the gradient and returned in their original order."""
+    a = np.asarray(arr, float); t = np.asarray(t, float)
+    o = np.argsort(t); inv = np.argsort(o)
+    with np.errstate(all="ignore"):
+        d = np.gradient(a[o], t[o], axis=0)
+    return d[inv]
+
+
+def trace_main_branches(anchors, snap_max, snap_min, read_columns, main_progenitors, end_snap=None, verbose=True):
+    """Follow the main branch of every anchor galaxy back through the snapshots, reading each catalogue once.
+
+    Parameters
+    ----------
+    anchors : dict ``{anchor_snap: galaxy indices at that snapshot}``.
+    snap_max, snap_min : the snapshot range to walk (``snap_max`` >= every anchor).
+    read_columns : callable ``snap -> (dict name -> array over that catalogue's galaxies, redshift)``.
+    main_progenitors : callable ``snap -> array`` of the main-progenitor index at ``snap - 1`` (or None),
+        e.g. ``lambda s: main_progenitors(sb, s)``.
+    end_snap : optional ``{anchor_snap: last snapshot to keep}`` (the chain stops there).
+
+    Returns ``{anchor_snap: dict(ids, snaps, z, data={name: (n_snap, n_gal)})}`` with the rows
+    ordered from the anchor backwards; a broken chain is NaN from there on.
+    """
+    import time as _time
+    state, t0 = {}, _time.time()
+    end_snap = end_snap or {}
+    for s in range(int(snap_max), int(snap_min) - 1, -1):
+        cols, z = read_columns(s)
+        prog = main_progenitors(s)
+        n_here = len(next(iter(cols.values()))) if cols else 0
+        for a, ids in anchors.items():
+            if s == a:
+                ids = np.sort(np.asarray(ids, np.int64))
+                state[a] = dict(ids=ids, idx=ids.astype(float), snaps=[], z=[], data={k: [] for k in cols})
+            st = state.get(a)
+            if st is None or s < end_snap.get(a, snap_min):
+                continue
+            idx = st["idx"]; ok = np.isfinite(idx) & (idx >= 0) & (idx < n_here)
+            ii = idx[ok].astype(int)
+            for k in st["data"]:
+                arr = np.full(len(idx), np.nan)
+                if k in cols:
+                    arr[ok] = np.asarray(cols[k], float)[ii]
+                st["data"][k].append(arr)
+            st["snaps"].append(s); st["z"].append(z)
+            nxt = np.full(len(idx), np.nan)
+            if prog is not None:
+                p = prog[ii]; nxt[ok] = np.where(p >= 0, p, np.nan)
+            st["idx"] = nxt
+        if verbose and ((snap_max - s) % 10 == 9 or s == snap_min):
+            print(f"    snap {s:3d} (z = {z:.2f}) done, {_time.time() - t0:5.0f} s", flush=True)
+    return {a: dict(ids=st["ids"], snaps=np.array(st["snaps"], np.int32), z=np.array(st["z"], float),
+                    data={k: np.vstack(v) if v else np.empty((0, len(st["ids"]))) for k, v in st["data"].items()})
+            for a, st in state.items()}
