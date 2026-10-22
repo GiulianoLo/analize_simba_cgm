@@ -36,3 +36,24 @@ Consumers: `ks_tracks_quenched_m25.ipynb` (Part 4) via `OBS_CSV` (ks_table.csv);
 Part 5 via `OBS_GD_CSV` (almac11_gas_dust.csv: the age / M_dust/M* range of the `det_dust` sources, drawn as the band
 of the observed parameter space) and Part 6 (every source as a point: fiducial-run `AV_<fid_run>`, `logMstar`, `logDGR` + `dgr_censor`). The simulated Σ_H2 there is corrected
 by ×1.36 (He) before comparison because SIMBA's per-particle H2 mass is hydrogen-only.
+
+`almac11_orientation.csv` + `almac11_stamps_f814w.npz` — the sky orientation of every source and a small ACS F814W postage
+stamp, DERIVED locally by `make_orientation_table.py` (this directory; inputs outside the repo: the COSMOS-Web 2025 NIRCam
+Sérsic fits `Cycle 5/Data/cosmos_web_alma_c11_radii.fits`, the ACS gim2d ellipticities `GIANTS_ACS_CSOSMOS_sizes.csv`, the
+uv-plane Gaussian fits `ALMA-C11/uvmcmc_shape.csv`, 3D-Barolo's `BB_hc5/rings_final1.txt`, and the 60" ACS F814W cutouts
+`Cycle 5/Data/cutouts_centers/`). Per source: `q_opt` / `pa_opt_deg` (+ `_src`: nircam = COSMOS-Web axratio_sersic /
+angle_sersic; acs / acs_stamp = gim2d 1 − Ellipticity and the stamp's second moments inside 1.5" where COSMOS-Web has no fit:
+hc5, hc9, hc10, hc12), `pa_stamp_deg` / `q_stamp` (the stamp moments for every source, PSF-blurred: a cross-check), `n_sersic`,
+`q_co` / `pa_co_deg` / `co_shape` and `q_dust` / `pa_dust_deg` / `dust_shape` (the uv fits where the shape was measured),
+`inc_kin_deg` / `pa_kin_deg` (Barolo; hc5 only, inclination fixed at 75), `ra_deg` / `dec_deg` (the stamp centre), the ALMA map
+rms (`cont_rms_jyb`, `mom0_rms_jybkms`: MAD of the pixels 3–8" from the centre), the beams (`cont_/mom0_bmaj_as, bmin_as, bpa_deg`)
+and the mass per unit flux `msun_per_jykms` = MH2_fid / S_co_jykms, `msun_per_ujy_dust` = 10^logMdust_fid / S_dust_ujy (NaN when
+undetected) from almac11_gas_dust.csv. Every PA is the MAJOR axis in degrees East of North,
+[0, 180) — the COSMOS-Web `angle_sersic` already is that angle (it agrees with the CO-fit PAs: hc3 96 / 94, hc7 39 / 46, and
+with the stamp moments to a few degrees); the Barolo PA keeps its 0–360 receding-side value. The npz holds `ids`, `stamps`
+(17 × 160 × 160 float32, 0.05"/pix, 4" half-size, North up East left, centred on the light centroid, not
+background-subtracted), `pix_arcsec`, `half_arcsec`, and the imaging pipeline's (Imaging_v1, `~/Desktop/Projects/ALMA-C11/Data/<id>/`)
+pbcor continuum `cont` [Jy/beam] and CO(3–2) moment-0 `mom0` [Jy/beam km/s] cut around the same centre (`alma_ids`, 11 × 59 × 59 at
+`cont_/mom0_pix_arcsec` 0.14", 4" half-size; `cont_/mom0_x0_as, y0_as` = the offset of the central pixel from the stamp centre,
+x West y North). Consumer: `agn_states_dusty_vs_pure.ipynb` Part 27 (the simulated
+companions rendered at the observed inclination and PA). Refresh by re-running the script locally and copying both files.
