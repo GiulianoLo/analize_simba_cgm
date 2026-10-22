@@ -76,6 +76,23 @@ Status (2026-10-22): done except the cluster deploy (see the last bullet).
 
 ## Step 5: notebooks import the library (in place, no moves)
 
+Resume checklist (written 2026-10-22, end of step 4):
+- Nothing is deployed since step 3: the cluster package is the step-3 state (its `histories/events.py` is
+  even pre-D1, `keep_zero=True`). Deploy steps 4 and 5 together, after diffing every file against the
+  cluster copy (the cluster notebooks are edited live: knobs).
+- Function map notebook -> library: the triage page CODE list (`dest` = `lib:<module>`) plus the renames
+  in `restructure_step3.md` (e.g. `_ztag` -> `io.z_tag`, `paper_save` -> `plotting.save_figure`,
+  `_silverman` -> `stats.silverman_test`). Project-level helpers (`dest = project:<p>`) are NOT
+  library functions: they stay in the notebook until step 7 creates `_helpers.py`.
+- Paths: replace `os.path.join(os.getcwd(), "output", ...)` with `products.path(...)` for registry
+  products and `io.output_dir(...)` otherwise; `obs_data/...` and the `.res` files via `io.data_file`;
+  `import ks_tracks_lib as kl` -> the library modules (`ks_tracks_lib.py` is a re-export).
+- Every cell that writes a registry product calls `products.stamp(path, name, <conventions used>)`.
+- D1 / D2 change results: a notebook that relied on `keep_zero=True` (paper_ism_prediction Part 6) or
+  `require_accretion=False` (its x_coup) gets the new convention; its products stay flagged stale (D3).
+- Order suggestion: pipeline producers first (powderday_flux, ks_tracks, quench_mode,
+  paper_ism_prediction_boxes), then the readers.
+
 - Follows D1-D3. Each notebook switches from its own copies to `simbanator` imports, one notebook
   per commit, backed up first (`backups/notebooks/<nb>.pre-step5.bak.ipynb`).
 - Product regression check: a cluster-side script re-runs the pure-build parts with the library
