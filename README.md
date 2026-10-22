@@ -60,9 +60,17 @@ simbanator/
 │   ├── simba.py          # Simulation – path resolution, Caesar/snapshot loading
 │   ├── paths.py          # OutputPaths – structured output directory manager
 │   ├── config.py         # config/simulations.json read/write helpers (see config/README.md)
-│   ├── catalogs.py       # findsatellites
+│   ├── catalogs.py       # caesar catalogues read with h5py (no caesar): read_galaxy_columns (dicts/ or flat,
+│   │                     #   index= subset, NaN for gaps), dataset, parent_halo_columns, sim_attributes,
+│   │                     #   catalog_path / file_prefix (from the config); nearest_snapshot, z_tag,
+│   │                     #   time_redshift_maps, softening_pkpc; findsatellites (caesar search)
+│   ├── products.py       # need (path or 'run <producer> first'), read_frame, read_selection; the step-4 registry
+│   ├── qc.py             # hdf5_status: ok / missing / no-perm / empty / no-keys / no:<grp> / corrupt:<Err>
 │   ├── sysinfo.py        # print_ram_usage
-│   └── tables.py         # convert_hdf5_fits – Caesar HDF5 → FITS (legacy)
+│   └── tables.py         # as_str (explicit byte decoding: no silent '== "AGN"' failures), read_table (decodes
+│                         #   every byte column at read time), write_table (temp file + rename: atomic, gvfs-safe),
+│                         #   float_column, to_frame (native byte order), align_to_rows, galaxy_keys, tagged_path;
+│                         #   convert_hdf5_fits – Caesar HDF5 → FITS (legacy)
 ├── histories/            # everything along a galaxy's branch through time
 │   ├── trees.py          # caesar_read_progen, read_progen – merger-tree track FITS
 │   ├── mergers.py        # Progenitor, Galaxy, process_galaxies_with_tracks,
@@ -182,9 +190,23 @@ simbanator/
 │   └── filters.py        # download_svo_filters – fetch filter curves from SVO
 ├── obs/                  # comparative data: obs_data loaders, relations, overlays (filled in step 3)
 ├── selection/            # generic sample rules and the dust label (filled in step 3)
-├── stats/                # statistics used across projects (filled in step 3)
+├── stats/                # statistics used across projects (one module, plain arrays, seeds for bootstraps):
+│                         #   mw_auc, auc_rank, stratified_auc, cell_rank / auc_within_cells, auc_per_column, fdr_bh,
+│                         #   cramers_v(_corrected), fisher_2x2; spearman, partial_spearman, partial_corr, theil_sen_ci;
+│                         #   wilson (clamped to contain p), beta_interval; bootstrap_median, group_medians,
+│                         #   grouped_bootstrap_median, cluster_bootstrap, median_band, running_median (keys= for a
+│                         #   galaxy bootstrap), running_quantile, binned_median, binned_stats, log_band_with_floor,
+│                         #   median_iqr, jackknife; weighted_quantile, time_weighted_mean, terciles, ridge_residual;
+│                         #   scaled_kde, kde_dip, n_modes, critical_bandwidth, silverman_test, kde_levels;
+│                         #   kaplan_meier, km_quantiles, log_rank
 ├── plotting/             # history plots, paper style, particle rendering
-│   ├── __init__.py       # plots eager; rendering classes load on first use (sphviewer, yt)
+│   ├── __init__.py       # plots + figures eager; rendering classes load on first use (sphviewer, yt)
+│   ├── figures.py        # PAPER_RC + paper_style(), save_figure (png+pdf), figure_path (prefix router),
+│   │                     #   apply_font_floor, panel_grid / equalise_rows (common row limits + first-column frame),
+│   │                     #   panel_letter, panel_label, zone_frame, quiet_legend, scalebar, caption_lines,
+│   │                     #   wrap_caption, to/from_plot_space, robust_limits, clipped_limits, draw_track,
+│   │                     #   stage_medians, draw_median_track, significance_strip, count_histogram_behind,
+│   │                     #   kde_contour_or_scatter
 │   ├── plots.py          # HistoryPlots – generic multi-panel history figure
 │   │                     # plot_merger_rate_by_phase – bar chart of mergers by phase
 │   │                     # plot_main_galaxy_track – single-galaxy trajectory (unwrapped)

@@ -1,7 +1,9 @@
-"""Convert HDF5 Caesar catalogs to FITS tables."""
+"""Tables: HDF5 Caesar -> FITS conversion, explicit string decoding, atomic writes, row alignment."""
 
 import os
 import gc
+import tempfile
+import warnings
 import numpy as np
 import h5py
 from astropy.io import fits
@@ -375,3 +377,125 @@ def convert_hdf5_fits(sb, snaprange, ignore=None, only=None, verbose=0, output_d
         file_path = sb.get_caesar_file(snap)
         print(f'Processing: {file_path}')
         _process_hdf5(file_path, output_dir, ignore, only, verbose)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Table helpers used across the notebooks
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def as_str(col, strip=True):
+    """A string column as a plain ``str`` array, decoding bytes explicitly.
+
+    FITS string columns can come back as bytes (dtype ``|S6``), and comparing those to a
+    Python string (``col == 'AGN'``) is False everywhere without any error. This decodes
+    bytes as UTF-8 and raises ``UnicodeDecodeError`` on bytes that are not valid text,
+    rather than letting a comparison fail silently.
+    """
+    arr = np.asarray(col)
+    if arr.dtype.kind == "S":
+        out = np.char.decode(arr, "utf-8")
+    elif arr.dtype.kind == "O":
+        out = np.array([x.decode("utf-8") if isinstance(x, (bytes, np.bytes_)) else str(x) for x in arr.ravel()]
+                       ).reshape(arr.shape)
+    else:
+        out = arr.astype(str)
+    return np.char.strip(out) if strip else out
+
+
+def read_table(path, decode=True, **kwargs):
+    """``astropy.table.Table.read`` with every byte-string column decoded to ``str``.
+
+    Decoding happens once, at read time, so no later comparison against a Python string can
+    silently match nothing. Columns that hold bytes which are not valid UTF-8 are left as
+    they are, with a warning naming them.
+    """
+    from astropy.table import Table
+    tab = Table.read(path, **kwargs)
+    if decode:
+        bad = []
+        for name in tab.colnames:
+            col = tab[name]
+            if getattr(col.dtype, "kind", None) == "S" and col.ndim == 1:
+                try:
+                    tab[name] = as_str(np.asarray(col.filled(b"") if hasattr(col, "filled") else col))
+                except UnicodeDecodeError:
+                    bad.append(name)
+        if bad:
+            warnings.warn(f"{path}: byte columns left undecoded (not UTF-8): {bad}", stacklevel=2)
+    return tab
+
+
+def write_table(tab, path, overwrite=True):
+    """Write an astropy Table through a temporary file in the same folder, then rename.
+
+    The rename is atomic, so a reader never sees a half-written file, and it avoids
+    astropy's in-place flush, which fails on the gvfs sftp mount (``OSError: Errno 95``).
+    """
+    d = os.path.dirname(os.path.abspath(path))
+    os.makedirs(d, exist_ok=True)
+    suffix = os.path.splitext(path)[1] or ".fits"
+    fd, tmp = tempfile.mkstemp(prefix=".tmp_", suffix=suffix, dir=d)
+    os.close(fd)
+    try:
+        tab.write(tmp, overwrite=True)
+        if not overwrite and os.path.exists(path):
+            raise FileExistsError(path)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    return path
+
+
+def float_column(tab, name, default=np.nan):
+    """Column ``name`` as a float array, masked entries -> ``default``; all ``default`` if absent."""
+    if name not in tab.colnames:
+        return np.full(len(tab), default, float)
+    col = tab[name]
+    if hasattr(col, "filled"):
+        return np.asarray(col.astype(float).filled(default), float)
+    return np.asarray(col, float)
+
+
+def to_frame(tab, cols=None, string_cols=()):
+    """Selected columns of an astropy Table as a pandas DataFrame.
+
+    Masked entries become NaN, values are converted to native byte order (FITS is big-endian
+    and pandas refuses it), and ``string_cols`` go through :func:`as_str`.
+    """
+    import pandas as pd
+    cols = tab.colnames if cols is None else cols
+    out = {}
+    for c in cols:
+        v = tab[c]
+        v = v.filled(np.nan) if (hasattr(v, "filled") and v.dtype.kind in "fc") else (v.filled() if hasattr(v, "filled") else v)
+        v = np.asarray(v)
+        out[c] = as_str(v) if (c in string_cols or v.dtype.kind in "SU") else v.astype(v.dtype.newbyteorder("="))
+    return pd.DataFrame(out)
+
+
+def align_to_rows(mapping, snaps, gal_ids, key=None, default=np.nan):
+    """Values of a ``{(snap, gal_id): value}`` dict aligned to the rows ``(snaps, gal_ids)``.
+
+    With ``key``, each value is itself a dict and ``value[key]`` is taken. Rows missing from
+    the mapping (or the key) get ``default``.
+    """
+    if key is None:
+        vals = [mapping.get((int(s), int(g)), default) for s, g in zip(snaps, gal_ids)]
+    else:
+        vals = [mapping.get((int(s), int(g)), {}).get(key, default) for s, g in zip(snaps, gal_ids)]
+    return np.array(vals)
+
+
+def galaxy_keys(tab, snap_col="anchor_snap", id_col="gal_id", key_col="gkey"):
+    """The ``(snap, gal_id)`` key of every row: from two integer columns, or from a ``"<snap>_<id>"`` key column."""
+    if snap_col in tab.colnames:
+        return list(zip(np.asarray(tab[snap_col], int).tolist(), np.asarray(tab[id_col], int).tolist()))
+    return [tuple(int(v) for v in g.split("_")) for g in as_str(tab[key_col])]
+
+
+def tagged_path(path, tag):
+    """``out/table.fits`` + ``"agn"`` -> ``out/table_agn.fits``."""
+    root, ext = os.path.splitext(path)
+    return f"{root}_{tag}{ext}"
