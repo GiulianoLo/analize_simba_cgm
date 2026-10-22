@@ -31,7 +31,8 @@ def smooth_resample_sfh(t_gyr, sfr, dt_myr=25.0, kernel_myr=None):
         Cosmic times of the samples [Gyr] (any order).
     sfr : array
         SFR at those times [Msun/yr]; negatives are clipped to 0, non-finite
-        samples dropped (zeros are kept — they carry the quench).
+        samples dropped (zeros are kept here; the quench finder's callers drop them,
+        see ``events.ssfr_track``).
     dt_myr : float
         Output grid step [Myr].
     kernel_myr : float, optional

@@ -174,10 +174,14 @@ def find_quenching_times(
 
     Zero SFR
     --------
-    sSFR samples of exactly 0 are clipped to ``eps`` here and carry the quench:
-    callers must NOT drop them before the call. Dropping them alone turns the
-    m100n1024 distribution from bimodal (+44) into unimodal (-14) even at
-    ``smooth_window=3``.
+    sSFR samples of exactly 0 are clipped to ``eps`` here if a caller passes them.
+    The project convention (2026-10-22) is to drop them before the call
+    (:func:`ssfr_track`, ``keep_zero=False``): a zero SFR is below resolution, not a
+    measurement. At ``smooth_window=1`` this leaves the bimodality intact (dBIC 2 vs 1
+    Gaussians, log tau_q/t_H: cis100 +1560 dropped vs +1465 kept, cis50 +137 vs +123,
+    cis25 +42 vs +41; modes -2.1 / -1.1 either way); it moves the SFT/QT of most of the
+    galaxies that have zero-SFR snapshots (14 % of cis100). It only mattered at
+    ``smooth_window=3``, where the smoothing had already removed the fast mode.
 
     Parameters
     ----------
@@ -352,12 +356,13 @@ def find_quenching_times(
 # Self-contained (numpy only, plus the finder above): tests load this file by path.
 # ═════════════════════════════════════════════════════════════════════════════
 
-def ssfr_track(t_yr, mstar, sfr, keep_zero=True):
+def ssfr_track(t_yr, mstar, sfr, keep_zero=False):
     """One galaxy's sSFR(t) ready for :func:`find_quenching_times`: valid snapshots, sorted, duplicate times collapsed.
 
-    ``keep_zero=True`` keeps the SFR = 0 snapshots (the finder clips them to ``eps``): they carry
-    the quench, and dropping them flattens SIMBA's fast mode. ``keep_zero=False`` reproduces the
-    products built with ``sSFR > 0`` (ks_tracks, powderday_flux Part 2, quench_mode).
+    ``keep_zero=False`` (default) drops the SFR = 0 snapshots: a zero SFR is below SIMBA's
+    resolution, not a measured value, so it does not count (decision 2026-10-22; the ks_tracks,
+    powderday_flux Part 2 and quench_mode products were built this way). ``keep_zero=True`` keeps
+    them (the finder clips them to ``eps``), as paper_ism_prediction_boxes Part 6 did.
     Returns ``(t_unique, ssfr_unique)``.
     """
     t_yr = np.asarray(t_yr, float); mstar = np.asarray(mstar, float); sfr = np.asarray(sfr, float)
@@ -370,7 +375,7 @@ def ssfr_track(t_yr, mstar, sfr, keep_zero=True):
     return tu, s[ui]
 
 
-def quench_event(t_yr, mstar, sfr, keep_zero=True, min_valid=5, galaxy_id=None, **finder_kwargs):
+def quench_event(t_yr, mstar, sfr, keep_zero=False, min_valid=5, galaxy_id=None, **finder_kwargs):
     """The quench event of one galaxy history, with :func:`find_quenching_times`.
 
     The LAST event is used (the one the galaxy is still in at the anchor). Returns a dict with
@@ -399,7 +404,7 @@ def quench_event(t_yr, mstar, sfr, keep_zero=True, min_valid=5, galaxy_id=None, 
     return out
 
 
-def quench_records(P, t_yr, redshift, galaxy_ids, cols, age_of_z_gyr=None, keep_zero=True, **finder_kwargs):
+def quench_records(P, t_yr, redshift, galaxy_ids, cols, age_of_z_gyr=None, keep_zero=False, **finder_kwargs):
     """:func:`quench_event` for every selected column of a history block ``P`` (``{property: (n_snap, n_gal)}``).
 
     Every column gets a record (``gid``, ``col``, the event times, ``tau_q``, ``z_qt``, and

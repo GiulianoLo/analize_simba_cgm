@@ -100,10 +100,10 @@ simbanator/
 │                         #   ~0.2 Gyr at SIMBA's cadence — the fast-quenching timescale — and it merged the
 │                         #   fast quenchers into the slow mode (log10(tau_q/t_H) unimodal, BIC(1)-BIC(2)
 │                         #   = -14 in m100n1024; at 1 it is bimodal, +693, trough -1.68). sSFR = 0 samples
-│                         #   are clipped to eps and CARRY the quench: callers must not drop them.
+│                         #   are not measurable: callers drop them (ssfr_track keep_zero=False; bimodality kept).
 │                         #   Pass smooth_window=3 to reproduce products built before that date.
-│                         #   ssfr_track / quench_event / quench_records (keep_zero=True keeps SFR = 0
-│                         #   snapshots; False reproduces products built with sSFR > 0), track_start,
+│                         #   ssfr_track / quench_event / quench_records (keep_zero=False default drops SFR = 0
+│                         #   snapshots: not measurable; True keeps them), track_start,
 │                         #   first_downward_crossing, values_at_rows, ratio_at_rows, regrid, log_track,
 │                         #   aligned_stack, binned_event_profile
 ├── agn/                  # BH accretion and SIMBA's feedback modes (one module): JET_LOGMBH / JET_FEDD /
