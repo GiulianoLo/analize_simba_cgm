@@ -8,6 +8,7 @@ from astropy.cosmology import Planck15 as _default_cosmo
 
 from ..plotting.plots import HistoryPlots
 from .trees import progen_tree_file
+from ..io.paths import output_dir as _output_root
 
 
 def _resolve_h5_path(family, propr):
@@ -127,7 +128,7 @@ class HDF5BuildHistory:
     def __init__(self, sb, cs, progfilename='progenitors_most_mass.fits',
                  progen_dir=None):
         if progen_dir is None:
-            progen_dir = os.path.join(os.getcwd(), 'output', sb.name, 'progenitors')
+            progen_dir = os.path.join(str(_output_root()), sb.name, 'progenitors')
         self.progen_file = os.path.join(progen_dir, progfilename)
         self.history_indx = None
         self.sb = sb
@@ -406,7 +407,7 @@ class HDF5BuildHistory:
                 "No history loaded. Run get_property_history() first."
             )
         # Ensure output/<sim_name>/caesar_sfh directory exists
-        out_dir = os.path.join(os.getcwd(), 'output', self.sb.name, 'caesar_sfh')
+        out_dir = os.path.join(str(_output_root()), self.sb.name, 'caesar_sfh')
         os.makedirs(out_dir, exist_ok=True)
         out_path = os.path.join(out_dir, filename)
         with h5py.File(out_path, 'w') as f:

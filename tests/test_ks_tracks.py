@@ -7,7 +7,6 @@ Synthetic reduced particle files are written in the exact schema of build_reduce
 import importlib.util
 import os
 import sys
-import types
 
 import h5py
 import numpy as np
@@ -50,7 +49,8 @@ def write_reduced(path, evecs, gas_pos_frame, star_pos_frame, m_h2, sfr_gas, m_s
     """Write a synthetic reduced file. Positions are given in the PRINCIPAL frame and rotated back
     to the 'original' frame with evecs (columns = axes), exactly as the job stores them:
     stored pos satisfies pos @ evecs == frame coordinates. Velocities (frame, km/s) are rotated the
-    same way; with_vel=False writes a pre-2026-08-28 file (no `vel`)."""
+    same way; with_vel=False writes a pre-2026-08-28 file (no `vel`). `nh` and `zgas` (2026-09-02)
+    are always written."""
     gpos = np.asarray(gas_pos_frame, float) @ evecs.T
     spos = np.asarray(star_pos_frame, float) @ evecs.T
     ng, ns = len(gpos), len(spos)
@@ -80,6 +80,8 @@ def write_reduced(path, evecs, gas_pos_frame, star_pos_frame, m_h2, sfr_gas, m_s
         g.create_dataset("m_H2", data=m_h2, compression="lzf")
         g.create_dataset("sfr", data=np.asarray(sfr_gas, np.float32), compression="lzf")
         g.create_dataset("temp", data=np.full(ng, 5e3, np.float32), compression="lzf")
+        g.create_dataset("nh", data=np.full(ng, 1.0, np.float32), compression="lzf")
+        g.create_dataset("zgas", data=np.full(ng, 0.02, np.float32), compression="lzf")
         g.create_dataset("member", data=gas_member, compression="lzf")
         if with_vel:
             g.create_dataset("vel", data=gvel.astype(np.float32), compression="lzf")
@@ -393,17 +395,7 @@ def test_end_stage_anchor_or_last_h2_snapshot():
 
 # ── the job's tform producer (module imported with stubbed cluster-only deps) ─────────────────────
 def _import_job(monkeypatch):
-    for name in ("simbanator", "simbanator.io", "simbanator.io.simba", "simbanator.utils",
-                 "simbanator.utils.geometry", "build_profiles_job"):
-        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
-    sys.modules["simbanator.io.simba"].Simulation = object
-    sys.modules["simbanator.utils.geometry"].shrink_center = lambda *a, **k: None
-    sys.modules["simbanator.utils.geometry"].principal_axes = lambda *a, **k: None
-    bpj = sys.modules["build_profiles_job"]
-    for fn in ("header_units", "_to_kpc", "_to_msun", "_detect", "_components", "_halo_of",
-               "_temperature", "_XH", "_nH"):
-        setattr(bpj, fn, lambda *a, **k: None)
-    bpj.H2_RECIPE = "caesar-v1"
+    monkeypatch.syspath_prepend(ROOT)                        # build_profiles_job (the job's helper module)
     monkeypatch.setenv("DUST_PLAN", "/dev/null")
     spec = importlib.util.spec_from_file_location("brpj_test", os.path.join(ROOT, "build_reduced_particles_job.py"))
     mod = importlib.util.module_from_spec(spec)

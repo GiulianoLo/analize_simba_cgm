@@ -26,17 +26,18 @@ import gc
 import numpy as np
 import h5py
 
+from simbanator.io.paths import output_dir
 from simbanator.io.simba import Simulation
-from simbanator.utils.geometry import shrink_center, principal_axes, rotate_to_frame
+from simbanator.particles.cutouts import header_units
+from simbanator.particles.frames import shrink_center, principal_axes, rotate_to_frame
+from simbanator.particles.grains import (XH_CAESAR, NH_H2_MIN, H2_RECIPE, gas_components,  # noqa: F401
+                                         nh_from_density as _nH, gas_temperature as _temperature)
 
-PLAN_PATH = os.environ.get(
-    "DUST_PLAN", os.path.join("output", "cis100", "caesar_sfh", "dust_profile_plan.hdf5"))
+PLAN_PATH = os.environ.get("DUST_PLAN", str(output_dir("cis100", "caesar_sfh", "dust_profile_plan.hdf5")))
 OUT_DIR = os.environ.get("DUST_OUTDIR", os.path.dirname(PLAN_PATH))
 CGM_RMAX = float(os.environ.get("CGM_RMAX_KPC", 300.0))   # CGM extent [physical kpc]
 CGM_NBINS = int(os.environ.get("CGM_NBINS_R", 30))
 
-GAMMA, KB, MP = 5.0 / 3.0, 1.380649e-16, 1.672622e-24
-MSUN_G, KPC_CM = 1.989e33, 3.085678e21
 # HI/H2 split — caesar convention (caesar/hydrogen_mass_calc.pyx: get_HIH2_masses), so that particle
 # sums reproduce the catalogue masses.H2 / masses.HI:
 #   H2 = XH_CAESAR * m_gas * FractionH2      (zeroed where n_H < NH_H2_MIN: wind particles carry stale fH2)
@@ -44,19 +45,12 @@ MSUN_G, KPC_CM = 1.989e33, 3.085678e21
 # NOT m_H * nh * fH2: in SIMBA `NeutralHydrogenAbundance` is Grackle's equilibrium HI fraction at the
 # effective-EOS temperature (~0.003 in the star-forming gas of massive galaxies, where fH2 ~ 0.9), so the
 # extra nh factor deleted up to 97% of the H2 exactly where it lives (found 2026-08-27; H2_RECIPE stamps
-# product files built with the corrected split).
-XH_CAESAR = 0.76          # caesar simulation.XH (constant; per-particle 1-Z-He is ~0.60 in enriched ISM)
-NH_H2_MIN = 0.13          # caesar rho_thresh [H atoms / cm^3]
-H2_RECIPE = "caesar-v1"
+# product files built with the corrected split). XH_CAESAR, NH_H2_MIN, H2_RECIPE and the recipe itself
+# (gas_components) live in simbanator.particles.grains.
 T_HOT, T_COLD = 1.0e5, 1.0e4
 
 
 # ── unit + field helpers ────────────────────────────────────────────────────
-def header_units(f):
-    h = f["Header"].attrs if "Header" in f else {}
-    return float(h.get("Time", 1.0)), float(h.get("HubbleParam", 0.68))
-
-
 def _to_kpc(x, a, hub):
     return x * a / hub
 
@@ -86,38 +80,10 @@ def _XH(Zarr, n):
     return np.full(n, 0.76)
 
 
-def _nH(rho_code, a, hub):
-    """Hydrogen number density [cm^-3] from the code density (1e10 Msun/h per (ckpc/h)^3), caesar recipe
-    (physical rho_cgs * XH_CAESAR / m_p)."""
-    rho_cgs = np.asarray(rho_code, np.float64) * 1e10 * MSUN_G * hub ** 2 / (KPC_CM * a) ** 3
-    return rho_cgs * XH_CAESAR / MP
-
-
 def _components(mgas, dust_msun, Zarr, fneutarr, fmolarr, nH=None):
-    """mgas already in Msun; dust already in Msun (or None). Returns (m_dust, m_HI, m_H2) with the
-    caesar split (see XH_CAESAR / NH_H2_MIN above): H2 = XH*m*fH2 (0 where nH < NH_H2_MIN when `nH`
-    [cm^-3] is given), HI = XH*m*min(fneut, 1-fH2). `Zarr` is accepted for signature compatibility
-    (the hydrogen fraction is caesar's constant, so sums match the catalogue)."""
-    m_dust = dust_msun if dust_msun is not None else np.full_like(mgas, np.nan)
-    m_H = np.asarray(mgas, np.float64) * XH_CAESAR
-    fneut = (np.asarray(fneutarr, np.float64) if fneutarr is not None
-             else np.full_like(m_H, np.nan))
-    if fmolarr is not None:
-        fmol = np.asarray(fmolarr, np.float64)
-        if nH is not None:
-            fmol = np.where(np.asarray(nH, np.float64) >= NH_H2_MIN, fmol, 0.0)
-        m_H2 = m_H * fmol
-        m_HI = m_H * np.minimum(fneut, 1.0 - fmol)
-    else:
-        m_H2 = np.full_like(m_H, np.nan)
-        m_HI = m_H * fneut
-    return m_dust, m_HI, m_H2
-
-
-def _temperature(u_code, ne, XH):
-    u_cgs = u_code * 1e10
-    mu = 4.0 / (1.0 + 3.0 * XH + 4.0 * XH * ne)
-    return (GAMMA - 1.0) * u_cgs * mu * MP / KB
+    """The caesar dust/HI/H2 split (simbanator.particles.grains.gas_components); `Zarr` is unused
+    (kept for the call sites: the hydrogen fraction is caesar's constant, so sums match the catalogue)."""
+    return gas_components(mgas, dust_msun, fneutarr, fmolarr, nH=nH)
 
 
 def _make_bins(rmax, nbins):

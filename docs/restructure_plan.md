@@ -23,6 +23,26 @@ on branch `restructure` until step 9.
 
 ## Step 4: products registry, repo root, job scripts
 
+Status (2026-10-22): done except the cluster deploy (see the last bullet).
+- Triage coverage: all 883 triaged names checked; the only notebook definitions the triage never saw are
+  `_double_exp18` / `_fit_double_exp18` (dusty_qgs, single use: stay) and 4 in sph_visual (archived).
+- The 4 old test failures fixed: `Simba(data_dir=...)` now loads the bundled snap -> z map (every SIMBA box
+  shares it); the ks_tracks test fixture writes the 2026-09-02 `nh` / `zgas` fields.
+- `io.paths.repo_root / output_dir / data_file` (config `"paths"` section optional); the task modules'
+  `getcwd()` defaults now go through `output_dir()`.
+- `io.registry` (38 products, CONVENTIONS) + `io.products` (path / require / read / dependents /
+  stamp / provenance / check / table); the D1-D3 stale flags are on the affected entries.
+- In-memory crossings: `docs/restructure_step4_crossings.md` (69 data, 38 style, 27 leaked names).
+- Jobs: `build_profiles_job` imports gas_components / nh_from_density / gas_temperature / header_units /
+  frames from the library (checked bit-identical against the committed copy); the reduced job imports the
+  library directly; `find_progen_m25_job` reads the cis25 paths from the config; outputs via `output_dir`.
+  `submit_*.sh` use `$SLURM_SUBMIT_DIR` and `$CONDA_BASE` (default ~/miniconda3). `submit_flux_extraction.sh`
+  calls a `run_extract_flux.py` that no longer exists (legacy, archived in step 8).
+- `pyproject.toml` 0.3.0 (+pandas, tqdm; astroquery in [sed]; package data = rt/masters), `setup.py` a
+  shim, `environment.yml` for pd39.
+- Not yet: writers do not call `products.stamp` (step 5, when the notebooks switch to the library);
+  deploy of the package + jobs to the cluster (diff first).
+
 - D5, done 2026-10-22 (uncommitted): every notebook whose cluster copy was newer was pulled
   (agn_states_dusty_vs_pure, box_resolution_comparison, dust_attenuation_vs_bt_z03, ks_tracks,
   noxray_analogues, paper_figures, paper_ism_prediction_boxes, paper_xray_classes,

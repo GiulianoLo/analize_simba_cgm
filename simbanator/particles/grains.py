@@ -185,6 +185,26 @@ def measure_zone_budget(red, zones=BUDGET_ZONES, t_hot=1e5, v_sys_kpc=10.0, hubb
 
 XH_CAESAR = 0.76            # caesar's constant hydrogen fraction (so particle sums match the catalogue)
 NH_H2_MIN = 0.13            # n_H [cm^-3] below which caesar counts no H2
+H2_RECIPE = "caesar-v1"     # stamped into every particle product built with gas_components (2026-08-27)
+
+GAMMA, KB_CGS, MP_CGS = 5.0 / 3.0, 1.380649e-16, 1.672622e-24
+MSUN_G, KPC_CM = 1.989e33, 3.085678e21
+
+
+def nh_from_density(rho_code, a, h, XH=XH_CAESAR):
+    """Hydrogen number density [cm^-3] from the GIZMO code density (1e10 Msun/h per (ckpc/h)^3).
+
+    caesar's recipe: physical rho [g cm^-3] * XH / m_p, with caesar's constant XH.
+    """
+    rho_cgs = np.asarray(rho_code, np.float64) * 1e10 * MSUN_G * h ** 2 / (KPC_CM * a) ** 3
+    return rho_cgs * XH / MP_CGS
+
+
+def gas_temperature(u_code, ne, XH):
+    """Gas temperature [K] from the code internal energy [(km/s)^2], electron abundance and H fraction."""
+    u_cgs = u_code * 1e10
+    mu = 4.0 / (1.0 + 3.0 * XH + 4.0 * XH * ne)
+    return (GAMMA - 1.0) * u_cgs * mu * MP_CGS / KB_CGS
 
 
 def gas_components(mgas_msun, dust_msun, fneut, fmol, nH=None, XH=XH_CAESAR, nh_h2_min=NH_H2_MIN):

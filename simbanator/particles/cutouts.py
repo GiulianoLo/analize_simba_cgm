@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import h5py
+from ..io.paths import output_dir as _output_root
 
 
 def indices_to_ranges(idx):
@@ -246,7 +247,7 @@ def extract_particles(
         # Derive from the simfile basename, stripping snap-number suffix
         sim_name = os.path.splitext(os.path.basename(simfile))[0]
 
-    out_dir = os.path.join(os.getcwd(), 'output', sim_name, 'filtered_particles', f'snap_{snap:03}')
+    out_dir = os.path.join(str(_output_root()), sim_name, 'filtered_particles', f'snap_{snap:03}')
     os.makedirs(out_dir, exist_ok=True)
 
     if galaxy_ids is not None:

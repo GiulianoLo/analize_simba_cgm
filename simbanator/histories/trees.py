@@ -14,6 +14,7 @@ from astropy.io import fits
 from astropy.table import Table
 
 from ..io.paths import OutputPaths
+from ..io.paths import output_dir as _output_root
 
 
 def progen_tree_file(sb, snap):
@@ -30,7 +31,7 @@ def progen_tree_file(sb, snap):
                 return cat
     except OSError:
         pass
-    side = os.path.join(os.getcwd(), 'output', sb.name, 'progen_links',
+    side = os.path.join(str(_output_root()), sb.name, 'progen_links',
                         os.path.basename(cat))
     try:
         with h5py.File(side, 'r') as f:
@@ -116,7 +117,7 @@ def caesar_read_progen(ids, outname, snaplist, sb, output_dir=None):
         progenid_table[found, i + 1] = snap_progens[sorter[pos[found]]]
 
     if output_dir is None:
-        output_dir = os.path.join(os.getcwd(), 'output', sb.name, 'progenitors')
+        output_dir = os.path.join(str(_output_root()), sb.name, 'progenitors')
     os.makedirs(output_dir, exist_ok=True)
 
     col1 = fits.Column(name='GroupID', format='K', array=progenid_table[:, 0])
@@ -180,7 +181,7 @@ def read_progen(ids, outname, snaplist, sb, fitsdir, output_dir=None):
     table = Table(progenid_dict)
 
     if output_dir is None:
-        output_dir = os.path.join(os.getcwd(), 'output', sb.name, 'progenitors')
+        output_dir = os.path.join(str(_output_root()), sb.name, 'progenitors')
     os.makedirs(output_dir, exist_ok=True)
     print('Saving...')
     table.write(os.path.join(output_dir, outname), overwrite=True)

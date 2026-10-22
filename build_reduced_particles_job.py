@@ -83,11 +83,14 @@ import gc
 import numpy as np
 import h5py
 
+from simbanator.io.paths import output_dir
 from simbanator.io.simba import Simulation
-from simbanator.utils.geometry import shrink_center, principal_axes
-# reuse the EXACT unit/field recipes the profile job is validated against
-from build_profiles_job import (header_units, _to_kpc, _to_msun, _detect, _components, _halo_of,
-                                _temperature, _XH, _nH, H2_RECIPE)
+from simbanator.particles.cutouts import header_units
+from simbanator.particles.frames import shrink_center, principal_axes
+from simbanator.particles.grains import (H2_RECIPE, nh_from_density as _nH,
+                                         gas_temperature as _temperature)
+# the snapshot-reading helpers the profile job is validated against
+from build_profiles_job import _to_kpc, _to_msun, _detect, _components, _halo_of, _XH
 
 PLAN_PATH = os.environ.get("DUST_PLAN")                     # REQUIRED — the plan carries the sim
 RMAX = float(os.environ.get("REDUCED_RMAX_KPC", 100.0))     # aperture [physical kpc]
@@ -204,7 +207,7 @@ def _gas_sfr(ctx, idx):
 
 
 def _gas_temp(ctx, idx):
-    """Per-particle temperature [K] — same recipe as build_profiles_job._temperature."""
+    """Per-particle temperature [K] — same recipe as simbanator.particles.grains.gas_temperature."""
     fld = ctx.fld
     Zc = ctx.take("gas", fld["Z"], idx) if fld["Z"] else None
     if fld["Tdir"]:
@@ -218,7 +221,7 @@ def _gas_temp(ctx, idx):
 
 
 def _gas_nh(ctx, idx):
-    """Hydrogen number density [cm^-3] — build_profiles_job._nH, the caesar recipe (physical rho * XH / m_p),
+    """Hydrogen number density [cm^-3] — simbanator.particles.grains.nh_from_density, the caesar recipe (physical rho * XH / m_p),
     so the gas mass density is rho = nh * m_p / XH_CAESAR exactly.
     Added 2026-09-02 for the THERMAL SPUTTERING measurement: SIMBA destroys dust with
     tau_sp = 0.17 Gyr (a/0.1um) (1e-27 / rho) [(2e6 K / T)^2.5 + 1]  (Tsai & Mathews 95; Li, Narayanan & Dave 19),
@@ -581,7 +584,7 @@ def main():
     sim = Simulation(sim_name)
     if PREFIX is None:
         PREFIX = sim.file_format.split("_{")[0]    # matches the notebook loader's REDUCED_PREFIX
-    out_root = os.path.join(os.getcwd(), "output", sim_name, "reduced_particles")
+    out_root = str(output_dir(sim_name, "reduced_particles"))
 
     snaps_all = np.sort(np.unique(snap))[::-1]                    # newest first
     my_snaps = np.array_split(snaps_all, n_task)[task_id] if n_task > 1 else snaps_all

@@ -255,6 +255,8 @@ _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
 
 # ── SIMBA photometric filters ────────────────────────────────────────
 
+_SIMBA_SNAP_Z_MAP = "zsnap_map_caesar_box100.txt"
+
 _SIMBA_BOXES = {
     25:  ("simba_m25n512",   "m25n512_{snap:03d}.hdf5"),
     50:  ("simba_m50n512",   "m50n512_{snap:03d}.hdf5"),
@@ -434,6 +436,11 @@ class Simba(Simulation):
             )
         else:
             super().__init__(name=config_name)
+
+        # every SIMBA box (25/50/100, all variants) shares one output list
+        if self.snap_z_map is None:
+            self.snap_z_map = _SIMBA_SNAP_Z_MAP
+            self._load_redshifts()
 
         # SIMBA-specific defaults
         self.file_format = file_fmt

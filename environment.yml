@@ -1,0 +1,28 @@
+# The cluster kernel the notebooks and jobs run in (conda env "pd39").
+# Recreate:  conda env create -f environment.yml  &&  pip install -e .
+# Known gaps of the live pd39 env: statsmodels is NOT installed (the notebooks' p-values / R^2 fall
+# back to scikit-learn / numpy lstsq, or come out NaN). caesar, powderday, hyperion, fsps and the
+# CIGALE build (~/cigale-v2025.1, needs astropy >= 7 with numpy 2) are installed from source.
+name: pd39
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9
+  - numpy
+  - scipy
+  - astropy
+  - matplotlib
+  - h5py
+  - pandas
+  - scikit-learn
+  - unyt
+  - yt
+  - pillow
+  - psutil
+  - tqdm
+  - astroquery
+  - ipykernel
+  - pytest
+  - pip
+  - pip:
+      - -e .

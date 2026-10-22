@@ -17,10 +17,15 @@
 # and finished sidecars are skipped on resubmit (resumable).
 
 # --- environment (caesar 0.2b0 + pyGadgetReader live in pd39) ---
-source /mnt/home/glorenzon/miniconda3/etc/profile.d/conda.sh
+source "${CONDA_BASE:-$HOME/miniconda3}/etc/profile.d/conda.sh"
 conda activate pd39
 
-cd /mnt/home/glorenzon/analize_simba_cgm
+# submit from the repository root: logs/ and the job script are resolved there
+cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+if [ ! -f find_progen_m25_job.py ]; then
+    echo "run sbatch from the repository root (find_progen_m25_job.py not found in $(pwd))" >&2
+    exit 1
+fi
 mkdir -p logs
 
 BOUNDS=(151 118 85 52 19)

@@ -89,8 +89,7 @@ def load_quenching_events(
         raise ImportError("astropy is required to read FITS output. Install with `pip install astropy`.")
 
     if fits_path is None:
-        fits_path = os.path.join(
-            os.getcwd(), 'output', sim_name, 'quenching_times', 'quenching_times.fits'
+        fits_path = os.path.join(str(_output_root()), sim_name, 'quenching_times', 'quenching_times.fits'
         )
 
     if not os.path.exists(fits_path):
@@ -297,8 +296,7 @@ def find_quenching_times(
     time_since_quench = [tarr[-1] - qt for qt in quench_times]
 
     if save_fits_path == 'default':
-        save_fits_path = os.path.join(
-            os.getcwd(), 'output', sim_name, 'quenching_times', 'quenching_times.fits'
+        save_fits_path = os.path.join(str(_output_root()), sim_name, 'quenching_times', 'quenching_times.fits'
         )
 
     if save_fits_path:
@@ -733,3 +731,9 @@ def interp_track(t, y, grid):
     inside = (grid >= tt[0]) & (grid <= tt[-1])
     out[inside] = np.interp(grid[inside], tt, yy)
     return out
+
+
+def _output_root():
+    # lazy: this module also loads standalone (numpy/scipy only, tests/test_ks_tracks.py)
+    from ..io.paths import output_dir
+    return output_dir()

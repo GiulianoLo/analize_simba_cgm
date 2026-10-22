@@ -29,6 +29,7 @@ pip install -e ".[full]"
 
 > **Heavy dependencies** (`yt`, `caesar`, `py-sphviewer`) are easiest to install via conda.  
 > Install them in your conda environment first, then `pip install -e .` for the rest.
+> `environment.yml` describes the cluster kernel (`pd39`; note: it has no `statsmodels`).
 
 ---
 
@@ -58,13 +59,18 @@ out = sb.OutputPaths(sim.name)   # output/cis100/<task>/ created on first access
 simbanator/
 ├── io/                   # I/O: simulation handles, paths, the visible config, tables, catalogues
 │   ├── simba.py          # Simulation – path resolution, Caesar/snapshot loading
-│   ├── paths.py          # OutputPaths – structured output directory manager
+│   ├── paths.py          # OutputPaths; repo_root / output_dir / data_file: locations from the package (or the
+│   │                     #   config's "paths" section), never the working directory
 │   ├── config.py         # config/simulations.json read/write helpers (see config/README.md)
 │   ├── catalogs.py       # caesar catalogues read with h5py (no caesar): read_galaxy_columns (dicts/ or flat,
 │   │                     #   index= subset, NaN for gaps), dataset, parent_halo_columns, sim_attributes,
 │   │                     #   catalog_path / file_prefix (from the config); nearest_snapshot, z_tag,
 │   │                     #   time_redshift_maps, softening_pkpc; findsatellites (caesar search)
-│   ├── products.py       # need (path or 'run <producer> first'), read_frame, read_selection; the step-4 registry
+│   ├── products.py       # the shared products: path / require (a missing file names its producer) / read,
+│   │                     #   dependents; stamp / provenance / check (git, version, conventions -> ok / stale /
+│   │                     #   unstamped / missing); table() -> docs/products.md; need, read_frame, read_selection
+│   ├── registry.py       # PRODUCTS (path template, producer, depends_on, params, known staleness) + CONVENTIONS
+│   │                     #   (keep_zero, smooth_window, require_accretion, frame, h2_recipe)
 │   ├── qc.py             # hdf5_status: ok / missing / no-perm / empty / no-keys / no:<grp> / corrupt:<Err>
 │   ├── sysinfo.py        # print_ram_usage
 │   └── tables.py         # as_str (explicit byte decoding: no silent '== "AGN"' failures), read_table (decodes
@@ -131,7 +137,8 @@ simbanator/
 │   │                     #   sightline_unit_vectors, projected_radius (image-plane R)
 │   │                     #   face_on_R / reduced_radius (pos @ evecs: the axes are the COLUMNS), select_gas,
 │   │                     #   spin_unit
-│   └── grains.py         # Z_to_OH12, Dust_to_Metal; gas_components (caesar H2 split, the 2026-08-27 recipe),
+│   └── grains.py         # Z_to_OH12, Dust_to_Metal; gas_components (caesar H2 split, the 2026-08-27 recipe;
+│                         #   H2_RECIPE stamp), nh_from_density, gas_temperature (the job recipes),
 │                         #   growth_timescale, stellar_dust_budget, weighted/number_fraction,
 │                         #   measure_zone_budget, nfw_concentration, nfw_vesc_kms
 ├── rt/                   # radiative transfer with powderday
@@ -290,11 +297,12 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 
 ```
 ├── build_profiles_job.py           # SLURM worker: fixed-binning Σ profiles from a shared plan;
-│                                   #   exports the unit/field recipes reused by the reduced job
-│                                   #   (header_units, _to_kpc, _to_msun, _detect, _components,
-│                                   #    _nH, _temperature, _halo_of); _components = caesar HI/H2
-│                                   #   split (H2 = 0.76·m·fH2 with n_H ≥ 0.13 cut, HI = 0.76·m·
-│                                   #   min(nh, 1−fH2)), stamped H2_RECIPE — fixed 2026-08-27
+│                                   #   the physics comes from simbanator.particles.grains
+│                                   #   (gas_components = caesar HI/H2 split, H2 = 0.76·m·fH2 with
+│                                   #   n_H ≥ 0.13 cut, HI = 0.76·m·min(nh, 1−fH2), stamped H2_RECIPE
+│                                   #   — fixed 2026-08-27; nh_from_density, gas_temperature); keeps
+│                                   #   the snapshot readers the reduced job shares (_to_kpc, _to_msun,
+│                                   #   _detect, _components, _halo_of, _XH)
 ├── build_reduced_particles_job.py  # SLURM worker: lean 100 kpc reduced particle files (ISM+CGM);
 │                                   #   files carry attr h2_recipe; a stale/absent stamp gets
 │                                   #   m_HI/m_H2 recomputed on the next run (backfill path)
@@ -304,7 +312,7 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   groups (added 2026-08-28 for the per-zone kappa_rot of
 │                                   #   the KS notebook; re-running a plan's sbatch backfills it)
 │                                   #   `nh` [cm^-3] per gas particle (added 2026-09-02, the caesar
-│                                   #   recipe of build_profiles_job._nH, so rho = nh m_p / 0.76):
+│                                   #   recipe of simbanator.particles.grains.nh_from_density, so rho = nh m_p / 0.76):
 │                                   #   the density behind the THERMAL SPUTTERING timescale
 │                                   #   tau_sp = 0.17 Gyr (a/0.1um)(1e-27/rho)[(2e6/T)^2.5 + 1] that
 │                                   #   agn_states_dusty_vs_pure Part 19 measures per particle - the
@@ -319,7 +327,9 @@ Repository-root cluster jobs and notebooks (the reduced-particle → Σ-profile 
 │                                   #   Env: DUST_PLAN, REDUCED_RMAX_KPC, REDUCED_PREFIX,
 │                                   #        REDUCED_OVERWRITE, REDUCED_GATHER_MB
 ├── submit_reduced_particles.sh     # sbatch wrapper (array over snapshots; plan = 1st script arg
-│                                   #   or DUST_PLAN env, per anchor)
+│                                   #   or DUST_PLAN env, per anchor). Every submit_*.sh runs from
+│                                   #   the directory sbatch was called in (the repo root) and finds
+│                                   #   conda under $CONDA_BASE (default ~/miniconda3)
 ├── submit_find_progen_m25.sh       # sbatch wrapper (4-task array over disjoint sidecar ranges)
 ├── find_progen_m25_job.py          # one-time cluster job: merger-tree links for the SIMBA_25
 │                                   #   catalogs (they ship WITHOUT tree_data, unlike cis50/100).

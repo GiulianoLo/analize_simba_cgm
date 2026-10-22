@@ -16,9 +16,57 @@ Typical layout::
         ├── plots/
         ├── sed/
         └── <custom>/
+
+Repository-relative locations (:func:`repo_root`, :func:`output_dir`, :func:`data_file`) come
+from the package location, never from the working directory, so a notebook finds the same
+files from any folder. ``config/simulations.json`` may override them in a ``"paths"`` section::
+
+    "paths": {"repo_root": "/mnt/home/glorenzon/analize_simba_cgm",
+              "output_root": "/mnt/home/glorenzon/analize_simba_cgm/output"}
 """
 
 import os
+from pathlib import Path
+
+from .config import REPO_ROOT, load_config
+
+# where data_file() looks, in order (relative to repo_root); the root itself is the legacy
+# place of the filter .res files until step 8 of the restructure moves them
+DATA_DIRS = ("obs_data", "obs_data/filters", "simbanator/rt/masters", ".")
+
+
+def _paths_cfg():
+    return load_config().get("paths", {}) or {}
+
+
+def repo_root():
+    """The repository root: the ``paths.repo_root`` config entry, else the package's parent."""
+    return Path(_paths_cfg().get("repo_root") or REPO_ROOT)
+
+
+def output_dir(*parts, create=False):
+    """``<output_root>/<parts...>``; output_root = config ``paths.output_root`` or ``<repo>/output``."""
+    root = Path(_paths_cfg().get("output_root") or (repo_root() / "output"))
+    path = root.joinpath(*map(str, parts))
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def data_file(name):
+    """Absolute path of a bundled data file (observations, filter curves, RT masters).
+
+    ``name`` may contain sub-folders (``"almac11/ks_table.csv"``). Searched in :data:`DATA_DIRS`
+    under :func:`repo_root`; ``FileNotFoundError`` lists every place looked at.
+    """
+    root = repo_root()
+    tried = []
+    for d in DATA_DIRS:
+        path = (root / d / name).resolve()
+        if path.is_file():
+            return path
+        tried.append(str(path))
+    raise FileNotFoundError(f"data file {name!r} not found; looked in:\n  " + "\n  ".join(tried))
 
 
 class OutputPaths:
@@ -31,8 +79,7 @@ class OutputPaths:
     simulation_name : str
         Label for the simulation (becomes a subdirectory).
     base_dir : str, optional
-        Root output directory.  Defaults to ``./output`` relative to
-        the current working directory.
+        Root output directory.  Defaults to :func:`output_dir` (``<repo>/output``).
 
     Examples
     --------
@@ -47,7 +94,7 @@ class OutputPaths:
 
     def __init__(self, simulation_name, base_dir=None):
         self.simulation_name = simulation_name
-        self.base_dir = base_dir or os.path.join(os.getcwd(), "output")
+        self.base_dir = str(base_dir or output_dir())
         self.root = os.path.join(self.base_dir, simulation_name)
 
     def _ensure(self, path):

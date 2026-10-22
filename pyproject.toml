@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "simbanator"
-version = "0.2.0"
+version = "0.3.0"
 description = "A Python toolkit for SIMBA cosmological simulation analysis: visualization, SED modeling, star formation histories, radial profiles, and more."
 readme = "README.md"
 license = {text = "MIT"}
@@ -27,9 +27,11 @@ dependencies = [
     "astropy",
     "matplotlib",
     "h5py",
+    "pandas",
     "unyt",
     "Pillow",
     "psutil",
+    "tqdm",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +47,7 @@ sed = [
     "hyperion",
     "caesar",
     "svo_filters",
+    "astroquery",
 ]
 sfh = [
     "fsps",
@@ -66,6 +69,6 @@ where = ["."]
 include = ["simbanator*"]
 
 [tool.setuptools.package-data]
-"simbanator.sed" = ["*.sh"]
+"simbanator.rt" = ["masters/*"]
 "simbanator.data" = ["snap_z_maps/*.txt"]
 

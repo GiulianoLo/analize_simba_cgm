@@ -10,11 +10,16 @@
 #SBATCH --array=0-15
 
 # --- environment ---
-source /mnt/home/glorenzon/miniconda3/etc/profile.d/conda.sh
+source "${CONDA_BASE:-$HOME/miniconda3}/etc/profile.d/conda.sh"
 conda activate pd39
 
 # --- go to working directory ---
-cd /mnt/home/glorenzon/analize_simba_cgm
+# submit from the repository root: logs/ and the job script are resolved there
+cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
+if [ ! -f build_reduced_particles_job.py ]; then
+    echo "run sbatch from the repository root (build_reduced_particles_job.py not found in $(pwd))" >&2
+    exit 1
+fi
 
 # --- plan written by the notebook cell "5a·plan" (SHARED with build_profiles_job.py) ---
 # Run ONCE PER ANCHOR, pointing the job at that anchor's plan. Preferred form — the plan

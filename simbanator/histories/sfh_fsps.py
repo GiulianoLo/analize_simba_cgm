@@ -25,6 +25,7 @@ import time
 from multiprocessing import Pool
 from scipy.interpolate import RegularGridInterpolator
 from tqdm import tqdm
+from ..io.paths import output_dir as _output_root
 
 try:
     import yt
@@ -433,7 +434,7 @@ def compute_sfh(
     if output_dir is None:
         if sim_name is None:
             sim_name = os.path.splitext(os.path.basename(snapshot))[0]
-        output_dir = os.path.join(os.getcwd(), 'output', sim_name, 'fsps_sfh')
+        output_dir = os.path.join(str(_output_root()), sim_name, 'fsps_sfh')
     os.makedirs(output_dir, exist_ok=True)
 
     snap_name = os.path.splitext(os.path.basename(snapshot))[0]

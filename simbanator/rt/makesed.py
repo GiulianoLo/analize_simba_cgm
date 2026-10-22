@@ -27,6 +27,7 @@ from astropy.table import Table
 from astropy.table import vstack
 
 from simbanator.photometry.fluxes import flux_extraction, get_svo_filters, load_local_filters
+from ..io.paths import output_dir as _output_root
 
 # Powderday parameter masters and cluster setup scripts live next to this module.
 MASTERS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'masters')
@@ -170,7 +171,7 @@ class MakeSED:
         self.selection_file = selection_file
 
         if output_dir is None:
-            output_dir = os.path.join(os.getcwd(), 'output', sb.name, 'sed')
+            output_dir = os.path.join(str(_output_root()), sb.name, 'sed')
         os.makedirs(output_dir, exist_ok=True)
         self.output_dir = output_dir
 

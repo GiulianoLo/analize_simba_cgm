@@ -43,13 +43,17 @@ import numpy as np
 import caesar
 from caesar.progen import progen_finder
 
-SNAPDIR = "/mnt/home/share/simbas/SIMBA_25"
-CATDIR  = os.path.join(SNAPDIR, "Groups")
-LINKDIR = os.path.join(os.getcwd(), "output", "cis25", "progen_links")
+from simbanator.io.paths import output_dir
+from simbanator.io.simba import Simulation
+
+_SIM = Simulation("cis25")                      # paths from config/simulations.json
+SNAPDIR = _SIM.data_dir
+CATDIR  = _SIM.catalog_dir
+LINKDIR = str(output_dir("cis25", "progen_links"))
 
 
 def _cat(s):
-    return os.path.join(CATDIR, f"m25n512_{s:03d}.hdf5")
+    return _SIM.get_catalog_file(s)
 
 
 def _side(s):
