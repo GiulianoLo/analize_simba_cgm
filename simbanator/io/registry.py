@@ -191,4 +191,10 @@ PRODUCTS = {
         path="box_resolution/kappa_selection/kappa_m25_cgm_nodes.csv",
         producer="dusty_qgs_kappa_selection Part 13",
         depends_on=("kappa_m25_branch_ids",)),
+    "kappa_dust_regrowth_nodes": dict(
+        path="box_resolution/kappa_selection/kappa_{box}_dust_regrowth_nodes.csv",
+        producer="dusty_qgs_kappa_selection Part 17 (an earlier version; the current Part 17 writes "
+                 "kappa_{box}_growable_gas_nodes.csv instead)",
+        depends_on=("kappa_m25_cgm_nodes",),
+        note="no current producer: the cis25 file on the cluster is the only copy (read by starburst_vs_aging Parts 6b/6c/9)"),
 }
