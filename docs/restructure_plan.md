@@ -119,15 +119,42 @@ Progress (2026-10-23):
 - Registry fix: `ks_postsft_map` is `{sim}/ks_tracks/ks_postsft_map.csv` (no classifier suffix).
 - Library: `particles.grains.hydrogen_fraction` + `T_HOT` / `T_COLD` (from build_profiles_job).
 - Visible change: ks_tracks' ALMA-C11 legend second entry reads "unresolved: Sigma lower limits".
-- Next: the readers (agn_states_dusty_vs_pure, dusty_qgs_kappa_selection, starburst_vs_aging,
-  noxray_analogues, paper_figures_quenched_m25, paper_xray_classes_m25, box_resolution_comparison,
-  the analogue / RT notebooks, multiscale_figure, agn_feedback_view, merger_tracking).
-- residual_dust_quenching: proposed skip like quench_mode (33 of 59 sections archive); confirm with the user.
+- Readers done (2026-10-23, one commit each, not yet run on the cluster): agn_states_dusty_vs_pure,
+  dusty_qgs_kappa_selection, starburst_vs_aging, noxray_analogues, paper_figures_quenched_m25,
+  paper_xray_classes_m25, box_resolution_comparison, analogues_specphot_almac11 (+ _rt),
+  analogues_specphot_cis100_rt_agn, powderday_flux_quenched_m25_rt, multiscale_figure,
+  agn_feedback_view, merger_tracking. The cluster copies were identical to the local ones when the
+  conversion started.
+- How they were checked: every notebook whose inputs are product tables was run cell by cell, old vs
+  new, on local copies of the cluster products (scratchpad harness): all written tables identical
+  (agn_states, kappa, starburst, noxray, paper_figures, paper_xray). Parts that need particle files,
+  catalogues, hyperion or sphviewer were checked for parse + names and, where possible, side by side
+  on synthetic inputs (the RT readers with a stand-in hyperion reader, the SFH archive, the grain
+  clocks, box_resolution's read_cat on a real catalogue through the mount).
+- Intended differences: box_resolution_comparison's face-on profiles are now in the right plane
+  (pos @ evecs; re-run Part 3); multiscale_figure's full-box scale bar reads "5 Mpc"; wilson is the
+  clamped library version (float rounding at k = n); agn_feedback_view's f_Edd uses the library's
+  Msun (0.03 %). Library fix: photometry.anchor_av skips NaN sightlines (the notebooks' groupby did).
+- Kept in their notebook on purpose: starburst's _ks_rel (draws its own KS_RELATIONS knob),
+  paper_xray's auc_of (0.5 on a constant score; stats.mw_auc gives NaN), multiscale's panel_label and
+  load_sed, the yt readers of agn_feedback_view, the almac11 source-map rtout_path.
+- Registry: kappa_dust_regrowth_nodes (read by starburst 6b/6c/9) has no current producer: the
+  current kappa Part 17 writes kappa_<box>_growable_gas_nodes instead; the cis25 file on the cluster
+  is the only copy (decide: re-create the writer or move starburst to the growable-gas table).
+- Found, pre-existing (not caused by the conversion): paper_xray_classes Part 0 asserts that
+  tau_q / t_QT of the boxes' classes equals the m25 selection's; on the current cluster products it
+  fails (max 0.44 dex over 257 galaxies), so the notebook stops there in both versions. Section 5d
+  (cell 19) raises IndexError in both; starburst cell 55 needs PF7B_BT (undefined in both).
+- Skipped on purpose (mostly / wholly archive; step 7-8 handle them): analogues_specphot_cis100,
+  analogues_specphot_cis100_rt, analogues_specphot_cis25, sed_critical_epochs,
+  dust_attenuation_vs_bt_z03, quench_mode_vs_sigma_gas; residual_dust_quenching still to confirm
+  with the user (33 of 59 sections archive). They keep the legacy imports (the shims stay until step 8).
 - Per notebook: back up to backups/notebooks/<nb>.pre-step5.bak.ipynb; write a transform script with
-  asserted per-cell replacements (templates: backups/step5_tools/step5_{pdf,ks,ism}.py, gitignored);
-  run `python backups/step5_tools/check.py <nb>` (parse + pyflakes undefined names + leftover legacy
-  imports) and pytest; one commit per notebook.
-- Deploy: steps 4 + 5 together, after diffing every cluster copy (gvfs mount) and merging live knob edits.
+  asserted per-cell replacements (backups/step5_tools/, gitignored; step5_common.py holds the shared
+  helpers); run `python backups/step5_tools/check.py <nb> <out.py>` (parse + pyflakes undefined
+  names + leftover legacy imports) and pytest; one commit per notebook.
+- Deploy: steps 4 + 5 together, after diffing every cluster copy (gvfs mount) and merging live knob
+  edits; the cluster needs config/simulations.json (or keeps reading the old hidden file, with a notice).
 
 ## Step 6: the divisions project
 
