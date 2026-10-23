@@ -200,6 +200,17 @@ def nh_from_density(rho_code, a, h, XH=XH_CAESAR):
     return rho_cgs * XH / MP_CGS
 
 
+T_HOT, T_COLD = 1.0e5, 1.0e4    # [K] hot / cold gas boundaries of the profile and budget products
+
+
+def hydrogen_fraction(Z, n):
+    """Per-particle hydrogen mass fraction ``1 - Z_tot - Y`` from a GIZMO ``Metallicity`` array (columns 0, 1);
+    caesar's constant 0.76 for all ``n`` particles when the array has no helium column."""
+    if Z is not None and Z.ndim == 2 and Z.shape[1] >= 2:
+        return np.clip(1.0 - Z[:, 0] - Z[:, 1], 0.0, 1.0)
+    return np.full(n, XH_CAESAR)
+
+
 def gas_temperature(u_code, ne, XH):
     """Gas temperature [K] from the code internal energy [(km/s)^2], electron abundance and H fraction."""
     u_cgs = u_code * 1e10

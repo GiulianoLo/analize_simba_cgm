@@ -31,7 +31,8 @@ from simbanator.io.simba import Simulation
 from simbanator.particles.cutouts import header_units
 from simbanator.particles.frames import shrink_center, principal_axes, rotate_to_frame
 from simbanator.particles.grains import (XH_CAESAR, NH_H2_MIN, H2_RECIPE, gas_components,  # noqa: F401
-                                         nh_from_density as _nH, gas_temperature as _temperature)
+                                         nh_from_density as _nH, gas_temperature as _temperature,
+                                         hydrogen_fraction as _XH, T_HOT, T_COLD)
 
 PLAN_PATH = os.environ.get("DUST_PLAN", str(output_dir("cis100", "caesar_sfh", "dust_profile_plan.hdf5")))
 OUT_DIR = os.environ.get("DUST_OUTDIR", os.path.dirname(PLAN_PATH))
@@ -47,7 +48,6 @@ CGM_NBINS = int(os.environ.get("CGM_NBINS_R", 30))
 # extra nh factor deleted up to 97% of the H2 exactly where it lives (found 2026-08-27; H2_RECIPE stamps
 # product files built with the corrected split). XH_CAESAR, NH_H2_MIN, H2_RECIPE and the recipe itself
 # (gas_components) live in simbanator.particles.grains.
-T_HOT, T_COLD = 1.0e5, 1.0e4
 
 
 # ── unit + field helpers ────────────────────────────────────────────────────
@@ -72,12 +72,6 @@ def _detect(f):
         u=next((k for k in ("InternalEnergy", "internal_energy") if k in have), None),
         ne=next((k for k in ("ElectronAbundance", "electron_abundance") if k in have), None),
     )
-
-
-def _XH(Zarr, n):
-    if Zarr is not None and Zarr.ndim == 2 and Zarr.shape[1] >= 2:
-        return np.clip(1.0 - Zarr[:, 0] - Zarr[:, 1], 0.0, 1.0)
-    return np.full(n, 0.76)
 
 
 def _components(mgas, dust_msun, Zarr, fneutarr, fmolarr, nH=None):
