@@ -122,6 +122,12 @@ Progress (2026-10-23):
 - Next: the readers (agn_states_dusty_vs_pure, dusty_qgs_kappa_selection, starburst_vs_aging,
   noxray_analogues, paper_figures_quenched_m25, paper_xray_classes_m25, box_resolution_comparison,
   the analogue / RT notebooks, multiscale_figure, agn_feedback_view, merger_tracking).
+- residual_dust_quenching: proposed skip like quench_mode (33 of 59 sections archive); confirm with the user.
+- Per notebook: back up to backups/notebooks/<nb>.pre-step5.bak.ipynb; write a transform script with
+  asserted per-cell replacements (templates: backups/step5_tools/step5_{pdf,ks,ism}.py, gitignored);
+  run `python backups/step5_tools/check.py <nb>` (parse + pyflakes undefined names + leftover legacy
+  imports) and pytest; one commit per notebook.
+- Deploy: steps 4 + 5 together, after diffing every cluster copy (gvfs mount) and merging live knob edits.
 
 ## Step 6: the divisions project
 
