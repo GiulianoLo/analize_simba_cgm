@@ -102,6 +102,27 @@ Resume checklist (written 2026-10-22, end of step 4):
   later in one pass, with everything `depends_on` lists below them.
 - Cluster copies: diff each one immediately before deploying, merge live knob edits.
 
+Progress (2026-10-23):
+- Done, one commit each: powderday_flux_quenched_m25 (69a252d), ks_tracks_quenched_m25 (bdf6bf0),
+  paper_ism_prediction_boxes (f25ee9b). Not yet run on the cluster.
+- Pattern: a notebook function whose body is a library function with the notebook's own constants
+  bound (N_BOOT, PLOTDIR, the cut values, ...) is kept under its name as a one-line call to the library,
+  so the call sites and the cells that check for helper names (`for _need in (...)`) do not change;
+  otherwise the def is removed and the call sites call the library. The x_coup / w_jet formulas go
+  through one `XCOUP` dict per notebook (`agn.xray_coupling(..., **XCOUP)`).
+- Skipped on purpose: quench_mode_vs_sigma_gas. 34 of its 48 sections are archive, including its
+  Part 0 setup and Part 2 machinery, which its 7 live sections run on; converting it in place would
+  rewrite code step 7 replaces (the live sections become pipeline / project notebooks on the library).
+  Its profile cache keeps the frame-bug stale flag.
+- Kept in their notebook (not config-driven): paper_ism_prediction's `cat_path` / `progen_main` /
+  `_read_hist` (they follow the notebook's SIMBA_SHARE knob, so a local run can point at the mount).
+- Registry fix: `ks_postsft_map` is `{sim}/ks_tracks/ks_postsft_map.csv` (no classifier suffix).
+- Library: `particles.grains.hydrogen_fraction` + `T_HOT` / `T_COLD` (from build_profiles_job).
+- Visible change: ks_tracks' ALMA-C11 legend second entry reads "unresolved: Sigma lower limits".
+- Next: the readers (agn_states_dusty_vs_pure, dusty_qgs_kappa_selection, starburst_vs_aging,
+  noxray_analogues, paper_figures_quenched_m25, paper_xray_classes_m25, box_resolution_comparison,
+  the analogue / RT notebooks, multiscale_figure, agn_feedback_view, merger_tracking).
+
 ## Step 6: the divisions project
 
 - D4: `projects/divisions/` defines named schemes (X-ray injection, AGN activation, ...; the
