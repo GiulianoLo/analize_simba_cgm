@@ -1,4 +1,6 @@
 """Attenuation, SED conversions and dust emission (numpy + astropy; no hyperion)."""
+import warnings
+
 import numpy as np
 
 __all__ = ["av_from_pair", "attenuation_curve", "av_in_window", "bolometric_from_nulnu", "nulnu_to_fnu_factor",
@@ -86,8 +88,8 @@ def mbb_flux_mjy(m_dust_msun, z, lam_obs_um, t_dust_k, kappa0_m2_kg=0.077, lam0_
 def anchor_av(aperture, annulus_av_path=None, attenuation_path=None):
     """A_V of every galaxy at its anchor in ``aperture`` -> ``({(snap, gal_id): A_V}, description)``.
 
-    The median over the sightlines of the annulus A_V table (powderday_flux Part 8b) when given and
-    present, else the fiducial-sightline column ``A_V_<aperture>`` of the attenuation table (Part 7a).
+    The median over the sightlines of the annulus A_V table (powderday_flux Part 8b; NaN sightlines
+    skipped) when given and present, else the fiducial-sightline column ``A_V_<aperture>`` of the attenuation table (Part 7a).
     """
     import os
     from ..io.tables import read_table
@@ -101,7 +103,9 @@ def anchor_av(aperture, annulus_av_path=None, attenuation_path=None):
         groups = defaultdict(list)
         for s_, g_, a_ in zip(np.asarray(A["snap"], int), np.asarray(A["gal_id"], int), np.asarray(A["A_V"], float)):
             groups[(int(s_), int(g_))].append(a_)
-        out = {k: float(np.median(v)) for k, v in groups.items()}
+        with np.errstate(all="ignore"), warnings.catch_warnings():        # a NaN sightline is skipped (the notebooks' groupby median)
+            warnings.simplefilter("ignore", RuntimeWarning)
+            out = {k: float(np.nanmedian(v)) for k, v in groups.items()}
         return out, f"median over {len(np.unique(np.asarray(A['incl'])))} sightlines"
     A = read_table(need(attenuation_path, "powderday_flux_quenched_m25 Part 7a (or Part 8b for the annulus table)"))
     col = f"A_V_{aperture}"

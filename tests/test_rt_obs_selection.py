@@ -104,6 +104,11 @@ def test_anchor_av(tmp_path):
     assert av[(100, 1)] == pytest.approx(0.3) and "2 sightlines" in how
     with pytest.raises(KeyError):
         PA.anchor_av("nope", annulus_av_path=str(p))
+    q = tmp_path / "ann_nan.fits"                     # a NaN sightline is skipped, an all-NaN galaxy stays NaN
+    Table(dict(snap=[100, 100, 100], gal_id=[1, 1, 2], aperture=["ap10kpc"] * 3, incl=["0", "90", "0"],
+               A_V=[0.2, np.nan, np.nan])).write(q)
+    av, _ = PA.anchor_av("ap10kpc", annulus_av_path=str(q))
+    assert av[(100, 1)] == pytest.approx(0.2) and np.isnan(av[(100, 2)])
 
 
 def test_relations_and_matching():
