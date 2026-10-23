@@ -158,7 +158,7 @@ PRODUCTS = {
         producer="ks_tracks_quenched_m25 Part 5",
         depends_on=("ks_tracks", "ks_track_histories")),
     "ks_postsft_map": dict(
-        path="{sim}/ks_tracks{cls}/ks_postsft_map.csv",
+        path="{sim}/ks_tracks/ks_postsft_map.csv",
         producer="ks_tracks_quenched_m25 Part 2",
         depends_on=("ks_track_measurements",)),
 
