@@ -167,6 +167,9 @@ def backward(sim, D):
     out, rows = {}, []
     hz = h.set_index(["z_target", "galaxy_id"])
     for zt in C.HIGHZ_SNAPS:
+        if zt not in hz.index.get_level_values(0):
+            print(f"  [{sim}] no z~{zt} rows in the high-z catalogue: skipped")
+            continue
         pid = q[f"prog_id_z{zt}"].to_numpy()
         has = pid >= 0
         sub = hz.loc[zt].reindex(pid[has]).reset_index()
@@ -191,7 +194,7 @@ def forward(sim, D):
         link = prog[prog[f"prog_id_z{zt}"] >= 0].drop_duplicates(f"prog_id_z{zt}").set_index(f"prog_id_z{zt}")
         m = link.reindex(g.galaxy_id.to_numpy())
         n = len(g); main = int(m.galaxy_id_lowz.notna().sum())
-        qq = m.quiescent.fillna(False).astype(bool)
+        qq = m.quiescent.eq(True)
         row = dict(sim=sim, zt=zt, n_resolved=n, n_main_branch=main)
         for tag, k in (("quiescent", int(qq.sum())), ("compact", int((m.qclass == "compact").sum())),
                        ("disky", int((m.qclass == "disky").sum()))):
@@ -277,7 +280,7 @@ def fig_tracks(H, D, back, res, obs, outdir):
                     mx, my = np.nanmedian(lm[:, m], 1), np.nanmedian(oh[:, m], 1)
                 ax.plot(mx, my, color=CLS[cl], lw=2.4, label=cl)
                 ax.plot(mx[0], my[0], marker="*", ms=16, color=CLS[cl], mec="white", zorder=5)
-                for zt in C.HIGHZ_SNAPS:  # true O/H of the progenitors from the particles
+                for zt in back[sim]:  # true O/H of the progenitors from the particles
                     s = back[sim][zt]; s = s[s.qclass == cl]
                     ax.plot(np.nanmedian(s.log_mstar), np.nanmedian(s.oh12_sfr), marker="o" if cl == "compact" else "s",
                             ms=10, color=CLS[cl], mec="white", mew=1.2, zorder=5)
@@ -351,13 +354,15 @@ def _md(df):
     return "\n".join(lines)
 
 
-def main():
-    out = C.combined_dir()
+def compute():
+    """Every table of the check -> dict (the notebook displays the pieces; main() writes them)."""
     D = {s: load(s) for s in C.SIMS}
     D = {s: d for s, d in D.items() if d["highz"] is not None}
     H = {s: d["highz"] for s, d in D.items()}
     obs = load_obs()
     print(f"observed points: {len(obs)} ({(obs.zt > 0).sum()} matched to a snapshot) from {C.OBS_CSV}")
+    print(f"boxes with a high-z catalogue: {list(H)}; with merger-tree products: "
+          f"{[s for s, d in D.items() if d['progenitors'] is not None]}")
 
     res = sum((resolution_table(h, s) for s, h in H.items()), [])
     ov = overlap(H, obs) if len(obs) else pd.DataFrame()
@@ -373,20 +378,28 @@ def main():
         frows += forward(s, d)
         trows += class_tests(s, back[s])
 
-    summ = {}
+    summ = pd.DataFrame()
     if len(ov):
         g = ov.groupby(["sim", "plane"])
         summ = pd.DataFrame({"n_points": g.inside.apply(lambda v: int(v.notna().sum())),
                              "n_inside": g.inside.apply(lambda v: int((v == True).sum())),  # noqa: E712
                              "median_offset_obs_minus_simba": g.offset_y.median()}).reset_index()
         summ["f_inside"] = summ.n_inside / summ.n_points.where(summ.n_points > 0)
+    return dict(D=D, H=H, obs=obs, res=res, ov=ov, summ=summ, back=back,
+                brows=brows, frows=frows, trows=trows, tree_ok=tree_ok)
+
+
+def write_outputs(R):
+    """feasibility_numbers.json + summary_tables.md under output/omega_feasibility/."""
+    out = C.combined_dir()
+    obs, res, ov, summ, brows, frows, trows = (R[k] for k in ("obs", "res", "ov", "summ", "brows", "frows", "trows"))
     numbers = dict(obs_csv=C.OBS_CSV, n_obs=len(obs), n_obs_matched=int((obs.zt > 0).sum()),
                    obs_logMstar_range=[float(obs.logMstar.min()), float(obs.logMstar.max())] if len(obs) else None,
                    resolution=res, overlap_summary=summ.to_dict("records") if len(ov) else [],
                    overlap_points=ov.to_dict("records") if len(ov) else [],
                    backward=brows, forward=frows, class_tests=trows,
                    lowz_C_split={s: float(np.nanmedian(d["lowz"].loc[d["lowz"].quiescent.astype(bool), "C_r80_r20"]))
-                                 for s, d in tree_ok.items()},
+                                 for s, d in R["tree_ok"].items()},
                    definitions=dict(solar=C.SOLAR, n_star_min=C.N_STAR_MIN, n_young_min=C.N_YOUNG_MIN,
                                     t_young_myr=C.T_YOUNG_MYR, res_fraction=C.RES_FRACTION, kde_fraction=C.KDE_FRACTION))
     with open(os.path.join(out, "feasibility_numbers.json"), "w") as f:
@@ -401,13 +414,22 @@ def main():
                "", "## Compact vs disky progenitors (N* >= %d)" % C.N_STAR_MIN, _md(pd.DataFrame(trows))]
     with open(os.path.join(out, "summary_tables.md"), "w") as f:
         f.write("\n".join(md) + "\n")
-    print("\n".join(md))
+    print("->", os.path.join(out, "feasibility_numbers.json"), "+ summary_tables.md")
+    return "\n".join(md)
 
-    fig_overlap(H, obs, out)
-    fig_young(H, res, out)
-    if back:
-        fig_tracks({s: H[s] for s in back}, D, back, res, obs, out)
-    print("->", out)
+
+def make_figures(R):
+    out = C.combined_dir()
+    fig_overlap(R["H"], R["obs"], out)
+    fig_young(R["H"], R["res"], out)
+    if R["back"]:
+        fig_tracks({s: R["H"][s] for s in R["back"]}, R["D"], R["back"], R["res"], R["obs"], out)
+
+
+def main():
+    R = compute()
+    print(write_outputs(R))
+    make_figures(R)
 
 
 if __name__ == "__main__":
