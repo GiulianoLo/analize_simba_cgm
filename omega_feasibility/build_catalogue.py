@@ -247,7 +247,7 @@ def build_lowz(s):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_trees(s, lowz):
-    snap_lo = min(C.HIGHZ_SNAPS.values())
+    snap_lo = min(min(C.HIGHZ_SNAPS.values()), C.TRACK_SNAP_MIN)
 
     def read_columns(snap):
         cat = s.get_caesar_file(snap)

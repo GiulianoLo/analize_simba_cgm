@@ -13,6 +13,11 @@ SIMS = {"cis25": "m25n512", "cis100": "m100n1024"}
 # target redshift -> snapshot (headers, see above)
 HIGHZ_SNAPS = {8: 26, 7: 30, 6: 36}
 LOWZ_SNAP = 129
+# progenitor tracks (figure a): walked down to TRACK_SNAP_MIN (026 = z 7.963; links exist in both boxes
+# down to 022 = z 9.033 if ever needed); markers with the 16-84 % scatter at the snapshots nearest TRACK_MARK_Z
+TRACK_SNAP_MIN = 26
+TRACK_MARK_Z = (8, 6, 2, 1, 0.4)
+SFR_FLOOR = 10 ** -2.5     # Msun/yr: SFR = 0 (below resolution) is drawn at this floor in the SFR row
 
 # resolution
 N_STAR_MIN = 30            # star particles

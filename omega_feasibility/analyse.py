@@ -264,36 +264,85 @@ def _obs_points(ax, obs, xo, yo, zts=None):
                         mec="white", mew=1.0, elinewidth=1.4, zorder=6, capsize=0)
 
 
+def _pcts(v):
+    v = v[np.isfinite(v)]
+    return np.percentile(v, [16, 50, 84]) if len(v) else np.full(3, np.nan)
+
+
 def fig_tracks(H, D, back, res, obs, outdir):
+    """Rows: O/H and SFR against M* along the main branches; one column per box.
+
+    Lines: the per-snapshot medians of the compact / disky z~0.4 quiescent galaxies (caesar columns:
+    O/H from the SFR-weighted Z with the Asplund scaling, instantaneous SFR). Markers with bars: median and
+    16-84 % scatter in both axes at the snapshots nearest TRACK_MARK_Z (SFR percentiles on the linear SFR,
+    SFR = 0 drawn at SFR_FLOOR). Open markers at z~8/7/6: the same progenitors' particle O/H and SFR10.
+    """
     import matplotlib.pyplot as plt
     from simbanator.histories.properties import gas_oh12
     sims = [s for s in H if D[s]["tracks"] is not None]
+    rows = [("oh12", LABEL["oh12_sfr"], "OH12", "oh12_sfr"), ("lsfr", LABEL["log_sfr10"], "logSFR", "log_sfr10")]
+    floor = np.log10(C.SFR_FLOOR)
     with plt.rc_context(PAPER_RC):
-        fig, axs = plt.subplots(1, len(sims), figsize=(7.2 * len(sims), 6.4), sharey=True, squeeze=False)
-        for ax, sim in zip(axs[0], sims):
+        fig, axs = plt.subplots(2, len(sims), figsize=(7.4 * len(sims), 12.0), sharex="col", sharey="row", squeeze=False)
+        for j, sim in enumerate(sims):
             T = D[sim]["tracks"]
-            lm = np.log10(np.where(T["mstar"] > 0, T["mstar"], np.nan)); oh = gas_oh12(T["z_sfr"])
+            lm = np.log10(np.where(T["mstar"] > 0, T["mstar"], np.nan))
+            Y = {"oh12": gas_oh12(T["z_sfr"]), "sfr": np.where(np.isfinite(lm), T["sfr"], np.nan)}
+            zs = np.asarray(T["z"])
+            marks = sorted({int(np.argmin(np.abs(zs - zm))) for zm in C.TRACK_MARK_Z
+                            if np.min(np.abs(zs - zm)) < 0.25 * max(zm, 0.4)})
             for cl in ("compact", "disky"):
                 m = T["qclass"] == cl
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
-                    mx, my = np.nanmedian(lm[:, m], 1), np.nanmedian(oh[:, m], 1)
-                ax.plot(mx, my, color=CLS[cl], lw=2.4, label=cl)
-                ax.plot(mx[0], my[0], marker="*", ms=16, color=CLS[cl], mec="white", zorder=5)
-                for zt in back[sim]:  # true O/H of the progenitors from the particles
-                    s = back[sim][zt]; s = s[s.qclass == cl]
-                    ax.plot(np.nanmedian(s.log_mstar), np.nanmedian(s.oh12_sfr), marker="o" if cl == "compact" else "s",
-                            ms=10, color=CLS[cl], mec="white", mew=1.2, zorder=5)
-            for r in res:
-                if r["sim"] == sim and np.isfinite(r["logM_thr_star_young"]):
-                    ax.axvline(r["logM_thr_star_young"], color=MUTED, lw=1.2, ls=":")
-                    ax.text(r["logM_thr_star_young"], 0.03, f" z={r['zt']}", transform=ax.get_xaxis_transform(),
-                            color=MUTED, fontsize=13, rotation=90, va="bottom")
-            _obs_points(ax, obs, "logMstar", "OH12")
-            ax.set_xlabel(LABEL["log_mstar"])
-            ax.text(0.03, 0.95, C.SIMS[sim], transform=ax.transAxes, va="top", fontsize=17)
-        axs[0, 0].set_ylabel(LABEL["oh12_sfr"])
+                    mx = np.nanmedian(lm[:, m], 1)
+                    my = {"oh12": np.nanmedian(Y["oh12"][:, m], 1),
+                          "lsfr": np.log10(np.clip(np.nanmedian(Y["sfr"][:, m], 1), C.SFR_FLOOR, None))}
+                for i, (key, ylab, okey, pkey) in enumerate(rows):
+                    ax = axs[i, j]
+                    ax.plot(mx, my[key], color=CLS[cl], lw=2.2, alpha=0.9, label=cl if (i, j) == (0, 0) else None, zorder=3)
+                    for k in marks:
+                        px = _pcts(lm[k, m])
+                        if key == "oh12":
+                            py = _pcts(Y["oh12"][k, m])
+                        else:
+                            py = np.log10(np.clip(_pcts(Y["sfr"][k, m]), C.SFR_FLOOR, None))
+                        if not np.all(np.isfinite(np.r_[px, py])):
+                            continue
+                        ax.errorbar(px[1], py[1], xerr=[[px[1] - px[0]], [px[2] - px[1]]],
+                                    yerr=[[py[1] - py[0]], [py[2] - py[1]]],
+                                    fmt="*" if k == 0 else ("o" if cl == "compact" else "s"), ms=16 if k == 0 else 10,
+                                    color=CLS[cl], mec="white", mew=1.2, elinewidth=1.6, capsize=0, zorder=5)
+                    for zt in back[sim]:  # particle truth of the same progenitors
+                        s = back[sim][zt]; s = s[s.qclass == cl]
+                        ax.plot(np.nanmedian(s.log_mstar), np.nanmedian(s[pkey]), marker="o" if cl == "compact" else "s",
+                                ms=10, mfc="none", mec=CLS[cl], mew=1.8, zorder=4)
+            for i, (key, ylab, okey, pkey) in enumerate(rows):
+                ax = axs[i, j]
+                thr = {}
+                for r in res:  # one line + one label per distinct resolution mass
+                    if r["sim"] == sim and np.isfinite(r["logM_thr_star_young"]):
+                        thr.setdefault(round(float(r["logM_thr_star_young"]), 3), []).append(r["zt"])
+                for x, zl in thr.items():
+                    ax.axvline(x, color=MUTED, lw=1.2, ls=":")
+                    if i == 1:
+                        ax.text(x, 0.97, " z=" + ",".join(str(z) for z in sorted(zl, reverse=True)),
+                                transform=ax.get_xaxis_transform(), color=MUTED, fontsize=13, rotation=90, va="top")
+                _obs_points(ax, obs, "logMstar", okey)
+                if key == "lsfr":
+                    ax.axhline(floor, color=MUTED, lw=1.0)
+                    ax.set_xlabel(LABEL["log_mstar"])
+                if j == 0:
+                    ax.set_ylabel(ylab)
+            axs[0, j].text(0.03, 0.95, C.SIMS[sim], transform=axs[0, j].transAxes, va="top", fontsize=17)
+            print(f"  [{sim}] track markers at z =", [round(float(zs[k]), 2) for k in marks],
+                  "| galaxies present (compact/disky):",
+                  [(int(np.isfinite(lm[k, T['qclass'] == 'compact']).sum()), int(np.isfinite(lm[k, T['qclass'] == 'disky']).sum()))
+                   for k in marks],
+                  "| SFR = 0 share:", [round(float(np.mean(Y['sfr'][k][np.isfinite(lm[k])] <= 0)), 2) for k in marks])
+        axs[1, 0].set_ylim(bottom=floor - 0.15)
         axs[0, 0].legend(loc="lower right", frameon=False)
+        fig.tight_layout()
         return save_figure(fig, "omega_a_tracks", os.path.join(outdir, "figures"))
 
 
